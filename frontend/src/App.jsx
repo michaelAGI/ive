@@ -89,6 +89,7 @@ const QuickActionPalette = lazyPanel(() => import('./components/command/QuickAct
 import CascadeBar from './components/chat/CascadeBar'
 import CascadeVariableDialog from './components/prompts/CascadeVariableDialog'
 import NotificationToast, { ToastBoundary } from './components/layout/NotificationToast'
+import NeedsYouPopover from './components/layout/NeedsYouPopover'
 import PanelBoundary from './components/PanelBoundary'
 import { canRestoreTerminalFocus } from './lib/gridFocus'
 import { openFindInSession } from './lib/findRouter'
@@ -98,7 +99,7 @@ import { toggleTheme } from './lib/theme'
 import { loadLanguageSetting } from './lib/i18n'
 import { installRouter, viewOf } from './lib/route'
 import { api } from './lib/api'
-import { typeInTerminal } from './lib/terminal'
+import { typeInTerminalUnlessQuestion } from './lib/terminal'
 
 const OWNER_ACTORS = ['localhost', 'owner_legacy', 'owner_device']
 
@@ -1681,7 +1682,8 @@ export default function App() {
               onClose={() => { URL.revokeObjectURL(screenshotData.imageUrl); setScreenshotData(null) }}
               onSendToSession={(filePath) => {
                 const sid = useStore.getState().activeSessionId
-                if (sid) typeInTerminal(sid, filePath)
+                // A path's digits would select and confirm an open dialog's option.
+                if (sid) typeInTerminalUnlessQuestion(sid, filePath)
               }}
             />
           )}
@@ -1716,6 +1718,7 @@ export default function App() {
           <SessionDeleteDialog />
           <SessionRenameDialog />
           <ToastBoundary><NotificationToast sideChatOpen={showSideChat} /></ToastBoundary>
+          <ToastBoundary><NeedsYouPopover sideChatOpen={showSideChat} /></ToastBoundary>
         </>
       )}
     >

@@ -467,14 +467,14 @@ export default function SessionTabs({ onOpenLauncher, launcherOpen = false, onTo
             >
               <span
                 className={`w-2 h-2 rounded-full shrink-0 ${
-                  planWaiting[id] || isSessionActive(id)
+                  planWaiting[id] || sessions[id]?.attention || isSessionActive(id)
                     ? 'bg-x-accent-ink animate-subtle-pulse'
                       : compactionState[id]?.status === 'compacting' || compactionState[id]?.status === 'warning'
                         ? 'bg-x-accent-ink animate-pulse'
                         : statusMeta.dotClass
                 }`}
                 title={
-                  planWaiting[id] ? 'Waiting for input'
+                  planWaiting[id] || sessions[id]?.attention ? 'Waiting for input'
                   : isSessionActive(id) ? 'Needs attention'
                   : compactionState[id]?.status === 'compacting' ? 'Compacting context'
                   : compactionState[id]?.status === 'warning' ? `${compactionState[id].percent_left}% context left`

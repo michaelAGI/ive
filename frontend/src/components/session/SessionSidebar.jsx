@@ -10,7 +10,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import useStore from '../../state/store'
 import { api } from '../../lib/api'
-import { sendPlanChoice, sendPlanFeedback, sendTerminalCommand } from '../../lib/terminal'
+import { sendTerminalCommand } from '../../lib/terminal'
+import { answerPlanChoice, sendPlanFeedbackGuarded } from '../../lib/planAnswer'
 import { parseDiffLines } from '../../lib/diffParser'
 import { detectLang, tokenizeLinePrism, TOKEN_CLASSES_PRISM } from '../../lib/syntaxHighlightPrism'
 import { getCliLabel, getRoleDefaultModel, getDefaultPermissionMode } from '../../lib/constants'
@@ -382,8 +383,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
   const handlePlanApprove = () => {
     if (!selectedPlan?.sid) return
-    sendPlanChoice(selectedPlan.sid, 1)
-    
+    answerPlanChoice(selectedPlan.sid, 1)
     // Resume planning task in progress
     const planTask = Object.values(tasks).find(
       (t) => t.assigned_session_id === selectedPlan.sid && t.status === 'planning'
@@ -397,7 +397,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
   const handleSendPlanFeedback = () => {
     if (!selectedPlan?.sid || !planFeedback.trim()) return
-    sendPlanFeedback(selectedPlan.sid, planFeedback.trim())
+    sendPlanFeedbackGuarded(selectedPlan.sid, planFeedback.trim())
     setPlanFeedback('')
     setSelectedPlan(null)
   }

@@ -222,6 +222,10 @@ async def _fire(session_id: str, cli_type: str | None, workspace_id: str | None)
     cli = (cli_type or "claude").lower()
     msg_bytes = prompt.encode("utf-8")
 
+    from open_question import session_has_open_question
+    if session_has_open_question(session_id):
+        logger.info("Idle reflection for session %s skipped: a question is open", session_id[:8])
+        return
     if cli == "gemini":
         clean = prompt.replace("\n", " ").replace("\r", " ")
         delivered = _pty_mgr.write(session_id, clean.encode("utf-8") + b"\r") is not False

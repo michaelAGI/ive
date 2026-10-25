@@ -1760,10 +1760,48 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 .ive-chat-reply-status { display: flex; align-items: center; gap: 8px; color: var(--x-muted); font-size: 12px; }
 .ive-chat-question-error { color: var(--x-danger); font-size: 12px; }
 .ive-chat-question button:focus-visible, .ive-chat-request-details summary:focus-visible, .ive-chat-text-button:focus-visible, .ive-conversation-activity-toggle:focus-visible, .ive-conversation-message-actions button:focus-visible { outline: 1px solid var(--x-muted); outline-offset: 2px; }
+
+/* PromptMenu: the terminal dialog 1:1 (request, question, options with the CLI's words). */
+.ive-chat-question.is-prompt-menu { padding: 14px 16px 12px; }
+.ive-chat-question.is-prompt-menu.is-tile { margin: 8px 0 4px; padding: 10px 12px 8px; border-radius: 10px; }
+.ive-chat-question.is-prompt-menu .ive-chat-question-heading { margin-bottom: 8px; }
+.ive-chat-question.is-prompt-menu .ive-chat-question-heading h3 { font-size: 12px; font-weight: 600; color: var(--x-muted); }
+.ive-prompt-menu { min-width: 0; color: var(--x-ink); font: 12px/1.6 var(--font-mono); }
+.ive-prompt-menu-excerpt { margin: 0 0 8px; }
+.ive-prompt-menu-excerpt pre { margin: 0; max-height: 220px; }
+.ive-prompt-menu-excerpt .ive-chat-text-button { margin-top: 2px; padding-left: 0; }
+.ive-prompt-menu .ive-chat-question-notice { margin: 0 0 8px; font: 12px/1.5 var(--font-sans); }
+.ive-prompt-menu-question { margin: 0 0 2px; font-weight: 600; overflow-wrap: anywhere; }
+.ive-prompt-menu-options { margin: 0; padding: 2px 0; border-radius: 6px; outline: none; }
+.ive-prompt-menu-options:focus-visible { box-shadow: 0 0 0 1px var(--x-muted); }
+.ive-prompt-menu-options[aria-disabled="true"] .ive-prompt-menu-option { cursor: default; opacity: .7; }
+/* Long options wrap like the terminal wraps them: the label hangs 3ch so continuation lines align under the text after "1. ". */
+.ive-prompt-menu-option { display: flex; align-items: baseline; min-height: 26px; padding: 2px 6px 2px 4px; border-radius: 4px; color: var(--x-ink-secondary); white-space: normal; cursor: pointer; }
+.ive-prompt-menu-cursor { flex: none; width: 2ch; white-space: pre; color: var(--x-waiting); font-weight: 600; }
+.ive-prompt-menu-label { flex: 1; min-width: 0; padding-left: 3ch; text-indent: -3ch; white-space: normal; overflow-wrap: anywhere; }
+.ive-prompt-menu-option[aria-selected="true"] { color: var(--x-ink); background: var(--x-surface-2); }
+.ive-prompt-menu-options:focus-visible .ive-prompt-menu-option[aria-selected="true"] { background: var(--x-hover); }
+.ive-prompt-menu-option:hover { background: var(--x-hover); color: var(--x-ink); }
+.ive-prompt-menu-option[data-choice-kind="deny"][aria-selected="true"] .ive-prompt-menu-cursor { color: var(--x-danger); }
+.ive-prompt-menu-foot { margin: 6px 0 0; color: var(--x-muted); font-size: 11px; }
+.ive-prompt-menu-open { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 8px; color: var(--x-muted); font: 12px var(--font-sans); }
+.ive-prompt-menu-open button { min-height: 32px; padding: 6px 12px; border-radius: 7px; color: var(--x-bg); background: var(--x-ink); font-weight: 500; }
+.ive-prompt-menu .ive-chat-question-error, .ive-prompt-menu .ive-chat-reply-status { margin-top: 6px; font-family: var(--font-sans); }
+.ive-prompt-menu.is-compact { font-size: 11px; }
+.ive-prompt-menu.is-compact .ive-prompt-menu-excerpt { margin-bottom: 4px; }
+.ive-prompt-menu.is-compact .ive-prompt-menu-excerpt pre { max-height: 88px; padding: 6px 8px; font-size: 10.5px; }
+.ive-prompt-menu.is-compact .ive-prompt-menu-option { min-height: 22px; }
+.ive-prompt-menu.is-compact .ive-prompt-menu-foot { margin-top: 2px; }
+/* Band above the xterm of a terminal tile while the session is waiting. */
+.ive-prompt-band { flex: none; max-height: 45%; overflow: auto; padding: 6px 8px 4px; border-bottom: 1px solid var(--x-line); border-left: 3px solid var(--x-waiting); background: var(--x-surface); }
+.ive-prompt-band.is-plain { display: flex; align-items: center; min-height: 32px; padding: 2px 8px; }
+.ive-prompt-band.is-plain .ive-chat-text-button { color: var(--x-ink); }
 @media (max-width: 640px) {
   .ive-conversation-history { position: absolute; right: 0; top: 0; bottom: 0; z-index: 10; background: var(--x-surface); }
   .ive-conversation-message.is-user { max-width: 92%; }
   .ive-chat-question { padding: 14px; }
+  .ive-chat-question.is-prompt-menu { padding: 12px; }
+  .ive-prompt-menu-option { min-height: 32px; }
   .ive-chat-question-choices button, .ive-chat-icon-button { min-height: 40px; }
   .ive-conversation-message-actions button { opacity: 1; }
 }
@@ -2006,3 +2044,27 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 .x-review-event-actor { color: var(--x-muted); font-weight: 400; }
 .x-review-event-time { float: right; color: var(--x-muted); font-size: 11px; }
 @media (max-width: 900px) { .x-review-columns { grid-template-columns: 1fr; } }
+
+/* "Needs you" pop-up: the toast corner, in the normal theme tokens (components/layout/NeedsYouPopover.jsx). */
+.ive-nyp-region { position: fixed; z-index: 1090; top: 72px; right: 20px; width: 360px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 96px); display: flex; flex-direction: column; gap: 8px; padding: 2px; overflow: auto; scrollbar-width: thin; color: var(--x-ink); font-family: var(--font-sans); pointer-events: none; }
+.ive-nyp-card { pointer-events: auto; flex-shrink: 0; padding: 12px 12px 8px; border: 1px solid var(--x-line); border-left: 3px solid var(--x-waiting); border-radius: 12px; background: var(--x-bg); box-shadow: var(--x-shadow-3); animation: ive-notice-arrive 180ms ease-out; }
+.ive-nyp-head { display: flex; align-items: flex-start; gap: 8px; }
+.ive-nyp-title { flex: 1; min-width: 0; }
+.ive-nyp-title strong { display: block; font-size: 13px; font-weight: 600; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ive-nyp-project { display: block; color: var(--x-muted); font-size: 11px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ive-nyp-wants { margin: 6px 0 8px; color: var(--x-ink-secondary); font: 12px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.ive-nyp-close { flex-shrink: 0; display: grid; place-items: center; width: 28px; height: 28px; margin: -6px -6px 0 0; border-radius: 7px; color: var(--x-muted); }
+.ive-nyp-close:hover { background: var(--x-hover); color: var(--x-ink); }
+.ive-nyp-card .ive-prompt-menu-options:focus-visible { box-shadow: 0 0 0 1px var(--x-focus); }
+.ive-nyp-request { max-height: 160px; overflow: auto; margin: 6px 0 2px; padding: 8px 10px; border-radius: 8px; background: var(--x-surface-2); color: var(--x-ink-secondary); font: 10.5px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ive-nyp-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.ive-nyp-foot .ive-chat-text-button { padding-left: 0; }
+.ive-nyp-link { min-height: 30px; padding: 6px 8px; border-radius: 6px; color: var(--x-link); font-size: 12px; font-weight: 500; }
+.ive-nyp-link:hover { background: var(--x-hover); }
+.ive-nyp-more { pointer-events: auto; align-self: flex-end; padding: 5px 10px; border: 1px solid var(--x-line); border-radius: 999px; background: var(--x-surface); color: var(--x-ink-secondary); font-size: 11px; }
+.ive-nyp-region button:focus-visible { outline: 1px solid var(--x-focus); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .ive-nyp-region { top: 64px; right: 12px; width: calc(100vw - 24px); }
+  .ive-nyp-close { width: 36px; height: 36px; margin-top: -8px; }
+}
+@media (prefers-reduced-motion: reduce) { .ive-nyp-card { animation: none; } }

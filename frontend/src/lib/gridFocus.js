@@ -9,10 +9,11 @@ export function shouldFocusGridTerminal(e) {
 
 // Where keyboard focus may sit when IVE hands it back to the selected
 // session's terminal (after a modal closed, another session was selected or
-// the level changed). Text fields, open dialogs and menus keep it; a stray
-// button, a sidebar card or <body> do not, typing there reaches no session.
+// the level changed). Text fields, open dialogs, menus and a PromptMenu that
+// is answering the agent's question (⌘⇧Y) keep it; a stray button, a sidebar
+// card or <body> do not, typing there reaches no session.
 export const TERMINAL_FOCUS_KEEP_SELECTOR =
-  'input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], [data-ive-popover]'
+  'input, textarea, select, [contenteditable="true"], [role="dialog"], [role="menu"], [data-ive-popover], [data-prompt-menu]'
 
 export function canRestoreTerminalFocus(active) {
   if (!active || active.isConnected === false || active === active.ownerDocument?.body) return true

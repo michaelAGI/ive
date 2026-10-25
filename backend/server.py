@@ -2954,6 +2954,7 @@ async def _prepare_session_cli_env(config: dict, session_id: str) -> dict[str, s
         )
         hook_trust = install_hooks_for_managed_profile(cli_type, extra_env.get("HOME"))
         trust_notice = codex_hooks_notice(hook_trust) if cli_type == "codex" else None
+        trust_report = hook_trust if isinstance(hook_trust, dict) else {}
         if trust_notice:
             logger.warning("Session %s: %s", session_id[:8], trust_notice)
             try:
@@ -2963,14 +2964,16 @@ async def _prepare_session_cli_env(config: dict, session_id: str) -> dict[str, s
                     "cli": cli_type,
                     "message": trust_notice,
                     "reason": "codex_hooks_untrusted",
-                    "untrusted": (hook_trust or {}).get("ive_untrusted") or [],
+                    "trust_reason": trust_report.get("reason"),
+                    "steps": trust_report.get("steps") or [],
+                    "untrusted": trust_report.get("ive_untrusted") or [],
                 })
             except Exception as exc:
                 logger.warning("Could not surface Codex hook trust notice: %s", exc)
-        elif cli_type == "codex" and isinstance(hook_trust, dict) and hook_trust.get("auto_trusted"):
+        elif cli_type == "codex" and trust_report.get("auto_trusted"):
             logger.info(
                 "Session %s: trusted %d IVE Codex hook(s) in %s",
-                session_id[:8], hook_trust["auto_trusted"], hook_trust.get("path"),
+                session_id[:8], trust_report["auto_trusted"], trust_report.get("path"),
             )
     except HookInstallError as exc:
         raise RuntimeError(
@@ -3413,9 +3416,15 @@ async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
     if cli_type in {"claude", "codex"}:
         from session_attention import get_attention, observe_terminal
         screen = capture_proc.get_screen(session_id) or capture_proc.get_buffer(session_id, 80)
-        if observe_terminal(session_id, screen):
-            await broadcast({"type": "session_attention", "session_id": session_id,
-                             "attention": get_attention(session_id)})
+        menu = _session_permission_menu(screen)
+        if menu and _detect_cli_startup_blocker(cli_type, screen):
+            menu = None
+        if observe_terminal(session_id, screen, menu):
+            attention = get_attention(session_id)
+            await broadcast({"type": "session_attention", "session_id": session_id, "attention": attention})
+            if attention is None:
+                from hooks import mark_answered
+                await mark_answered(session_id)
         if cli_type == "claude":
             await _maybe_mark_claude_interrupted(session_id, screen, "interrupt_output")
     if cli_type != "antigravity":
@@ -6136,6 +6145,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                     if session_ids and input_data:
                         encoded = input_data.encode("utf-8")
                         visible_sids = []
+                        skipped_sids = []
                         for sid in session_ids:
                             cfg = await get_session_config(sid)
                             if (
@@ -6145,9 +6155,19 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                                     ws, request, cfg, "broadcast"
                                 )
                             ):
+                                # A dialog is open: raw bytes would answer it.
+                                if cfg.get("cli_type") in {"claude", "codex"} and _session_question_open(sid):
+                                    skipped_sids.append(sid)
+                                    continue
                                 visible_sids.append(sid)
                         for sid in visible_sids:
                             pty_mgr.write(sid, encoded)
+                        if skipped_sids:
+                            await ws.send_json({
+                                "type": "broadcast_skipped",
+                                "session_ids": skipped_sids,
+                                "reason": "question_open",
+                            })
                         # If a commander session broadcasts to workers, adopt them
                         if source_session_id and visible_sids:
                             asyncio.create_task(_adopt_sessions(source_session_id, visible_sids))
@@ -6447,7 +6467,7 @@ async def list_workspaces(request: web.Request) -> web.Response:
 
 _OVERVIEW_DETAIL_LIMIT = 5
 _OVERVIEW_SESSION_STATUSES = (
-    "running", "idle", "stopped", "auth_failed", "quota_exceeded", "error",
+    "running", "waiting", "idle", "stopped", "auth_failed", "quota_exceeded", "error",
 )
 _OVERVIEW_BLOCKED_STATUSES = ("auth_failed", "quota_exceeded", "error")
 _OVERVIEW_RESEARCH_TERMINAL_STATUSES = (
@@ -6506,22 +6526,25 @@ async def get_overview(request: web.Request) -> web.Response:
 
         workspace_marks = ",".join("?" for _ in workspace_ids)
 
+        from session_attention import get_attention
         cur = await db.execute(
-            f"""SELECT workspace_id, status, COUNT(*) AS total
+            f"""SELECT id, workspace_id, status
                   FROM sessions
-                 WHERE workspace_id IN ({workspace_marks})
-                 GROUP BY workspace_id, status""",
+                 WHERE workspace_id IN ({workspace_marks})""",
             workspace_ids,
         )
         for row in await cur.fetchall():
             project = projects[row["workspace_id"]]
             status = row["status"] or "idle"
-            count = row["total"]
-            project["sessions"]["total"] += count
-            project["sessions"]["by_status"].setdefault(status, 0)
-            project["sessions"]["by_status"][status] += count
             if status in _OVERVIEW_BLOCKED_STATUSES:
-                project["blocked_sessions"]["total"] += count
+                project["blocked_sessions"]["total"] += 1
+            # The Home counter: a session with an open question is waiting,
+            # whatever status the database remembers.
+            if pty_mgr.is_alive(row["id"]) and get_attention(row["id"]):
+                status = "waiting"
+            project["sessions"]["total"] += 1
+            project["sessions"]["by_status"].setdefault(status, 0)
+            project["sessions"]["by_status"][status] += 1
 
         blocked_marks = ",".join("?" for _ in _OVERVIEW_BLOCKED_STATUSES)
         cur = await db.execute(
@@ -12073,13 +12096,22 @@ async def assign_task_to_session(request: web.Request) -> web.Response:
         message = body.get("message") or _build_worker_handoff_prompt(task)
         msg_bytes = message.encode("utf-8")
         cli_type = dict(sess_row).get("cli_type", "claude")
-        if cli_type == "gemini":
-            clean = message.replace("\n", " ").replace("\r", " ")
-            delivered = pty_mgr.write(session_id, clean.encode("utf-8") + b"\r") is not False
+
+        async def handoff():
+            if cli_type == "gemini":
+                clean = message.replace("\n", " ").replace("\r", " ")
+                delivered = pty_mgr.write(session_id, clean.encode("utf-8") + b"\r") is not False
+            else:
+                delivered = await submit_prompt(pty_mgr, session_id, msg_bytes)
+            if not delivered:
+                logger.warning("Worker reuse: handoff prompt for task %s not delivered to %s", task_id, session_id[:8])
+
+        # An open dialog would take the handoff as its answer: wait for the prompt.
+        from open_question import session_has_open_question
+        if session_has_open_question(session_id):
+            asyncio.create_task(_type_when_prompt_free(session_id, f"Task {task_id} handoff", handoff))
         else:
-            delivered = await submit_prompt(pty_mgr, session_id, msg_bytes)
-        if not delivered:
-            logger.warning("Worker reuse: handoff prompt for task %s not delivered to %s", task_id, session_id[:8])
+            await handoff()
 
     return web.json_response({
         "ok": True, "task_id": task_id,
@@ -14179,29 +14211,49 @@ async def update_task(request: web.Request) -> web.Response:
                 injection_parts.append(f"  {field_name}: {new_val}")
             injection_parts.append("Please take these changes into account in your current work.")
             injection_msg = "\n".join(injection_parts)
-            try:
-                msg_bytes = injection_msg.encode("utf-8")
-                # CLI-aware clear: Gemini uses Ctrl-U, Claude uses Escape+DEL
-                _inj_cfg = await get_session_config(sid)
-                _inj_cli = _inj_cfg.get("cli_type", "claude") if _inj_cfg else "claude"
-                if _inj_cli == "gemini":
-                    # Gemini: raw passthrough, collapse newlines (no escape sequences)
-                    clean_msg = injection_msg.replace("\n", " ").replace("\r", " ")
-                    injected = pty_mgr.write(sid, clean_msg.encode("utf-8") + b"\r") is not False
-                else:
-                    injected = await submit_prompt(pty_mgr, sid, msg_bytes)
-                if not injected:
-                    raise RuntimeError("session input rejected")
-                await bus.emit(CommanderEvent.TASK_EDIT_INJECTED, {
-                    "task_id": task_id,
-                    "workspace_id": task.get("workspace_id"),
-                    "session_id": sid,
-                    "changed_fields": [f[0] for f in changed_fields],
-                }, source="api", actor="user")
-            except Exception:
-                logger.exception("Failed to inject task edit into session %s", sid)
+
+            async def inject():
+                try:
+                    msg_bytes = injection_msg.encode("utf-8")
+                    # CLI-aware clear: Gemini uses Ctrl-U, Claude uses Escape+DEL
+                    _inj_cfg = await get_session_config(sid)
+                    _inj_cli = _inj_cfg.get("cli_type", "claude") if _inj_cfg else "claude"
+                    if _inj_cli == "gemini":
+                        # Gemini: raw passthrough, collapse newlines (no escape sequences)
+                        clean_msg = injection_msg.replace("\n", " ").replace("\r", " ")
+                        injected = pty_mgr.write(sid, clean_msg.encode("utf-8") + b"\r") is not False
+                    else:
+                        injected = await submit_prompt(pty_mgr, sid, msg_bytes)
+                    if not injected:
+                        raise RuntimeError("session input rejected")
+                    await bus.emit(CommanderEvent.TASK_EDIT_INJECTED, {
+                        "task_id": task_id,
+                        "workspace_id": task.get("workspace_id"),
+                        "session_id": sid,
+                        "changed_fields": [f[0] for f in changed_fields],
+                    }, source="api", actor="user")
+                except Exception:
+                    logger.exception("Failed to inject task edit into session %s", sid)
+
+            # A dialog on screen would take the text as its answer: wait for the
+            # prompt in the background (about 30 s), else skip with a warning.
+            from open_question import session_has_open_question
+            if session_has_open_question(sid):
+                asyncio.create_task(_type_when_prompt_free(sid, f"Task {task_id} edit", inject))
+            else:
+                await inject()
 
     return web.json_response(task)
+
+
+async def _type_when_prompt_free(session_id: str, what: str, deliver) -> bool:
+    """Run ``deliver`` once no CLI dialog is open in the session; skip after ~30 s."""
+    from open_question import wait_until_free
+    if not await wait_until_free(session_id):
+        logger.warning("%s not typed into session %s: a question is still open", what, session_id[:8])
+        return False
+    await deliver()
+    return True
 
 
 # ── Blueprint approval (Architect conception tier) ───────────────────────
@@ -14726,22 +14778,29 @@ async def get_session_output(request: web.Request) -> web.Response:
         return web.json_response({"error": "session not found"}, status=404)
     lines = int(request.query.get("lines", "100"))
     cli_type = await _session_cli_type(session_id)
+    permission_view = request.query.get("permission_view") == "1"
     permission_view_state = None
-    if request.query.get("permission_view") == "1" and cli_type == "claude":
+    if permission_view:
         screen = capture_proc.get_screen(session_id)
         if _is_incomplete_permission_screen(screen):
             if _terminal_control_violation(get_auth(request), config, "resize"):
                 permission_view_state = "control_unavailable"
             else:
                 permission_view_state = await _expand_overview_permission_screen(session_id)
-    return web.json_response({
+    screen = capture_proc.get_screen(session_id)
+    startup_blocker = _detect_cli_startup_blocker(cli_type, _startup_blocker_text(session_id))
+    payload = {
         "session_id": session_id,
         "lines": lines,
         "text": capture_proc.get_buffer(session_id, lines),
-        "screen": capture_proc.get_screen(session_id),
-        "startup_blocker": _detect_cli_startup_blocker(cli_type, _startup_blocker_text(session_id)),
+        "screen": screen,
+        "startup_blocker": startup_blocker,
         "permission_view_state": permission_view_state,
-    })
+    }
+    if permission_view:
+        # The CLI's dialog as data (menu contract); a startup screen is never one.
+        payload["menu"] = None if startup_blocker else _session_permission_menu(screen)
+    return web.json_response(payload)
 
 
 def _terminal_tail_handoff(session_id: str, old_cli: str, new_cli: str) -> str:
@@ -15260,8 +15319,10 @@ def _looks_ready_for_input(cli_type: str, text: str) -> bool:
         # Startup banners and error text are not an input prompt. In
         # particular, never clear a first-run menu just because it printed.
         # Claude renders its placeholder after a NBSP. Accept horizontal
-        # Unicode whitespace, while keeping the marker on its own line.
-        return bool(re.search(r"(?m)^[^\S\r\n\v\f\x85\u2028\u2029]*[❯>](?:[^\S\r\n\v\f\x85\u2028\u2029]|$)", text or ""))
+        # Unicode whitespace, while keeping the marker on its own line. A
+        # menu cursor in front of a numbered option ("❯ 1. Yes") is an open
+        # question, not the composer (same rule as the startup-blocker marker).
+        return bool(re.search(r"(?m)^[^\S\r\n\v\f\x85\u2028\u2029]*[❯>](?:[^\S\r\n\v\f\x85\u2028\u2029]|$)(?![^\S\r\n\v\f\x85\u2028\u2029]*[0-9]+[.)])", text or ""))
     return True
 
 
@@ -15310,60 +15371,223 @@ def _canonical_prompt_screen(screen: str) -> str:
     return screen.replace("\r\n", "\n").strip()
 
 
+# The CLIs' dialogs as they render (fixtures: backend/fixtures/permission_dialogs):
+#   Claude permission   top rule, header ("Bash command", "Edit file", "Tool use", ...),
+#                       the request, "Do you want to ...?", "❯ 1. Yes" ... "n. No",
+#                       "Esc to cancel · Tab to amend" (Fetch draws no footer).
+#   Codex approval      "Would you like to run the following command?", the request
+#                       ("$ touch created.txt"), "› 1. Yes, proceed (y)" ... "No, and tell
+#                       Codex what to do differently (esc)", "Press enter to confirm or
+#                       esc to cancel".
+#   Claude plan         "... Would you like to proceed?" or "Ready to code?", "❯ 1. Yes,
+#                       and use auto mode" ... "Tell Claude what to change" (+ hint line),
+#                       "ctrl+g to edit in Vim · <plan file>".
+#   AskUserQuestion     the question, "❯ 1. Red" with description lines, "Type something.",
+#                       a rule, "Chat about this", "Enter to select · ... · Esc to cancel";
+#                       multi-select rows carry "[ ]" checkboxes.
+# Folder trust, /model, /permissions, login, theme and update screens and numbered lists
+# inside a reply are never a menu: no allowlisted question, no cursor, or options missing.
+_DIALOG_QUESTION_RE = re.compile(r"(?:Do you want to|Would you like to) .{1,240}\?")
+_DIALOG_PLAN_QUESTION_RE = re.compile(r"Would you like to proceed\?|Ready to code\?")
+_DIALOG_PLAN_OPTION_RE = re.compile(r"keep planning|what to change|auto mode", re.IGNORECASE)
+_DIALOG_HEADER_RE = re.compile(r"(?:Tool use|Bash command|Run command|Edit file|Create file|Write file|"
+                               r"Read file|Fetch|Web ?search|Notebook edit|Edit notebook)", re.IGNORECASE)
+_DIALOG_HOOK_HEADER_RE = re.compile(r"[│|]?\s*Hook PreToolUse:([A-Za-z][\w:.-]*) requires confirmation for this tool:")
+_DIALOG_RULE_RE = re.compile(r"[─╌━═▔]{8,}(?:\s.*)?")
+_DIALOG_TOP_RULE_RE = re.compile(r"─{20,}")
+_DIALOG_FOOTER_RE = re.compile(r"Esc to cancel(?:\s*·.*)?|Press enter to confirm or esc to cancel|"
+                               r"Enter to select\s*·.*Esc to cancel|ctrl\+g to edit in Vim.*", re.IGNORECASE)
+_DIALOG_OPTION_RE = re.compile(r"(\s*)([❯›])?\s*([1-9])[.)]\s+(\S.*)")
+_DIALOG_CHECKBOX_RE = re.compile(r"\[[ xX✔✓]\]")
+_DIALOG_ASK_FOOTER = "enter to select"
+_DIALOG_ASK_LAST = "Chat about this"
+
+
+def _dialog_screen_lines(screen: str) -> list[str]:
+    text = re.sub(r"[^\S\r\n\v\f\x85\u2028\u2029]", " ", screen or "")
+    return [line.rstrip() for line in text.splitlines()]
+
+
+def _dialog_option_block(lines: list[str], start: int):
+    """The numbered rows from ``start`` (a "1." row) with the lines indented
+    under their labels, and the index of the first line after them."""
+    options, column, i = [], 0, start
+    while i < len(lines):
+        line = lines[i]
+        match = _DIALOG_OPTION_RE.fullmatch(line)
+        if match and int(match.group(3)) == len(options) + 1 and (not options or match.start(4) == column):
+            column = match.start(4)
+            options.append({"key": match.group(3), "label": match.group(4).strip(), "line": line,
+                            "extra": [], "selected": bool(match.group(2))})
+        elif options and line.strip() and len(line) - len(line.lstrip()) >= column:
+            options[-1]["extra"].append(line)
+        elif (options and _DIALOG_RULE_RE.fullmatch(line.strip()) and i + 1 < len(lines)
+              and (after := _DIALOG_OPTION_RE.fullmatch(lines[i + 1])) and int(after.group(3)) == len(options) + 1):
+            pass  # AskUserQuestion draws a rule above "Chat about this"
+        else:
+            break
+        i += 1
+    return options, i
+
+
+def _dialog_labels(options: list[dict], width: int, wrapped_only: bool) -> list[str]:
+    """A line indented under a label continues it when the first word did not
+    fit on the line above; otherwise it is a description (plan hint,
+    AskUserQuestion description). Permission dialogs have no descriptions, so
+    there every such line is part of the label."""
+    labels = []
+    for option in options:
+        label, previous = option["label"], option["line"]
+        for extra in option["extra"]:
+            text = extra.strip()
+            if not wrapped_only or len(previous) + 1 + len(text.split()[0]) > width - 4:
+                label += " " + text
+            previous = extra
+        labels.append(label)
+    return labels
+
+
+def _dialog_excerpt(lines: list[str]) -> str:
+    kept = [line for line in lines if not _DIALOG_RULE_RE.fullmatch(line.strip())]
+    indent = min((len(line) - len(line.lstrip()) for line in kept if line.strip()), default=0)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(line[indent:].rstrip() for line in kept)).strip()
+
+
+def _dialog_earlier_dialog(lines: list[str], i: int) -> bool:
+    """A footer or a cursor row above the current dialog: an earlier dialog's remains."""
+    match = _DIALOG_OPTION_RE.fullmatch(lines[i])
+    return bool(_DIALOG_FOOTER_RE.fullmatch(lines[i].strip()) or (match and match.group(2)))
+
+
+def _dialog_header_above(lines: list[str], question: int) -> int | None:
+    """Claude's dialog header above the question: a known header, the tool
+    name a hook notice names, or else a short title right under the top rule."""
+    hooks = {m.group(1): i for i in range(question) if (m := _DIALOG_HOOK_HEADER_RE.fullmatch(lines[i].strip()))}
+    titled = None
+    for i in range(question - 1, -1, -1):
+        text = lines[i].strip()
+        if _DIALOG_HEADER_RE.fullmatch(text) or hooks.get(text, -1) > i:
+            return i
+        if _dialog_earlier_dialog(lines, i):
+            break
+        if (titled is None and text and i and len(text) <= 40 and _DIALOG_TOP_RULE_RE.fullmatch(lines[i - 1].strip())
+                and not _DIALOG_OPTION_RE.fullmatch(lines[i]) and not _DIALOG_QUESTION_RE.fullmatch(text)):
+            titled = i
+    return titled
+
+
+def _dialog_question_above(lines: list[str], below: int) -> int | None:
+    """Codex puts its question above the request: the nearest allowlisted
+    question line, unless an earlier dialog's remains come first."""
+    for i in range(below, -1, -1):
+        if _DIALOG_QUESTION_RE.fullmatch(lines[i].strip()):
+            return i
+        if _dialog_earlier_dialog(lines, i):
+            return None
+    return None
+
+
 def _session_permission_menu(screen: str) -> dict | None:
-    """Recognize only a complete, currently displayed Claude permission menu."""
-    text = re.sub(r"[^\S\r\n\v\f\x85\u2028\u2029]", " ", screen)
-    lines = text.splitlines()
-    questions = [i for i, line in enumerate(lines) if line.strip() == "Do you want to proceed?"]
-    if not questions:
+    """The dialog a CLI shows right now, as data, or None.
+
+    Only the allowlisted forms above count, anchored at the last "1." row on
+    screen: a permission question with "Yes..." first and "No..." last and
+    its request in full, a plan approval, or an AskUserQuestion frame; exactly
+    one cursor, nothing but the footer below. ``excerpt`` is the request with
+    its header line first (Claude) or the lines under the question (Codex),
+    rule lines removed. ``identity`` (question, labels, excerpt) is stable
+    across cursor moves and redraws; ``choices`` and ``selected`` are the
+    legacy keys of the reply guard.
+    """
+    lines = _dialog_screen_lines(screen)
+    starts = [i for i, line in enumerate(lines) if (m := _DIALOG_OPTION_RE.fullmatch(line)) and m.group(3) == "1"]
+    if not starts:
         return None
-    # A status spinner/previous transcript can redraw above the dialog without
-    # changing what the user is approving. Anchor to a complete dialog header,
-    # while retaining every tool name, argument, description and choice below
-    # it. A cropped menu without its request must never be auto-confirmed.
-    # Hook confirmation dialogs use a tool-name header (e.g. ToolSearch).
-    # Match the corresponding notice below it so cropped/arbitrary text is
-    # never treated as the missing request header.
-    hook_headers = {}
-    for i in range(questions[-1]):
-        match = re.fullmatch(r"\s*[│|]?\s*Hook PreToolUse:([A-Za-z][\w:.-]*) requires confirmation for this tool:\s*", lines[i])
-        if match:
-            hook_headers[match.group(1)] = i
-    headers = [i for i in range(questions[-1])
-               if re.fullmatch(r"\s*(?:Tool use|Bash command|Run command)\s*", lines[i])
-               or hook_headers.get(lines[i].strip(), -1) > i]
-    if not headers:
+    start = starts[-1]
+    options, i = _dialog_option_block(lines, start)
+    footer = ""
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and _DIALOG_FOOTER_RE.fullmatch(lines[i].strip()):
+        footer, i = lines[i].strip(), i + 1
+    # Invariant: nothing but the footer below the options. A dialog with the
+    # composer or any output under it is history (echoed, scrolled, answered).
+    if not 2 <= len(options) <= 9 or sum(o["selected"] for o in options) != 1 or any(l.strip() for l in lines[i:]):
         return None
-    dialog_start = headers[-1]
-    start = questions[-1] + 1
-    footers = [i for i in range(start, len(lines)) if re.fullmatch(r"\s*Esc to cancel(?:\s*·\s*Tab to amend)?\s*", lines[i])]
-    if not footers or any(line.strip() for line in lines[footers[-1] + 1:]):
+    above = start - 1
+    while above >= 0 and (not lines[above].strip() or _DIALOG_RULE_RE.fullmatch(lines[above].strip())):
+        above -= 1
+    if above < 0:
         return None
-    choices, selected = [], []
-    identity = list(lines)
-    for i in range(start, footers[-1]):
-        match = re.fullmatch(r"\s*([❯›>])?\s*([1-3])\.\s+(.+)", lines[i])
-        if not match:
-            continue
-        number, label = match.group(2), match.group(3).strip()
-        choices.append((number, label))
-        if match.group(1):
-            selected.append(number)
-        # Selection changes are expected; the complete request must stay put.
-        identity[i] = f"{number}. {label}"
-    if ([number for number, _ in choices] not in (["1", "2"], ["1", "2", "3"])
-            or choices[0][1] != "Yes"
-            or (len(choices) == 3 and not choices[1][1].startswith("Yes"))
-            or choices[-1][1] != "No" or len(selected) != 1):
-        return None
-    return {"choices": tuple(number for number, _ in choices), "selected": selected[0],
-            "identity": "\n".join(identity[dialog_start:]).strip()}
+    lead = lines[above].strip()
+    top = above
+    while top > 0 and lines[top - 1].strip() and not _DIALOG_RULE_RE.fullmatch(lines[top - 1].strip()):
+        top -= 1
+    lead_block = " ".join(line.strip() for line in lines[top:above + 1])
+    width = max(len(line) for line in lines)
+    labels = _dialog_labels(options, width, wrapped_only=True)
+    excerpt, answerable = "", True
+    if footer.lower().startswith(_DIALOG_ASK_FOOTER) and labels[-1] == _DIALOG_ASK_LAST:
+        kind, question = "question", lead_block
+        answerable = not any(_DIALOG_CHECKBOX_RE.match(label) for label in labels)
+    elif (_DIALOG_PLAN_QUESTION_RE.search(lead_block) and labels[0].startswith("Yes")
+            and any(_DIALOG_PLAN_OPTION_RE.search(label) for label in labels)):
+        kind, question = "plan", lead_block
+    else:
+        labels = _dialog_labels(options, width, wrapped_only=False)
+        if not (labels[0].startswith("Yes") and re.match(r"No\b", labels[-1])):
+            return None
+        kind = "permission"
+        if _DIALOG_QUESTION_RE.fullmatch(lead):
+            # Claude: header, request, question. A cropped header means the
+            # request is not all on screen: never a menu. The excerpt starts
+            # with the header line ("Bash command", "Edit file", ...).
+            header = _dialog_header_above(lines, above)
+            if header is None:
+                return None
+            question, excerpt = lead, _dialog_excerpt(lines[header:above])
+        else:
+            # Codex: question, request, options. A menu without its request is none.
+            at = _dialog_question_above(lines, above)
+            if at is None:
+                return None
+            question, excerpt = lines[at].strip(), _dialog_excerpt(lines[at + 1:start])
+            if not excerpt:
+                return None
+    parts = [question] + [f"{o['key']}. {label}" for o, label in zip(options, labels)] + [excerpt]
+    return {
+        "kind": kind, "question": question,
+        "options": [{"key": o["key"], "label": label, "selected": o["selected"]} for o, label in zip(options, labels)],
+        "excerpt": excerpt,
+        "identity": "\n".join(re.sub(r"\s+", " ", part).strip() for part in parts if part),
+        "answerable": answerable,
+        "choices": tuple(o["key"] for o in options),
+        "selected": next(o["key"] for o in options if o["selected"]),
+    }
 
 
 def _is_incomplete_permission_screen(screen: str) -> bool:
-    return bool(re.search(r"(?m)^\s*Do you want to proceed\?\s*$", screen or "")
-                and re.search(r"(?:^|\n)\s*Esc to cancel(?:\s*·\s*Tab to amend)?\s*$", screen or "")
-                and not _session_permission_menu(screen))
+    """A dialog's bottom is on screen (its footer, or a "No..." option under a
+    permission question) without a complete menu: the top is cut off, as in a
+    tile too small for the request. Claude and Codex alike."""
+    lines = [line for line in _dialog_screen_lines(screen) if line.strip()]
+    if not lines or _session_permission_menu(screen):
+        return False
+    if _DIALOG_FOOTER_RE.fullmatch(lines[-1].strip()):
+        return True
+    option = _DIALOG_OPTION_RE.fullmatch(lines[-1])
+    return bool(option and re.match(r"No\b", option.group(4))
+                and any(_DIALOG_QUESTION_RE.fullmatch(line.strip()) for line in lines))
+
+
+def _session_question_open(session_id: str) -> bool:
+    """A CLI dialog, complete or cut off, is on this session's live screen.
+    The probe behind open_question.py, and the broadcast paths' check."""
+    try:
+        screen = capture_proc.get_screen(session_id) or capture_proc.get_buffer(session_id, 80)
+    except Exception:
+        return False
+    return bool(screen) and bool(_session_permission_menu(screen) or _is_incomplete_permission_screen(screen))
 
 
 async def _expand_overview_permission_screen(session_id: str) -> str:
@@ -15392,12 +15616,18 @@ _session_prompt_replies: dict[str, tuple] = {}
 async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_failed) -> web.Response:
     """Reply to the screen the user reviewed, without clearing a TUI question."""
     expected = body.get("expected_screen")
-    message = body["message"].strip()
-    if (not isinstance(expected, str) or not expected.strip() or body.get("raw")
-            or not message or len(message) > 2000 or not body["message"].isprintable()):
+    expected_identity = body.get("expected_identity")
+    # A menu reply names the option key ("choice"); "message" is the legacy form.
+    reply = body.get("message") if isinstance(body.get("message"), str) and body.get("message") else body.get("choice")
+    message = reply.strip() if isinstance(reply, str) else ""
+    has_screen = isinstance(expected, str) and bool(expected.strip())
+    has_identity = isinstance(expected_identity, str) and bool(expected_identity.strip())
+    if ((not has_screen and not has_identity) or body.get("raw")
+            or not message or len(message) > 2000 or not reply.isprintable()):
         return web.json_response({"error": "A current screen and a single printable reply are required.",
                                   "code": "invalid_session_prompt_reply"}, status=400)
-    expected = _canonical_prompt_screen(expected)
+    expected = _canonical_prompt_screen(expected) if has_screen else None
+    claim = expected if has_screen else expected_identity.strip()
     lifetime = _terminal_streams.get(session_id)
 
     def current_screen():
@@ -15408,7 +15638,13 @@ async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_fai
         except Exception:
             return ""
 
+    # Set once this request holds the reply claim: a stale exit after that
+    # releases it, so a retry on the redrawn dialog is not refused forever.
+    claim_held = False
+
     def stale(*, partial=False):
+        if claim_held:
+            _session_prompt_replies.pop(session_id, None)
         return web.json_response({
             "error": ("The question changed after input was typed. Review the current session before replying again."
                       if partial else "The question changed. Review the current session before replying."),
@@ -15417,15 +15653,32 @@ async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_fai
 
     screen = current_screen()
     menu = _session_permission_menu(screen)
-    expected_menu = _session_permission_menu(expected)
-    same_request = (menu and expected_menu and menu["identity"] == expected_menu["identity"])
-    if ((screen != expected and not same_request)
-            or _session_prompt_replies.get(session_id) == (lifetime, expected)):
+    if has_screen:
+        expected_menu = _session_permission_menu(expected)
+        same_request = (menu and expected_menu and menu["identity"] == expected_menu["identity"])
+        changed = screen != expected and not same_request
+    else:
+        changed = not menu or menu["identity"] != claim
+    # A claim with no screen is still being typed; one with a screen was
+    # confirmed on exactly that screen, so the same menu identity may be
+    # answered again once the CLI has drawn something else.
+    claimed = _session_prompt_replies.get(session_id)
+    if changed or (claimed and claimed[:2] == (lifetime, claim) and claimed[2] in (None, screen)):
         return stale()
+    if menu:
+        # Answered from the Overview moments ago and the CLI has not redrawn
+        # yet: the same dialog, even one byte apart, is not a second question.
+        from session_attention import answered_recently
+        if answered_recently(session_id, menu["identity"]):
+            return stale()
     if _is_incomplete_permission_screen(screen):
         return web.json_response({"error": "The complete permission request is not visible yet. Refresh before replying.",
                                   "code": "incomplete_session_prompt"}, status=409)
-    if (menu and message not in menu["choices"]) or (not menu and body.get("prompt_reply") is not True):
+    if menu and not menu.get("answerable", True):
+        return web.json_response({"error": "This question needs the terminal: it takes several answers or free text.",
+                                  "code": "terminal_required", "menu": menu}, status=409)
+    keys = [str(key) for key in menu["choices"]] if menu else []
+    if (menu and message not in keys) or (not menu and body.get("prompt_reply") is not True):
         return web.json_response({"error": "Choose an option from the current question, or enter an explicit manual reply.",
                                   "code": "invalid_session_prompt_reply"}, status=400)
 
@@ -15433,24 +15686,30 @@ async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_fai
     # confirm a second question while the CLI is still redrawing the first.
     if len(_session_prompt_replies) >= 256:
         _session_prompt_replies.pop(next(iter(_session_prompt_replies)))
-    _session_prompt_replies[session_id] = (lifetime, expected)
+    _session_prompt_replies[session_id] = (lifetime, claim, None)
+    claim_held = True
 
     if menu:
-        target = int(message)
-        while int(menu["selected"]) != target:
+        # Walk the CLI's own cursor from where it really is, one confirmed
+        # redraw per step. Keys are strings stepped by position: Codex menus
+        # may label options with letters.
+        target = keys.index(message)
+        while str(menu["selected"]) != message:
             screen = current_screen()
             current = _session_permission_menu(screen)
-            if not current or current["identity"] != menu["identity"] or current["selected"] != menu["selected"]:
+            if (not current or current["identity"] != menu["identity"]
+                    or str(current["selected"]) != str(menu["selected"]) or str(current["selected"]) not in keys):
                 return stale()
-            direction = 1 if target > int(current["selected"]) else -1
+            position = keys.index(str(current["selected"]))
+            direction = 1 if target > position else -1
             if not pty_mgr.write(session_id, b"\x1b[B" if direction > 0 else b"\x1b[A"):
                 _session_prompt_replies.pop(session_id, None)
                 return delivery_failed("selection")
-            next_selection = str(int(current["selected"]) + direction)
+            next_selection = keys[position + direction]
             for _ in range(20):
                 await _asyncio.sleep(0.05)
                 redrawn = _session_permission_menu(current_screen())
-                if redrawn and redrawn["identity"] == menu["identity"] and redrawn["selected"] == next_selection:
+                if redrawn and redrawn["identity"] == menu["identity"] and str(redrawn["selected"]) == next_selection:
                     menu = redrawn
                     break
                 if redrawn and redrawn["identity"] != menu["identity"]:
@@ -15458,12 +15717,16 @@ async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_fai
             else:
                 return stale()
         # No await between the final exact menu check and Enter.
-        current = _session_permission_menu(current_screen())
-        if not current or current["identity"] != menu["identity"] or current["selected"] != message:
+        screen = current_screen()
+        current = _session_permission_menu(screen)
+        if not current or current["identity"] != menu["identity"] or str(current["selected"]) != message:
             return stale()
+        if has_identity:
+            _session_prompt_replies[session_id] = (lifetime, claim, screen)
         if not pty_mgr.write(session_id, b"\r"):
             _session_prompt_replies.pop(session_id, None)
             return delivery_failed("submit")
+        await _session_prompt_answered(session_id, menu)
     else:
         if current_screen() != expected:
             return stale()
@@ -15480,8 +15743,21 @@ async def _send_guarded_session_prompt(session_id: str, body: dict, delivery_fai
         if not unchanged and not echoed:
             return stale(partial=True)
         if not pty_mgr.write(session_id, b"\r"):
+            _session_prompt_replies.pop(session_id, None)
             return delivery_failed("submit", partial=True)
     return web.json_response({"ok": True, "session_id": session_id})
+
+
+async def _session_prompt_answered(session_id: str, menu: dict) -> None:
+    """Enter reached the CLI: the question is closed for every client now,
+    and a 'prompting' hook state moves on without waiting for the next hook."""
+    try:
+        from session_attention import resolve
+        from hooks import mark_answered
+        await resolve(session_id, menu.get("identity"))
+        await mark_answered(session_id)
+    except Exception as exc:
+        logger.debug("Attention clear after reply skipped for %s: %s", session_id[:8], exc)
 
 
 async def send_session_input(request: web.Request) -> web.Response:
@@ -15495,6 +15771,8 @@ async def send_session_input(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "expected JSON object"}, status=400)
     message = body.get("message", "")
+    if not message and isinstance(body.get("choice"), str):
+        message = body["choice"]  # a menu reply names the option key
     if not isinstance(message, str) or not message:
         return web.json_response({"error": "message required"}, status=400)
 
@@ -15539,10 +15817,20 @@ async def send_session_input(request: web.Request) -> web.Response:
         state = get_session_logical_status(session_id, pty_mgr.is_alive(session_id), "idle")
         if state not in {"idle", "stopped"} or not pty_mgr.is_alive(session_id):
             return web.json_response({"error": "Wait until this session is idle before compacting context.", "code": "session_busy"}, status=409)
-    if "expected_screen" in body or body.get("prompt_reply"):
+    if "expected_screen" in body or "expected_identity" in body or body.get("prompt_reply"):
         if not pty_mgr.is_alive(session_id):
             return web.json_response({"error": "session not running"}, status=400)
         return await _send_guarded_session_prompt(session_id, body, delivery_failed)
+    if cli_type in {"claude", "codex"} and not body.get("raw") and pty_mgr.is_alive(session_id):
+        # The CLI shows a dialog, complete or cut off: only a reviewed reply
+        # may reach it. Anything else would answer the question blindly (a
+        # digit selects and confirms) or become a new instruction.
+        screen = capture_proc.get_screen(session_id) or ""
+        menu = _session_permission_menu(screen)
+        if menu or _is_incomplete_permission_screen(screen):
+            return web.json_response({"error": "A question is open in this session. Answer it first.",
+                                      "code": "question_open", "session_id": session_id, "menu": menu,
+                                      "incomplete": menu is None}, status=409)
     if _is_auth_recovery_input(message):
         await _broadcast_auth_recovery(
             session_id,
@@ -15654,6 +15942,7 @@ async def broadcast_input(request: web.Request) -> web.Response:
     accepted = []
     failed = []
     mode_blocked = []
+    skipped = []
     msg_bytes = message.encode("utf-8")
     for sid in dict.fromkeys(session_ids):
         config = await get_session_config(sid)
@@ -15669,6 +15958,10 @@ async def broadcast_input(request: web.Request) -> web.Response:
             )
             continue
         if pty_mgr.is_alive(sid):
+            if config.get("cli_type") in {"claude", "codex"} and _session_question_open(sid):
+                # A dialog is open: the text would answer it. Left for the user.
+                skipped.append({"session_id": sid, "reason": "question_open"})
+                continue
             # Split text and \r — a combined blob can be paste-detected
             # by Ink and the trailing CR dropped, leaving the prompt
             # typed but never submitted.
@@ -15700,8 +15993,8 @@ async def broadcast_input(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "Mode-blocked", "blocked": mode_blocked}, status=403
         )
-    result = {"ok": bool(sent) and not failed and not mode_blocked, "sent_to": sent,
-              "mode_blocked": mode_blocked, "failed": failed,
+    result = {"ok": bool(sent) and not failed and not mode_blocked and not skipped, "sent_to": sent,
+              "mode_blocked": mode_blocked, "failed": failed, "skipped": skipped,
               "partially_delivered": [sid for sid in accepted if sid in failed]}
     if not result["ok"]:
         result["error"] = "Some messages were not delivered. Check each session before retrying."
@@ -31763,6 +32056,11 @@ async def on_startup(app: web.Application):
             _ensure_agy_mcp_current()
         except Exception as e:
             logger.debug("Antigravity MCP config refresh skipped/failed: %s", e)
+
+    import session_attention
+    session_attention.set_broadcast_fn(broadcast)
+    import open_question
+    open_question.configure(_session_question_open)
 
     # ── Server-side cascade runner ──────────────────────────────────
     import cascade_runner

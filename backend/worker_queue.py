@@ -187,6 +187,14 @@ async def _do_deliver(session_id: str):
             }, source="worker_queue")
             return
 
+        # A dialog open in the worker would take the handoff as its answer:
+        # leave the task queued, the next idle retries. (Awaited from the Stop
+        # hook, so no waiting here.)
+        from open_question import session_has_open_question
+        if session_has_open_question(session_id):
+            logger.info("Worker queue: task %s held for %s: a question is open", task["id"], session_id)
+            return
+
         # 3. Assign the task to this worker
         await db.execute(
             """UPDATE tasks SET

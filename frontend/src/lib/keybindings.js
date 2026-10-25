@@ -60,6 +60,8 @@ export const KEYBINDING_DEFS = [
   { id: 'usage', label: 'Usage', section: 'Sessions', defaultKey: { key: 'u', meta: true } },
   { id: 'msgPrev', label: 'Jump to previous message start', section: 'Sessions', defaultKey: { key: 'ArrowUp', meta: true, shift: true } },
   { id: 'msgNext', label: 'Jump to next message start', section: 'Sessions', defaultKey: { key: 'ArrowDown', meta: true, shift: true } },
+  // ⌘⇧Y focuses the oldest waiting question (PromptMenu); ⌘⇧A is annotate.
+  { id: 'answerNext', label: 'Answer next question', section: 'Sessions', defaultKey: { key: 'Y', meta: true, shift: true } },
 
   // ── Tasks (⌘B board) ──
   { id: 'boardTabPrev', label: 'Previous workspace tab', section: 'Tasks', defaultKey: { key: '[' } },

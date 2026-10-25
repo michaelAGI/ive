@@ -9,7 +9,7 @@ test('group identical hook recovery across sessions, keep every action separate'
  assert.deepEqual(affectedSessions(groups[2].notices,{a:{id:'a'},b:{id:'b'}}),[{id:'a'},{id:'b'}])
 })
 test('recovery and action notices persist; ordinary feedback expires',()=>{
- for(const type of ['warning','error','auth_failed','permission','input_needed'])assert.equal(notificationDuration({type}),null)
+ for(const type of ['warning','error','auth_failed','permission','plan_ready'])assert.equal(notificationDuration({type}),null)
  assert.equal(notificationDuration({type:'success',action:{}}),null)
  assert.equal(notificationDuration({type:'success'}),6000)
  assert.equal(notificationDuration({type:'info'}),10000)

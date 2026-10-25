@@ -1,21 +1,19 @@
-// Presentation only: the unchanged live screen remains the authority for replies.
-const cleanLines = (text) => String(text || '').split('\n').map((line) => line.trim()).filter((line) => line && !/^[─━╌┄│┆\s]+$/.test(line))
+// Tone and colour only: the menu shows the CLI's own words (PromptMenu.jsx)
+// and the unchanged live dialog remains the authority for replies.
+const SETUP_ISSUE = /missing API key|not configured|fail.closed/i
 
-export function permissionPresentation(prompt) {
-  const lines = cleanLines(prompt?.excerpt)
-  const kind = lines.shift() || ''
-  const description = lines[0] || 'Review the requested action'
-  const setupIssue = /missing API key|not configured|fail.closed/i.test(prompt?.excerpt || '')
-  return {
-    title: /^(Bash command|Run command)$/i.test(kind) ? 'Allow this action?' : 'Allow access?',
-    description,
-    notice: setupIssue ? 'An additional IVE safety check needs setup. Changing the agent mode does not fix this check. Review the exact request before deciding.' : '',
-    choices: (prompt?.choices || []).map((choice, index) => ({
-      ...choice,
-      label: choice.label === 'No' ? 'Don’t allow' : choice.label === 'Yes' ? 'Allow once' : choice.label,
-      kind: choice.label === 'No' ? 'deny' : index === 0 ? 'allow' : 'persistent',
-    })),
-  }
+/** A one-line notice when the request is really an IVE safety-check setup problem. */
+export function promptNotice(menu) {
+  if (!menu || !SETUP_ISSUE.test(menu.excerpt || '')) return ''
+  return 'An additional IVE safety check needs setup. Changing the agent mode does not fix this check. Review the exact request before deciding.'
+}
+
+/** 'allow' | 'deny' | 'persistent' | 'neutral' for colouring an option line. */
+export function choiceTone(option, index, menu) {
+  const label = String(option?.label || '')
+  if (/^no\b/i.test(label)) return 'deny'
+  if (/^yes\b/i.test(label)) return index === 0 ? 'allow' : 'persistent'
+  return menu?.kind === 'question' ? 'neutral' : index === 0 ? 'allow' : 'neutral'
 }
 
 export function activityLabel(steps, running) {

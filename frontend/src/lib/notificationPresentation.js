@@ -19,7 +19,7 @@ export function affectedSessions(notices, sessions) {
 export function notificationDuration(notice) {
   // Recovery/approval messages stay until acknowledged. A hidden queued
   // notification does not start its timer until it actually renders.
-  if (notice.action || ['warning','error','auth_failed','plan_ready','blueprint_ready','input_needed','permission_question','permission','memory_sync_conflict','distill_error','mcp_parse_error'].includes(notice.type)) return null
+  if (notice.action || ['warning','error','auth_failed','plan_ready','blueprint_ready','permission','memory_sync_conflict','distill_error','mcp_parse_error'].includes(notice.type)) return null
   return notice.type === 'success' ? 6000 : notice.type === 'info' ? 10000 : 30000
 }
 

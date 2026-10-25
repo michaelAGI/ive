@@ -1,11 +1,12 @@
 import HelpDetails from '../ui/HelpDetails'
 import { useState, useEffect } from 'react'
-import { RefreshCw, Loader2, Columns, Rows, Grid2x2, Type, Sparkles, Terminal, CircleHelp } from 'lucide-react'
+import { RefreshCw, Loader2, Columns, Rows, Grid2x2, Type, Sparkles, Terminal, CircleHelp, Bell } from 'lucide-react'
 import { api } from '../../lib/api'
 import useStore from '../../state/store'
 import { Button, ThemeToggle } from '../ui'
 import { LANGUAGES, getLanguage, setLanguage, useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
+import { NEEDS_YOU_MODES, needsYouModeHelp, requestNeedsYouNotifications } from '../../lib/needsYou'
 
 function Toggle({ value, onChange, label, disabled = false }) {
   return (
@@ -43,6 +44,8 @@ const GRID_LAYOUTS = [
   { id: 'focusBottom', label: 'Focus Bottom', icon: Rows },
 ]
 
+const NEEDS_YOU_LABELS = { off: 'Off', popup: 'Pop-up', popup_macos: 'Pop-up and macOS notification' }
+
 
 
 export default function GeneralSettingsPanel() {
@@ -64,6 +67,16 @@ export default function GeneralSettingsPanel() {
   const gridLayout = useStore((s) => s.gridLayout)
   const terminalBoardMode = useStore((s) => s.terminalBoardMode)
   const setTerminalBoardMode = useStore((s) => s.setTerminalBoardMode)
+  const needsYouAlert = useStore((s) => s.needsYouAlert)
+  const setNeedsYouAlert = useStore((s) => s.setNeedsYouAlert)
+  const [needsYouHelp, setNeedsYouHelp] = useState(() => needsYouModeHelp(needsYouAlert))
+  // Choosing the macOS notification is the one moment the browser may be
+  // asked for permission; the Tauri shell has no Notification yet and says so.
+  const chooseNeedsYouMode = async (mode) => {
+    setNeedsYouAlert(mode)
+    if (mode === 'popup_macos') await requestNeedsYouNotifications()
+    setNeedsYouHelp(needsYouModeHelp(mode))
+  }
 
   useEffect(() => {
     Promise.all([
@@ -209,6 +222,36 @@ export default function GeneralSettingsPanel() {
               <Toggle value={terminalBoardMode} onChange={setTerminalBoardMode} />
             </div>
 
+          </div>
+
+          <div className="border-t border-x-line-subtle" />
+
+          {/* ── Alerts ─────────────────────────────── */}
+          <div className="text-xs text-x-ink-secondary font-medium flex items-center gap-2">
+            Alerts
+            <span className="text-x-muted px-1.5 py-0.5 bg-x-hover rounded-md border border-x-line text-[11px]">Personal</span>
+          </div>
+
+          <div className="flex items-center justify-between gap-3" data-needs-you-setting="">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <Bell size={13} className="text-x-accent shrink-0" />
+                <span className="text-xs text-x-ink font-medium">When an agent needs you</span>
+              </div>
+              <HelpDetails><div className="text-[11px] text-x-muted mt-0.5 ml-[19px]">
+                A small card top right with the agent's own options whenever its session is not in front of you.
+                The macOS notification shows while IVE is in the background. The sound is under Sounds.
+              </div></HelpDetails>
+              {needsYouHelp && <div className="text-[11px] text-x-muted mt-1 ml-[19px]" data-needs-you-help="">{needsYouHelp}</div>}
+            </div>
+            <select
+              aria-label="When an agent needs you"
+              value={needsYouAlert}
+              onChange={(e) => { chooseNeedsYouMode(e.target.value) }}
+              className="shrink-0 px-2 py-1 text-[11px] bg-x-surface-2 border border-x-line rounded-md text-x-ink-secondary focus:outline-none focus:border-x-accent focus:ring-[3px] focus:ring-x-focus"
+            >
+              {NEEDS_YOU_MODES.map((mode) => <option key={mode} value={mode}>{NEEDS_YOU_LABELS[mode]}</option>)}
+            </select>
           </div>
 
           <div className="border-t border-x-line-subtle" />

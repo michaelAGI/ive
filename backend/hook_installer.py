@@ -17,7 +17,9 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import stat
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -433,7 +435,9 @@ def _install_toml_hook_block(
         # Never fall back to "" here: that would rewrite the user's config
         # with nothing but IVE's block.
         logger.warning("Not writing IVE %s hooks to %s: could not read it (%s)", owner, path, exc)
-        return {"all_ive_trusted": False, "reason": "settings_unreadable", "detail": str(exc)}
+        failed = {"path": str(path), "all_ive_trusted": False, "reason": "settings_unreadable",
+                  "detail": str(exc)}
+        return {**failed, "steps": codex_hook_trust_steps(failed)}
     rendered = _render_toml_hook_block(owner, event_groups)
     updated = _place_toml_hook_block(existing, owner, rendered)
     if updated != existing:
@@ -447,8 +451,9 @@ def _install_toml_hook_block(
                 owner, path, exc,
             )
             report = _ensure_codex_hook_trust(path) or {}
-            return {**report, "all_ive_trusted": False, "reason": "hook_block_conflict",
-                    "detail": str(exc)}
+            conflict = {**report, "path": str(path), "all_ive_trusted": False,
+                        "reason": "hook_block_conflict", "detail": str(exc)}
+            return {**conflict, "steps": codex_hook_trust_steps(conflict)}
         _write_text_atomic(path, updated)
     return _ensure_codex_hook_trust(path)
 
@@ -521,19 +526,32 @@ def _place_toml_hook_block(text: str, owner: str, rendered: str) -> str:
 # Codex runs a config.toml hook only when
 #   [hooks.state."<config.toml path>:<event_snake>:<group idx>:<handler idx>"]
 #   trusted_hash = "sha256:<hex>"
-# matches the handler's current hash; otherwise the TUI shows "N hooks need
-# review" and silently skips them. The hash is codex's own (codex-rs
-# hooks/src/engine/discovery.rs `hook_hash` + config/src/fingerprint.rs
+# matches the handler's current hash AND that table does not say
+# `enabled = false` (codex-rs hooks/src/engine/discovery.rs: handlers run when
+# `enabled && trust_status in {Managed, Trusted}`). A hash mismatch shows
+# "N hooks need review" in the TUI; a disabled handler is skipped silently.
+# The hash is codex's own (`hook_hash` + config/src/fingerprint.rs
 # `version_for_toml`): sha256 over the key-sorted compact JSON of
 #   {"event_name": <snake>, "matcher": <matcher or absent>,
 #    "hooks": [<normalized handler>]}
-# Checked against hashes codex 0.162.1 wrote itself.
+# Verified against hashes codex 0.162.1 and 0.164.0 wrote themselves; the
+# scheme is identical in both.
+#
+# `enabled = false` is written only by Codex's own UIs (TUI /hooks browser,
+# desktop app hook settings); "Continue without trusting" at startup writes
+# nothing. IVE never writes `enabled`: a handler the user switched off stays
+# off and is reported as "disabled" with the steps to switch it on again. IVE
+# keeps its hash current even then, so switching it on needs no new review.
+# HOOKS_DIR/codex_hook_trust.json remembers only the hash IVE last wrote per
+# handler, to recognise a hash a newer codex rewrote for an unchanged handler.
 #
 # IVE writes trust ONLY for handlers inside its own marker blocks. It never
 # launches codex with --dangerously-bypass-hook-trust: that flag applies to
 # every enabled hook of every layer (user config and project .codex/ in any
 # repo a session opens), so it would also run unreviewed third-party hooks.
 _CODEX_EVENT_LABELS = {
+    "PreModelRequest": "pre_model_request",
+    "PostModelRequest": "post_model_request",
     "PreToolUse": "pre_tool_use",
     "PermissionRequest": "permission_request",
     "PostToolUse": "post_tool_use",
@@ -547,18 +565,47 @@ _CODEX_EVENT_LABELS = {
     "Stop": "stop",
     "Interrupt": "interrupt",
 }
-_CODEX_EVENTS_WITHOUT_MATCHER = {"UserPromptSubmit", "Stop", "Interrupt"}
+_CODEX_EVENTS_WITHOUT_MATCHER = {
+    "PreModelRequest", "PostModelRequest", "UserPromptSubmit", "Stop", "Interrupt",
+}
 _CODEX_EVENTS_WITH_CONTEXT_LIMIT = {
     "PreToolUse", "PostToolUse", "SessionStart", "UserPromptSubmit", "SubagentStart",
 }
 _CODEX_DEFAULT_CONTEXT_LIMIT = 2500
 _CODEX_SHORT_TIMEOUT_EVENTS = {"SessionEnd", "Interrupt"}
+# Oldest and newest codex-cli whose own trust records matched this scheme.
+_CODEX_TRUST_VERIFIED = ((0, 162, 1), (0, 164, 0))
+_CODEX_TRUST_MEMORY_NAME = "codex_hook_trust.json"
+_codex_version_cache: dict[str, tuple[int, tuple[int, ...] | None]] = {}
 
 
 def codex_auto_trust_enabled() -> bool:
     return os.environ.get("IVE_CODEX_AUTO_TRUST_HOOKS", "1").strip().lower() not in {
         "0", "false", "no", "off",
     }
+
+
+def codex_cli_version(binary: str | None = None) -> tuple[int, ...] | None:
+    """codex-cli version from ``codex --version`` (cached per binary mtime)."""
+    binary = binary or shutil.which("codex")
+    if not binary:
+        return None
+    try:
+        stamp = os.stat(binary).st_mtime_ns
+    except OSError:
+        return None
+    cached = _codex_version_cache.get(binary)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    version = None
+    try:
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"(\d+)\.(\d+)\.(\d+)", out or "")
+        version = tuple(int(x) for x in m.groups()) if m else None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    _codex_version_cache[binary] = (stamp, version)
+    return version
 
 
 def codex_hook_key_source(config_path: Path) -> str:
@@ -648,35 +695,69 @@ def _state_header(key: str) -> str:
     return f"[hooks.state.{json.dumps(key, ensure_ascii=False)}]"
 
 
-def _set_trusted_hash(text: str, key: str, value: str) -> str | None:
-    """Set trusted_hash for ``key`` in its existing header table, or append one.
+def _set_hook_state(text: str, key: str, values: dict[str, object]) -> str:
+    """Set ``values`` in the ``[hooks.state."key"]`` table in place, or append it.
 
-    Returns None when the key exists in a form IVE does not edit (inline table,
-    dotted keys); the caller then reports it instead of risking a duplicate key.
+    Other keys of that table (trusted_content_hash, a Codex-written enabled)
+    are kept. A key that only exists as an inline table or dotted key is not
+    found here; the appended duplicate then fails the caller's round-trip
+    parse, which reports it instead of writing a config codex rejects.
     """
     header = _state_header(key)
+    rendered = {name: f"{name} = {_toml_scalar(value)}\n" for name, value in values.items()}
     lines = text.splitlines(keepends=True)
     for i, line in enumerate(lines):
         if line.strip() != header:
             continue
         j = i + 1
         while j < len(lines) and not _TOML_TABLE_HEADER_RE.match(lines[j]):
-            if re.match(r"^\s*trusted_hash\s*=", lines[j]):
-                lines[j] = f"trusted_hash = {json.dumps(value)}\n"
-                return "".join(lines)
+            m = re.match(r"^\s*([A-Za-z_]+)\s*=", lines[j])
+            if m and m.group(1) in rendered:
+                lines[j] = rendered.pop(m.group(1))
             j += 1
-        lines.insert(i + 1, f"trusted_hash = {json.dumps(value)}\n")
+        for offset, line in enumerate(rendered.values()):
+            lines.insert(i + 1 + offset, line)
         return "".join(lines)
     base = text.rstrip()
-    return (base + "\n\n" if base else "") + f"{header}\ntrusted_hash = {json.dumps(value)}\n"
+    return (base + "\n\n" if base else "") + header + "\n" + "".join(rendered.values())
+
+
+def _set_trusted_hash(text: str, key: str, value: str) -> str:
+    return _set_hook_state(text, key, {"trusted_hash": value})
+
+
+def _trust_memory_path() -> Path:
+    return HOOKS_DIR / _CODEX_TRUST_MEMORY_NAME
+
+
+def _load_trust_memory() -> dict:
+    """{key: <trusted_hash IVE last wrote for that handler>}; hashes only."""
+    try:
+        data = json.loads(_trust_memory_path().read_text())
+    except (OSError, ValueError):
+        return {}
+    handlers = data.get("handlers") if isinstance(data, dict) else None
+    return {k: v for k, v in handlers.items() if isinstance(v, str)} if isinstance(handlers, dict) else {}
+
+
+def _save_trust_memory(handlers: dict) -> None:
+    path = _trust_memory_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_text_atomic(path, json.dumps({"handlers": handlers}, indent=1, sort_keys=True) + "\n")
+    except OSError as exc:
+        logger.warning("Could not save Codex hook trust memory %s: %s", path, exc)
 
 
 def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
     """Which hooks in a Codex config.toml will actually run, IVE's in particular.
 
     With ``fix=True`` (and IVE_CODEX_AUTO_TRUST_HOOKS not disabled) IVE writes
-    trusted_hash entries for handlers inside its own marker blocks only. A
-    handler the user disabled (``enabled = false``) stays disabled.
+    or refreshes trusted_hash for handlers inside its own marker blocks, also
+    for handlers Codex has ``enabled = false``; it never writes ``enabled``, so
+    such a handler stays off (status "disabled", reason "disabled"). A
+    trusted_hash codex rewrote for an unchanged IVE handler is accepted as
+    trusted instead of overwritten.
     """
     path = Path(path)
     key_source = codex_hook_key_source(path)
@@ -686,10 +767,12 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
         "hooks": [],
         "ive_total": 0,
         "ive_trusted": 0,
+        "ive_untrusted": [],
         "auto_trusted": 0,
         "all_ive_trusted": False,
         "auto_trust": codex_auto_trust_enabled(),
         "reason": "ok",
+        "steps": [],
     }
     try:
         text = path.read_text() if path.exists() else ""
@@ -697,13 +780,16 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         report["reason"] = "config_unreadable"
         report["detail"] = str(exc)
+        report["steps"] = codex_hook_trust_steps(report)
         return report
     hooks_section = parsed.get("hooks", {})
     if not isinstance(hooks_section, dict):
         report["reason"] = "invalid_hooks_section"
+        report["steps"] = codex_hook_trust_steps(report)
         return report
     states = hooks_section.get("state", {})
     states = states if isinstance(states, dict) else {}
+    memory = _load_trust_memory()
     counts, owners = _scan_toml_hook_layout(text)
     entries: list[dict] = []
     layout_ok = True
@@ -728,13 +814,17 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
                 key = f"{key_source}:{_CODEX_EVENT_LABELS.get(event, event)}:{g}:{h}"
                 current = codex_hook_hash(event, group, handler)
                 state = states.get(key) if isinstance(states.get(key), dict) else None
+                recorded = state.get("trusted_hash") if state else None
+                # A differing hash on a handler IVE last trusted at this very
+                # identity can only come from codex itself (newer scheme).
+                hash_ok = bool(recorded) and (recorded == current or memory.get(key) == current)
                 if current is None:
                     status = "unsupported"
                 elif state is not None and state.get("enabled") is False:
                     status = "disabled"
-                elif state is not None and state.get("trusted_hash") == current:
+                elif hash_ok:
                     status = "trusted"
-                elif state is not None and state.get("trusted_hash"):
+                elif recorded:
                     status = "modified"
                 else:
                     status = "untrusted"
@@ -746,6 +836,7 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
                     "owner": owners.get((event, g, h)),
                     "command": handler.get("command") if isinstance(handler, dict) else None,
                     "hash": current,
+                    "hash_ok": hash_ok,
                     "status": status,
                 })
     if not layout_ok:
@@ -753,19 +844,15 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
 
     if fix and report["auto_trust"]:
         new_text = text
-        changed = []
+        changed: list[dict] = []
         for entry in entries:
-            if entry["owner"] is None or entry["status"] not in {"untrusted", "modified"}:
+            if entry["owner"] is None or entry["status"] == "unsupported" or entry["hash_ok"]:
                 continue
-            candidate = _set_trusted_hash(new_text, entry["key"], entry["hash"])
-            if candidate is None:
-                continue
-            new_text = candidate
+            new_text = _set_hook_state(new_text, entry["key"], {"trusted_hash": entry["hash"]})
             changed.append(entry)
         if changed:
             try:
-                reparsed = tomllib.loads(new_text)
-                new_states = reparsed.get("hooks", {}).get("state", {})
+                new_states = tomllib.loads(new_text).get("hooks", {}).get("state", {})
                 if any(new_states.get(e["key"], {}).get("trusted_hash") != e["hash"] for e in changed):
                     raise ValueError("trust entries did not round-trip")
                 _write_text_atomic(path, new_text)
@@ -775,20 +862,34 @@ def codex_hook_trust_report(path: Path, *, fix: bool = False) -> dict:
                 report["detail"] = str(exc)
             else:
                 for entry in changed:
-                    entry["status"] = "trusted"
+                    entry["hash_ok"] = True
                     entry["auto_trusted"] = True
+                    if entry["status"] != "disabled":
+                        entry["status"] = "trusted"
+                    memory[entry["key"]] = entry["hash"]
+                _save_trust_memory(memory)
                 report["auto_trusted"] = len(changed)
                 logger.info("Trusted %d IVE Codex hook(s) in %s", len(changed), path)
 
     ive = [e for e in entries if e["owner"] is not None]
+    pending = [e for e in ive if e["status"] != "trusted"]
     report["hooks"] = entries
     report["ive_total"] = len(ive)
-    report["ive_trusted"] = sum(1 for e in ive if e["status"] == "trusted")
+    report["ive_trusted"] = len(ive) - len(pending)
     report["ive_untrusted"] = [
-        {k: e[k] for k in ("key", "event", "owner", "status")}
-        for e in ive if e["status"] != "trusted"
+        {k: e[k] for k in ("key", "event", "owner", "status", "hash_ok")} for e in pending
     ]
-    report["all_ive_trusted"] = bool(ive) and layout_ok and report["ive_trusted"] == len(ive)
+    report["all_ive_trusted"] = bool(ive) and layout_ok and not pending
+    if report["reason"] == "ok" and not report["all_ive_trusted"]:
+        if not ive:
+            report["reason"] = "no_ive_hooks"
+        elif pending and all(e["status"] == "disabled" for e in pending):
+            report["reason"] = "disabled"
+        elif not report["auto_trust"]:
+            report["reason"] = "auto_trust_off"
+        else:
+            report["reason"] = "needs_review"
+    report["steps"] = codex_hook_trust_steps(report)
     return report
 
 
@@ -800,25 +901,93 @@ def _ensure_codex_hook_trust(path: Path) -> dict | None:
         return None
 
 
+def _codex_version_note() -> str | None:
+    version = codex_cli_version()
+    if not version:
+        return None
+    low, high = _CODEX_TRUST_VERIFIED
+    label = ".".join(map(str, version))
+    if version < low:
+        return (
+            f"Codex {label} is older than the versions IVE verified hook trust with "
+            f"({'.'.join(map(str, low))} to {'.'.join(map(str, high))}); run codex update."
+        )
+    if version > high:
+        return (
+            f"Codex {label} is newer than IVE verified hook trust with "
+            f"(up to {'.'.join(map(str, high))}); its trust format may have changed."
+        )
+    return None
+
+
+def codex_hook_trust_steps(report: dict | None) -> list[str]:
+    """What the user can do about a report that is not all_ive_trusted."""
+    if not report or report.get("all_ive_trusted"):
+        return []
+    path = report.get("path")
+    reason = report.get("reason")
+    pending = report.get("ive_untrusted") or []
+    events = ", ".join(sorted({e.get("event") for e in pending if e.get("event")}))
+    if reason in {"config_unreadable", "settings_unreadable", "invalid_hooks_section"}:
+        return [
+            f"Fix the TOML in {path} (codex doctor shows the parse error).",
+            "Restart the session so IVE can install and trust its hooks.",
+        ]
+    if reason == "hook_block_conflict":
+        return [
+            f"Move the inline hooks in {path} to [[hooks.<Event>]] tables, or remove them.",
+            "Restart the session so IVE can add its hooks.",
+        ]
+    if reason == "trust_write_failed":
+        return [f"Make {path} writable, or run /hooks in Codex and trust the IVE hooks there."]
+    if reason == "disabled":
+        return [
+            f"Switch the IVE hooks back on in Codex: /hooks, open {events or 'the event'}, "
+            "Space toggles a handler.",
+            "Or enable them in the Codex app under hook settings.",
+        ]
+    if reason == "auto_trust_off":
+        return [
+            f"Run /hooks in Codex and trust the IVE hooks ({path}), "
+            "or unset IVE_CODEX_AUTO_TRUST_HOOKS so IVE does it.",
+        ]
+    if reason == "no_ive_hooks":
+        return ["Restart the session so IVE installs its Codex hooks."]
+    return [f"Run /hooks in Codex and trust the IVE hooks ({path})."]
+
+
 def codex_hooks_notice(report: dict | None) -> str | None:
     """User-facing text when IVE's Codex hooks will not run, else None."""
     if not report or report.get("all_ive_trusted"):
         return None
     pending = report.get("ive_untrusted") or []
-    disabled = [e for e in pending if e.get("status") == "disabled"]
-    if report.get("reason") == "hook_block_conflict":
-        why = "IVE could not add its Codex hooks (config.toml declares hooks inline)"
-    elif report.get("reason") == "hook_layout_unindexable":
-        why = "Codex hooks in config.toml use a layout IVE cannot index"
-    elif disabled and len(disabled) == len(pending):
-        why = f"{len(disabled)} IVE Codex hook(s) are disabled"
+    reason = report.get("reason")
+    path = report.get("path")
+    detail = f" ({report['detail']})" if report.get("detail") else ""
+    count = len(pending) or "Some"
+    events = ", ".join(sorted({e.get("event") for e in pending if e.get("event")}))
+    if reason in {"config_unreadable", "settings_unreadable", "invalid_hooks_section"}:
+        why = f"IVE cannot read the Codex hooks in {path}{detail}"
+    elif reason == "hook_block_conflict":
+        why = f"IVE could not add its Codex hooks ({path} declares hooks inline)"
+    elif reason == "hook_layout_unindexable":
+        why = f"Codex hooks in {path} use a layout IVE cannot index"
+    elif reason == "trust_write_failed":
+        why = f"IVE could not write hook trust to {path}{detail}"
+    elif reason == "disabled":
+        why = f"{count} IVE Codex hook(s) are switched off in Codex ({events})"
+    elif reason == "auto_trust_off":
+        why = f"{count} IVE Codex hook(s) need review and IVE auto-trust is off (IVE_CODEX_AUTO_TRUST_HOOKS)"
+    elif reason == "no_ive_hooks":
+        why = f"IVE's Codex hooks are missing from {path}"
     else:
-        why = f"{len(pending) or 'Some'} IVE Codex hook(s) need review"
-    return (
+        why = f"{count} IVE Codex hook(s) need review"
+    text = (
         f"{why}, so Working/Ready status, native-id capture and the Safety Gate "
-        f"do not run for Codex. Run /hooks in Codex and trust the IVE hooks "
-        f"({report.get('path')})."
+        f"do not run for Codex. " + " ".join(codex_hook_trust_steps(report))
     )
+    note = _codex_version_note()
+    return f"{text} {note}" if note else text
 
 
 def _uninstall_toml_hook_block(path: Path, owner: str) -> None:

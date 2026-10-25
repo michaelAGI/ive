@@ -397,6 +397,12 @@ async def _nudge_commander_for_idle_worker(worker_id: str) -> None:
     _nudge_cooldown[worker_id] = now
 
     try:
+        # A dialog open in the Commander would take the nudge as its answer:
+        # wait for its prompt (about 30 s), else skip this nudge.
+        from open_question import wait_until_free
+        if not await wait_until_free(commander_id):
+            logger.warning("Commander nudge for %s skipped: a question is open in commander %s", worker_id[:8], commander_id[:8])
+            return
         # Clear any composing buffer in the TUI before posting, mirroring
         # the W2W warning delivery dance.
         from pty_manager import submit_prompt
@@ -639,11 +645,13 @@ def get_session_logical_status(session_id: str, is_alive: bool, db_status: str) 
     """
     db_status = (db_status or "idle").lower()
     if is_alive:
+        # 'waiting' means an open question in session_attention; a hook state
+        # of 'prompting' alone is stale once that question was answered.
         from session_attention import get_attention
         if get_attention(session_id):
             return "waiting"
         hstate = _hook_sessions.get(session_id, {}).get("state", "idle")
-        return "running" if hstate == "working" else "waiting" if hstate == "prompting" else "idle"
+        return "running" if hstate == "working" else "idle"
     if db_status in {"exited", "error", "failed", "crashed", "stopped", "auth_failed"}:
         return db_status
     return "idle"
@@ -689,6 +697,20 @@ async def mark_interrupted(session_id: str, source: str = "interrupt") -> bool:
     logger.info("Session %s interrupted by user (%s) -> idle", session_id[:8], source)
     await _broadcast({"type": "prompt_state", "session_id": session_id, "state": "idle"})
     await _broadcast({"type": "session_state", "session_id": session_id, "state": "idle", "source": source})
+    return True
+
+
+async def mark_answered(session_id: str) -> bool:
+    """The CLI's question was answered (an Overview reply, or in the terminal):
+    a 'prompting' session is now processing that answer. No hook fires between
+    the answer and the next tool or Stop, so the status would stay 'waiting'."""
+    s = _hook_sessions.get(session_id)
+    if not s or s.get("state") != "prompting":
+        return False
+    s["state"] = "working"
+    s["last_event_at"] = time.time()
+    if _broadcast:
+        await _broadcast({"type": "session_state", "session_id": session_id, "state": "working", "source": "answer"})
     return True
 
 
@@ -2248,6 +2270,10 @@ async def _deliver_pending_warnings(session_id: str):
     warnings = _pending_pty_warnings.get(session_id, [])
     if not warnings or not _pty_mgr or not _pty_mgr.is_alive(session_id):
         return  # Keep queue intact if PTY is dead — retry on next Stop
+    from open_question import session_has_open_question
+    if session_has_open_question(session_id):
+        logger.info("W2W warnings for %s held: a question is open", session_id[:8])
+        return  # Keep queue intact: typed text would answer the dialog; retry on next Stop
 
     # Pop only after confirming delivery is possible
     _pending_pty_warnings.pop(session_id, None)

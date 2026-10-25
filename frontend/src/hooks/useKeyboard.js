@@ -7,6 +7,7 @@ import { matchesKey, matchesAction, getTabSwitchCombo } from '../lib/keybindings
 import { terminalControls } from '../lib/terminalWriters'
 import { openQuickStart, openSessionSetup } from '../lib/quickStart'
 import { openFindInSession } from '../lib/findRouter'
+import { focusNextPromptMenu } from '../lib/promptFocus'
 
 // Move keyboard focus to the first chrome button (tab bar / TopBar / QuickActions).
 // Returns true if focus was moved, false if no chrome button is in the DOM.
@@ -143,6 +144,8 @@ export default function useKeyboard({
       // ── Configurable shortcuts ──────────────────────────────────────────
       if (matchesKey(e, kb.broadcast))      { e.preventDefault(); onBroadcast?.(); return }
       if (matchesKey(e, kb.toggleTerminal))  { e.preventDefault(); onToggleTerminal?.(); return }
+      // ⌘⇧Y: the oldest waiting question's PromptMenu, then the next one.
+      if (matchesKey(e, kb.answerNext))     { e.preventDefault(); focusNextPromptMenu(); return }
       if (matchesKey(e, kb.toggleSessionLevel)) {
         e.preventDefault()
         // Home → Board, Board → Session (selected one), Session → Board.
