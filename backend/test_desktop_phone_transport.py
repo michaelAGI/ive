@@ -28,7 +28,7 @@ import devices
 import joiner_sessions
 import phone_access
 from phone_setup import PhoneSetup
-from phone_availability import PhoneAvailability
+from phone_availability import PhoneAvailability, PowerProblem, PowerRefusal
 import push
 from desktop_security import create_desktop_origin_guard, desktop_proxy_config
 from fresh_database_schema import SCHEMA_STATEMENTS
@@ -80,6 +80,7 @@ class DesktopPhoneTransportTests(unittest.IsolatedAsyncioTestCase):
             ("POST", "/api/phone/availability/{action}"): "phone_availability_handler",
             ("GET", "/api/mac-power"): "mac_power_handler",
             ("POST", "/api/mac-power/{action}"): "mac_power_handler",
+            ("POST", "/api/macos/open-settings"): "macos_open_settings_handler",
             ("POST", "/api/phone/pair/start"): "phone_pair_start_handler",
             ("POST", "/api/phone/pair/complete"): "phone_pair_complete_handler",
             ("GET", "/api/phone/devices"): "phone_devices_handler",
@@ -125,11 +126,12 @@ class DesktopPhoneTransportTests(unittest.IsolatedAsyncioTestCase):
             "_close_sockets_for_sessions", "_revoke_phone_device", "_phone_reachable_urls", "_phone_bind_info",
             "phone_status_handler", "phone_pair_start_handler", "phone_pair_complete_handler", "phone_devices_handler",
             "phone_setup_handler", "phone_availability_handler",
-            "mac_power_handler",
+            "mac_power_handler", "macos_open_settings_handler", "_power_error", "_power_problem",
             "phone_device_revoke_handler", "phone_pin_set_handler", "phone_unlock_handler", "phone_lock_handler",
             "_connect_page", "phone_connect_page_handler", "phone_pair_js_handler", "whoami_handler",
         }
-        constants = {"_CONNECT_HTML", "_PAIR_JS", "_PHONE_LOCK_EXEMPT", "_PHONE_SENSITIVE_PREFIXES", "_PHONE_SETUP", "_PHONE_AVAILABILITY"}
+        constants = {"_CONNECT_HTML", "_PAIR_JS", "_PHONE_LOCK_EXEMPT", "_PHONE_SENSITIVE_PREFIXES", "_PHONE_SETUP", "_PHONE_AVAILABILITY",
+                     "_POWER_DENIED", "MACOS_SETTINGS_PANES"}
         tree = ast.parse(Path(__file__).with_name("server.py").read_text())
         nodes = [node for node in tree.body if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names
@@ -137,7 +139,9 @@ class DesktopPhoneTransportTests(unittest.IsolatedAsyncioTestCase):
         namespace = dict(
             __name__="phone_transport_fixture",
             web=web, json=json, os=os, urllib=urllib, asyncio=asyncio,
-            PhoneSetup=PhoneSetup, PhoneAvailability=PhoneAvailability,
+            # The settings endpoint must behave like a Mac on every CI host.
+            sys=SimpleNamespace(platform="darwin"),
+            PhoneSetup=PhoneSetup, PhoneAvailability=PhoneAvailability, PowerProblem=PowerProblem, BATTERY_FLOOR=20,
             _auth_context=auth_context, _phone_access=phone_access,
             _joiner_sessions=joiner_sessions, get_db=self.get_db,
             _DEFAULT_COOKIE_MAX_AGE=86400, AUTH_TOKEN="fixture-master-token",
@@ -198,11 +202,118 @@ class DesktopPhoneTransportTests(unittest.IsolatedAsyncioTestCase):
         headers, _, _ = await self.pair()
         choices = dict(consent_version=1, remote_control=True, closed_lid=True, allow_battery=True)
         for path in ("/api/phone/setup", "/api/phone/availability/start", "/api/phone/availability/approval", "/api/phone/availability/stop",
-                     "/api/mac-power/start", "/api/mac-power/stop", "/api/mac-power/approval"):
-            response = await self.client.post(path, headers=headers, json=choices)
+                     "/api/mac-power/start", "/api/mac-power/stop", "/api/mac-power/approval", "/api/mac-power/register",
+                     "/api/macos/open-settings"):
+            response = await self.client.post(path, headers=headers, json={**choices, "pane": "battery"})
             self.assertEqual(response.status, 403, await response.text())
+            if path != "/api/phone/setup":
+                self.assertEqual((await response.json())["reason"], "local_owner_required", path)
         body = await (await self.client.get("/api/phone/status", headers=headers)).json()
         self.assertNotIn("lease_id", json.dumps(body))
+
+    async def test_power_refusals_share_one_machine_readable_body(self):
+        setup = self.client.server.app[self.server["_PHONE_SETUP"]]
+        controller = self.client.server.app[self.server["_PHONE_AVAILABILITY"]]
+        options = {"allow_battery": False, "duration_seconds": 1800, "lid_low_power": False, "pause_apps": []}
+        both = (("/api/phone/availability/start", None), ("/api/mac-power/start", options))
+        shape = {"error", "reason", "state", "settings_pane"}
+
+        async def refused(path, body):
+            response = await self.client.post(path, headers=LOCAL, json=body)
+            payload = await response.json()
+            self.assertEqual(set(payload), shape, (path, response.status, payload))
+            return response.status, payload
+
+        status, payload = await refused("/api/phone/availability/start", None)
+        self.assertEqual((status, payload["reason"]), (409, "consent_required"))
+        setup.accept(dict(consent_version=1, remote_control=True, closed_lid=True, allow_battery=False))
+        # Outside the Mac app there is no helper: both entry points say so the same way.
+        for path, body in both:
+            status, payload = await refused(path, body)
+            self.assertEqual((status, payload["reason"], payload["state"], payload["settings_pane"]), (409, "mac_app_required", None, None), path)
+        # A helper refusal keeps its own code, the helper state and the pane that fixes it.
+        controller.helper = Path("/fixture-helper")
+        controller.caller = AsyncMock(side_effect=lambda payload: {
+            "ok": payload["action"] != "start", "status": "ready", "lid_saver_supported": True,
+            "reason": "battery_not_allowed" if payload["action"] == "start" else None})
+        for path, body in both:
+            status, payload = await refused(path, body)
+            self.assertEqual((status, payload["reason"], payload["state"], payload["settings_pane"]), (409, "battery_not_allowed", "ready", "battery"), path)
+            self.assertIn("Allow battery use", payload["error"])
+            self.assertNotIn("Review permissions", payload["error"])
+        self.assertEqual((await self.client.get("/api/mac-power", headers=LOCAL)).status, 200)
+        # Malformed input is the only 400; an unreachable helper is 503 for status and both starts.
+        status, payload = await refused("/api/mac-power/start", {"allow_battery": True})
+        self.assertEqual((status, payload["reason"]), (400, "invalid_request"))
+        response = await self.client.post("/api/mac-power/start", headers={**LOCAL, "Content-Type": "application/json"}, data="not json")
+        self.assertEqual((response.status, (await response.json())["reason"]), (400, "invalid_request"))
+        controller.caller = AsyncMock(side_effect=OSError("fixture: helper gone"))
+        controller.last_check = float("-inf")
+        response = await self.client.get("/api/mac-power", headers=LOCAL)
+        payload = await response.json()
+        self.assertEqual((response.status, payload["reason"], payload["settings_pane"], set(payload)), (503, "helper_connection_failed", "login_items", shape))
+        for path, body in both:
+            status, payload = await refused(path, body)
+            self.assertEqual((status, payload["reason"]), (503, "helper_connection_failed"), path)
+        # The combined status screen stays up and carries the same reason instead of a 500.
+        response = await self.client.get("/api/phone/status", headers=LOCAL)
+        availability = (await response.json())["availability"]
+        self.assertEqual(response.status, 200)
+        self.assertEqual((availability["state"], availability["reason"], availability["settings_pane"], availability["battery_floor"]),
+                         ("unknown", "helper_connection_failed", "login_items", 20))
+        self.assertIn("Login Items & Extensions", availability["message"])
+        # A bad saved choice never comes from this client, so the phone entry point reports a conflict.
+        with patch.object(controller, "start", AsyncMock(side_effect=ValueError("fixture: saved choice invalid"))):
+            status, payload = await refused("/api/phone/availability/start", None)
+            self.assertEqual((status, payload["reason"]), (409, "invalid_request"))
+            status, payload = await refused("/api/mac-power/start", options)
+            self.assertEqual((status, payload["reason"]), (400, "invalid_request"))
+        controller.caller = AsyncMock(side_effect=PowerRefusal("helper_outdated", state="ready"))
+        for path, body in both:
+            status, payload = await refused(path, body)
+            self.assertEqual((status, payload["reason"], payload["state"], payload["settings_pane"]), (409, "helper_outdated", "ready", "login_items"), path)
+        for path in ("/api/mac-power/nope", "/api/phone/availability/nope"):
+            status, payload = await refused(path, None)
+            self.assertEqual((status, payload["reason"]), (404, "unknown_action"))
+
+    async def test_system_settings_open_only_fixed_panes_for_the_local_owner(self):
+        panes = self.server["MACOS_SETTINGS_PANES"]
+        controller = self.client.server.app[self.server["_PHONE_AVAILABILITY"]]
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock()) as opened:
+            for body in ({"pane": "x-apple.systempreferences:com.apple.preference.security"}, {"pane": "../battery"},
+                         {"pane": "Battery"}, {"pane": 7}, {}, [], "battery"):
+                response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json=body)
+                self.assertEqual((response.status, (await response.json())["reason"]), (400, "unknown_pane"), body)
+            response = await self.client.post("/api/macos/open-settings", headers={**LOCAL, "Content-Type": "application/json"}, data="{broken")
+            self.assertEqual(response.status, 400)
+            opened.assert_not_awaited()
+            for pane in ("battery", "battery_options", "privacy_automation", "notifications"):
+                response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json={"pane": pane})
+                self.assertEqual(await response.json(), {"ok": True, "pane": pane})
+                self.assertEqual(response.status, 200)
+                self.assertEqual(opened.await_args.args, ("/usr/bin/open", panes[pane]))
+                self.assertTrue(panes[pane].startswith("x-apple.systempreferences:"))
+            # Without the Mac app, Login Items opens through its deep link.
+            response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json={"pane": "login_items"})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(opened.await_args.args, ("/usr/bin/open", panes["login_items"]))
+            self.assertEqual(opened.await_count, 5)
+            # With the signed helper, its own open-settings action is used instead.
+            controller.helper = Path("/fixture-helper")
+            controller.caller = AsyncMock(return_value={"ok": True, "status": "needs_approval"})
+            response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json={"pane": "login_items"})
+            self.assertEqual(await response.json(), {"ok": True, "pane": "login_items"})
+            self.assertEqual(controller.caller.await_args.args[0]["action"], "open-settings")
+            self.assertEqual(opened.await_count, 5)
+            controller.caller = AsyncMock(return_value={"ok": False, "status": "unavailable", "reason": "untrusted_process"})
+            response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json={"pane": "login_items"})
+            self.assertEqual(response.status, 200)
+            self.assertEqual((opened.await_count, opened.await_args.args), (6, ("/usr/bin/open", panes["login_items"])))
+            # Not a Mac: refused before anything runs.
+            self.server["sys"] = SimpleNamespace(platform="linux")
+            response = await self.client.post("/api/macos/open-settings", headers=LOCAL, json={"pane": "battery"})
+            self.assertEqual((response.status, (await response.json())["reason"]), (403, "macos_required"))
+            self.assertEqual(opened.await_count, 6)
 
     async def test_restricting_battery_consent_stops_lease_without_another_browser_request(self):
         setup = self.client.server.app[self.server["_PHONE_SETUP"]]

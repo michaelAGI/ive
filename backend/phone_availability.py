@@ -2,6 +2,7 @@
 
 Lease credentials stay in this process. HTTP clients only receive sanitized
 status. There is no shell, configurable executable, or arbitrary root command.
+Refusals carry a machine-readable reason so the UI can offer the one fix.
 """
 from __future__ import annotations
 
@@ -21,23 +22,76 @@ _VISIBLE = {"battery_percent", "battery_floor", "expires_at", "last_verified_at"
 _VISIBLE.update({"protocol_version", "lid_saver_supported", "lid_closed", "lid_saver_active",
                  "low_power_active", "lid_low_power", "pause_apps", "paused_processes"})
 PAUSE_APPS = {"com.tinyspeck.slackmacgap", "com.hnc.Discord", "net.whatsapp.WhatsApp", "com.spotify.client"}
-_MESSAGES = {
-    "macos_helper_approval_required": "Approve the IVE background helper in macOS, then choose Continue after approval.",
-    "macos_helper_not_registered": "Complete the one-time Mac helper setup to enable closed-lid availability.",
-    "battery_cutoff": "Availability ended because the battery reached 20%.",
-    "thermal_cutoff": "Availability ended because this Mac is too warm.",
-    "battery_not_allowed": "Connect the power adapter or explicitly allow battery use in Review permissions.",
-    "sleep_already_disabled_elsewhere": "Another app or system setting already prevents sleep. Restore normal sleep there before enabling IVE availability.",
-    "duration_ended": "The timer has ended. Normal sleep behavior is restored.",
-    "heartbeat_expired": "The connection to IVE stopped. Normal sleep behavior is restored.",
-    "app_exited": "IVE stopped. Normal sleep behavior is restored.",
-    "helper_restarted": "The helper restarted and restored normal sleep behavior.",
-    "restore_failed": "Normal sleep could not be verified. Keep the lid open and check the Mac before leaving it unattended.",
-    "recovery_journal_unreadable": "The helper could not verify a previous availability session. Keep the lid open and check Mac sleep settings.",
-    "untrusted_process": "The Mac helper could not verify IVE's signature. Use the signed app in Applications.",
-    "helper_connection_failed": "The approved Mac helper could not be reached. Check its background-item approval and retry.",
-    "not_found": "The Mac helper is missing. Install the latest IVE Mac app.",
+_LOGIN_ITEMS = "System Settings → General → Login Items & Extensions → Allow in the Background → IVE (administrator)"
+# Why a start was refused. Every sentence names the next step; no text points at another panel.
+_START_REFUSALS = {
+    "battery_not_allowed": "This Mac is running on battery. Allow battery use to continue, or connect the power adapter.",
+    "macos_helper_approval_required": f"macOS must allow the IVE background helper once: {_LOGIN_ITEMS}.",
+    "macos_helper_not_registered": f"Set up the IVE background helper once: turn the feature on, then allow it under {_LOGIN_ITEMS}.",
+    "helper_outdated": "Update the IVE Mac app. If it is already current, turn the IVE item off and on in Login Items & Extensions, or restart the Mac.",
+    "helper_connection_failed": "The IVE background helper did not answer. Check that IVE is allowed under Login Items & Extensions, then try again.",
+    "mac_app_required": "Closed-lid power control needs the IVE Mac app. Install the latest IVE Mac app and open it from Applications.",
+    "already_running": "A Mac power session is already running. Stop it before changing modes.",
+    "phone_connection_required": "Start the secure iPhone connection before keeping this Mac available.",
+    "sleep_already_disabled_elsewhere": "Another app or setting already keeps this Mac awake. Restore normal sleep first, for example with: sudo pmset -a disablesleep 0",
+    "session_already_active_or_blocked": "The background helper is still busy with a previous session. Wait a moment, check the status, then try again.",
+    "battery_unavailable": "This feature needs a MacBook with a built-in battery.",
+    "battery_cutoff": "The battery is at 20 % or below. Connect the power adapter or charge above 20 %, then try again.",
+    "thermal_cutoff": "This Mac is too warm right now. Let it cool down with the lid open, then try again.",
+    "thermal_unavailable": "macOS did not report this Mac's temperature state. Try again in a moment.",
+    "stale_power_data": "Battery information was out of date. Try again in a moment.",
+    "lid_state_unavailable": "macOS did not report whether the lid is open or closed. Turn off the lid actions and try again, or restart the Mac.",
+    "power_source_unavailable": "macOS did not report whether this Mac runs on power or battery. Connect the power adapter, then try again.",
+    "untrusted_process": "The background helper could not verify IVE's signature. Quit IVE and open the signed app from Applications.",
 }
+# What happened to a session or what the status means now.
+_MESSAGES = {
+    "battery_cutoff": "Availability ended because the battery reached 20 %. Connect the power adapter, then turn the feature on again.",
+    "thermal_cutoff": "Availability ended because this Mac got too warm. Let it cool down with the lid open, then turn the feature on again.",
+    "duration_ended": "The timer has ended and normal sleep is restored. Turn the feature on again if you need more time.",
+    "heartbeat_expired": "The connection between IVE and its background helper stopped, so normal sleep is restored. Turn the feature on again while IVE is running.",
+    "app_exited": "IVE stopped and normal sleep is restored. Turn the feature on again after reopening IVE.",
+    "helper_restarted": "The background helper restarted and restored normal sleep. Turn the feature on again if you still need it.",
+    "restore_failed": "Normal sleep could not be verified. Keep the lid open and choose Turn off and restore again (Restore normal sleep in iPhone setup). If that fails, run: sudo pmset -a disablesleep 0, or restart the Mac.",
+    "recovery_journal_unreadable": "The background helper could not check a previous session. Keep the lid open and restart the Mac to clear it.",
+    "not_found": "The IVE background helper is missing from this app. Install the latest IVE Mac app.",
+}
+_MESSAGES["embedded_service_missing"] = _MESSAGES["not_found"]
+# Which System Settings pane fixes a reason; absent means a sentence is enough.
+SETTINGS_PANES = {
+    "macos_helper_approval_required": "login_items", "macos_helper_not_registered": "login_items",
+    "helper_outdated": "login_items", "helper_connection_failed": "login_items",
+    "battery_not_allowed": "battery", "battery_cutoff": "battery",
+}
+# Registration replies name a state but no reason; the state alone says what to do.
+_STATE_REASONS = {"needs_approval": "macos_helper_approval_required", "not_registered": "macos_helper_not_registered",
+                  "unregistered": "macos_helper_not_registered", "not_found": "not_found"}
+
+
+def message_for(reason, *, refusing=False):
+    tables = (_START_REFUSALS, _MESSAGES) if refusing else (_MESSAGES, _START_REFUSALS)
+    for table in tables:
+        if reason in table:
+            return table[reason]
+    return f"Mac availability needs attention ({str(reason).replace('_', ' ')}). Check the status and try again."
+
+
+class PowerProblem(Exception):
+    """Base of refusals and conflicts: .reason, .state and .settings_pane drive the UI."""
+
+    def __init__(self, reason, *, state=None, message=None):
+        super().__init__(message or message_for(reason, refusing=True))
+        self.reason = reason
+        self.state = state
+        self.settings_pane = SETTINGS_PANES.get(reason)
+
+
+class PowerRefusal(PowerProblem, RuntimeError):
+    """macOS, the helper or this bridge refused to change power settings."""
+
+
+class PowerConflict(PowerProblem, ValueError):
+    """The request clashes with the running session or its preconditions."""
 
 
 def helper_path() -> Path | None:
@@ -60,6 +114,8 @@ class PhoneAvailability:
         self.task = None
         self.lock = asyncio.Lock()
         self.last = {"state": "unavailable", "battery_floor": BATTERY_FLOOR}
+        if self.helper is None:
+            self.last.update(reason="mac_app_required", settings_pane=None, message=message_for("mac_app_required"))
         self.last_check = float("-inf")
         self.revision = 0
         self.purpose = None
@@ -67,11 +123,14 @@ class PhoneAvailability:
 
     async def _call(self, payload):
         if self.helper is None:
-            return {"ok": False, "status": "unavailable", "message": "Install the latest IVE Mac app to use closed-lid availability."}
-        proc = await asyncio.create_subprocess_exec(
-            str(self.helper), stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
+            raise PowerRefusal("mac_app_required")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                str(self.helper), stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+        except OSError:
+            raise PowerRefusal("helper_connection_failed") from None
         try:
             out, _ = await asyncio.wait_for(proc.communicate(json.dumps(payload).encode() + b"\n"), 25)
         except BaseException:
@@ -79,14 +138,12 @@ class PhoneAvailability:
                 proc.kill()
             await proc.wait()
             raise
-        if len(out) > 65536:
-            raise RuntimeError("The Mac availability helper returned an invalid response.")
         try:
-            result = json.loads(out)
+            result = json.loads(out) if len(out) <= 65536 else None
         except (ValueError, TypeError):
-            raise RuntimeError("The Mac availability helper did not respond. Review macOS approval, then try again.") from None
+            result = None
         if not isinstance(result, dict):
-            raise RuntimeError("The Mac availability helper returned an invalid response.")
+            raise PowerRefusal("helper_connection_failed")
         return result
 
     def _remember(self, result):
@@ -105,29 +162,39 @@ class PhoneAvailability:
                     self.last[key] = datetime.fromtimestamp(value, timezone.utc).isoformat()
                 except (ValueError, OverflowError, OSError):
                     self.last.pop(key, None)
-        reason = self.last.get("reason")
-        if reason and not self.last.get("message"):
-            self.last["message"] = _MESSAGES.get(reason, f"Mac availability needs attention ({str(reason).replace('_', ' ')}).")
+        reason = self.last.get("reason") or _STATE_REASONS.get(phase)
+        if reason:
+            self.last["reason"] = reason
+            self.last["settings_pane"] = SETTINGS_PANES.get(reason)
+            if not self.last.get("message"):
+                self.last["message"] = message_for(reason)
         self.last_check = time.monotonic()
         return dict(self.last)
 
     async def status(self):
-        if self.helper is None:
-            return dict(self.last)
-        if time.monotonic() - self.last_check < 2:
+        if self.helper is None or time.monotonic() - self.last_check < 2:
             return dict(self.last)
         revision = self.revision
-        try:
-            result = await self.caller({"action": "status", "app_pid": self.app_pid})
-        except Exception:
-            result = {"state": "blocked", "battery_floor": BATTERY_FLOOR,
-                      "message": "Could not verify Mac availability. Keep the lid open until the helper is available again."}
         # A slow read must never undo an acknowledged lifecycle change, even
         # when it fails. Do not lock this IPC: Stop must remain able to proceed
         # while a status helper is slow or unavailable.
+        try:
+            result = await self.caller({"action": "status", "app_pid": self.app_pid})
+        except Exception as exc:
+            if revision != self.revision:
+                return dict(self.last)
+            if isinstance(exc, PowerProblem):
+                raise
+            raise PowerRefusal("helper_connection_failed") from exc
         if revision != self.revision:
             return dict(self.last)
         return self._remember(result)
+
+    async def register(self):
+        """Register the background helper with macOS. Approval may still be pending; nothing starts."""
+        async with self.lock:
+            self.revision += 1
+            return self._remember(await self.caller({"action": "register", "app_pid": self.app_pid}))
 
     async def start(self, *, allow_battery, duration_seconds=MAX_DURATION,
                     purpose="phone", lid_low_power=False, pause_apps=None):
@@ -145,16 +212,17 @@ class PhoneAvailability:
                 if self.options == options:
                     return await self.status()
                 if self.purpose != "phone" or purpose != "phone":
-                    raise ValueError("A Mac power session is already running. Stop it before changing modes.")
+                    raise PowerConflict("already_running", state=self.last.get("state"))
                 await self._cancel_heartbeat()
                 result = await self._stop_lease()
                 if result["state"] not in {"ready", "stopped"}:
-                    raise RuntimeError("Restore normal sleep before changing battery availability.")
+                    raise PowerRefusal("restore_failed", state=result["state"],
+                                       message="Normal sleep must be verified before battery use changes. Keep the lid open and try again in a moment.")
             if purpose == "phone" and not self.connected():
-                raise ValueError("Start the secure iPhone connection before keeping this Mac available.")
+                raise PowerConflict("phone_connection_required")
             status = await self.caller({"action": "status", "app_pid": self.app_pid})
             if (lid_low_power or pause_apps) and status.get("lid_saver_supported") is not True:
-                raise RuntimeError("Update the IVE Mac app to use lid-triggered power saving.")
+                raise PowerRefusal("helper_outdated", state=status.get("status"))
             if status.get("status") == "needs_approval":
                 return self._remember(status)
             if status.get("status") in {"not_registered", "unregistered"}:
@@ -168,7 +236,8 @@ class PhoneAvailability:
             try:
                 result = await self.caller(payload)
             except Exception:
-                self._remember({"state": "restoring", "message": "Start could not be confirmed. Check status before retrying; the helper restores an unrenewed session automatically."})
+                self._remember({"state": "restoring", "reason": "helper_connection_failed",
+                                "message": "Start could not be confirmed. Check status before retrying; the helper restores an unrenewed session automatically."})
                 raise
             view = self._remember(result)
             if result.get("ok") is True and result.get("status") == "active" and isinstance(result.get("lease_id"), str) and result["lease_id"]:
@@ -179,14 +248,21 @@ class PhoneAvailability:
                 view = dict(self.last)
                 self.task = asyncio.create_task(self._heartbeat())
             else:
+                reason, message = result.get("reason"), None
                 if view["state"] == "active":
-                    self.last = {"state": "blocked", "battery_floor": BATTERY_FLOOR,
-                                 "message": "The helper did not return a valid availability lease."}
-                raise RuntimeError(self.last.get("message") or "Mac availability could not start.")
+                    reason = "helper_outdated"
+                    message = "The background helper answered without a valid session. " + _START_REFUSALS["helper_outdated"]
+                    self.last = {"state": "blocked", "battery_floor": BATTERY_FLOOR}
+                error = PowerRefusal(reason if type(reason) is str and reason else "start_refused",
+                                     state=self.last["state"], message=message)
+                self.last.update(reason=error.reason, settings_pane=error.settings_pane, message=str(error))
+                raise error
             return view
 
     async def open_approval(self):
-        return self._remember(await self.caller({"action": "open-settings", "app_pid": self.app_pid}))
+        result = await self.caller({"action": "open-settings", "app_pid": self.app_pid})
+        # The registration reply says ready; a live lease stays authoritative until its next renewal.
+        return dict(self.last) if self.lease else self._remember(result)
 
     async def _heartbeat(self):
         try:
@@ -208,7 +284,7 @@ class PhoneAvailability:
         except Exception:
             # The independent privileged helper expires an unrenewed lease.
             self.lease = None
-            self._remember({"state": "restoring", "battery_floor": BATTERY_FLOOR,
+            self._remember({"state": "restoring", "battery_floor": BATTERY_FLOOR, "reason": "helper_connection_failed",
                             "message": "Connection to the availability helper was lost. Its safety timeout restores normal sleep."})
 
     async def _stop_lease(self):
@@ -223,7 +299,7 @@ class PhoneAvailability:
                     self.options = None
                 return view
             except Exception:
-                self._remember({"state": "restoring", "battery_floor": BATTERY_FLOOR,
+                self._remember({"state": "restoring", "battery_floor": BATTERY_FLOOR, "reason": "helper_connection_failed",
                                 "message": "Waiting for the helper's safety timeout to restore normal sleep."})
         return dict(self.last)
 

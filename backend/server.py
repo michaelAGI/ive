@@ -30080,7 +30080,7 @@ async def push_vapid_pubkey_handler(request: web.Request) -> web.Response:
 
 import phone_access as _phone_access
 from phone_setup import PhoneSetup
-from phone_availability import PhoneAvailability
+from phone_availability import BATTERY_FLOOR, PhoneAvailability, PowerProblem
 
 _PHONE_SETUP = web.AppKey("phone_setup", PhoneSetup)
 _PHONE_AVAILABILITY = web.AppKey("phone_availability", PhoneAvailability)
@@ -30130,11 +30130,11 @@ def _is_local_owner(request: web.Request, ctx) -> bool:
     return _auth_context._socket_peer_ip(request) in _auth_context._LOCALHOST_ADDRS
 
 
-def _local_owner_only(request: web.Request):
+def _local_owner_only(request: web.Request, **fields):
     ctx = get_auth(request)
     if not _is_local_owner(request, ctx):
         return web.json_response(
-            {"error": "Only possible on the Mac itself."}, status=403,
+            {"error": "Only possible on the Mac itself.", **fields}, status=403,
         )
     return None
 
@@ -30268,11 +30268,17 @@ async def phone_status_handler(request: web.Request) -> web.Response:
     if ctx.is_owner:
         import push
         active = _phone_access.codes.active()
+        try:
+            availability = await request.app[_PHONE_AVAILABILITY].status()
+        except PowerProblem as exc:
+            # An unreachable helper must not take the whole status screen down.
+            availability = {"state": "unknown", "reason": exc.reason, "settings_pane": exc.settings_pane,
+                            "message": str(exc), "battery_floor": BATTERY_FLOOR}
         payload.update({
             "bind": _phone_bind_info(),
             "desktop": bool(os.environ.get("IVE_DESKTOP_INSTANCE")),
             "setup": request.app[_PHONE_SETUP].status(desktop=bool(os.environ.get("IVE_DESKTOP_INSTANCE"))),
-            "availability": await request.app[_PHONE_AVAILABILITY].status(),
+            "availability": availability,
             "tunnel": {
                 "running": bool(_tunnel_proc and _tunnel_proc.returncode is None),
                 "url": _runtime_tunnel_url if (_tunnel_proc and _tunnel_proc.returncode is None) else None,
@@ -30309,38 +30315,57 @@ async def phone_setup_handler(request: web.Request) -> web.Response:
     return web.json_response(setup.status(desktop=bool(os.environ.get("IVE_DESKTOP_INSTANCE"))))
 
 
+# Every refusal from the power feature has one shape, so the UI can offer the
+# matching fix: 409 refusal/conflict, 400 malformed input, 503 helper unreachable.
+_POWER_DENIED = {"reason": "local_owner_required", "state": None, "settings_pane": None}
+
+
+def _power_error(message: str, reason: str, *, status: int = 409, state=None, settings_pane=None) -> web.Response:
+    return web.json_response({"error": message, "reason": reason, "state": state, "settings_pane": settings_pane}, status=status)
+
+
+def _power_problem(exc) -> web.Response:
+    status = 503 if exc.reason == "helper_connection_failed" else 409
+    return _power_error(str(exc), exc.reason, status=status, state=exc.state, settings_pane=exc.settings_pane)
+
+
 async def phone_availability_handler(request: web.Request) -> web.Response:
     # A phone can use its sessions, but cannot grant itself new OS permissions.
-    denied = _local_owner_only(request)
+    denied = _local_owner_only(request, **_POWER_DENIED)
     if denied is not None:
         return denied
     controller = request.app[_PHONE_AVAILABILITY]
     action = request.match_info["action"]
     try:
-        if action == "start":
+        if action in {"start", "approval", "register"}:
             consent = request.app[_PHONE_SETUP].read()
             if not consent.get("closed_lid"):
-                return web.json_response({"error": "Review and enable Mac availability in iPhone setup first."}, status=409)
+                return _power_error("Review and enable Mac availability in iPhone setup first.", "consent_required")
+        if action == "start":
             result = await controller.start(allow_battery=consent.get("allow_battery", False))
         elif action == "stop":
             result = await controller.stop()
         elif action == "approval":
-            if not request.app[_PHONE_SETUP].read().get("closed_lid"):
-                return web.json_response({"error": "Review Mac availability in iPhone setup first."}, status=409)
             result = await controller.open_approval()
+        elif action == "register":
+            result = await controller.register()
         else:
-            return web.json_response({"error": "Unknown availability action."}, status=404)
+            return _power_error("Unknown availability action.", "unknown_action", status=404)
         return web.json_response(result)
-    except (ValueError, RuntimeError) as exc:
-        return web.json_response({"error": str(exc)}, status=409)
+    except PowerProblem as exc:
+        return _power_problem(exc)
+    except ValueError as exc:
+        # No client input reaches start() here; a bad saved choice is a conflict, not a malformed request.
+        return _power_error(str(exc), "invalid_request", status=409)
     except Exception:
         logger.exception("Phone availability operation failed")
-        return web.json_response({"error": "Mac availability could not be updated. Check macOS approval and try again."}, status=503)
+        return _power_error("Mac availability could not be updated. Check the helper status and try again.",
+                            "helper_connection_failed", status=503, settings_pane="login_items")
 
 
 async def mac_power_handler(request: web.Request) -> web.Response:
     """One shared, local-owner-only power lease; independent of phone access."""
-    denied = _local_owner_only(request)
+    denied = _local_owner_only(request, **_POWER_DENIED)
     if denied is not None:
         return denied
     controller = request.app[_PHONE_AVAILABILITY]
@@ -30357,16 +30382,67 @@ async def mac_power_handler(request: web.Request) -> web.Response:
             result = await controller.stop()
         elif action == "approval":
             result = await controller.open_approval()
+        elif action == "register":
+            result = await controller.register()
         else:
-            return web.json_response({"error": "Unknown Mac power action."}, status=404)
+            return _power_error("Unknown Mac power action.", "unknown_action", status=404)
         return web.json_response(result)
+    except PowerProblem as exc:
+        return _power_problem(exc)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
-    except RuntimeError as exc:
-        return web.json_response({"error": str(exc)}, status=409)
+        return _power_error(str(exc), "invalid_request", status=400)
     except Exception:
         logger.exception("Mac power operation failed")
-        return web.json_response({"error": "Could not verify Mac power status. Check status before starting again."}, status=503)
+        return _power_error("Could not verify Mac power status. Check status before starting again.",
+                            "helper_connection_failed", status=503, settings_pane="login_items")
+
+
+# System Settings deep links, verified on macOS 26.7.1. The URL always comes
+# from this table; the client only names a pane.
+MACOS_SETTINGS_PANES = {
+    "battery": "x-apple.systempreferences:com.apple.Battery-Settings.extension",
+    "battery_options": "x-apple.systempreferences:com.apple.Battery-Settings.extension?options",
+    "lock_screen": "x-apple.systempreferences:com.apple.Lock-Screen-Settings.extension",
+    "notifications": "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.ive.desktop",
+    "login_items": "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
+    "privacy_automation": "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
+    "privacy_files": "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
+    "privacy_full_disk": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    "privacy_screen": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    "privacy_microphone": "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+    "privacy_accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+}
+
+
+async def macos_open_settings_handler(request: web.Request) -> web.Response:
+    """Open one fixed System Settings pane for the owner sitting at the Mac."""
+    denied = _local_owner_only(request, reason="local_owner_required")
+    if denied is not None:
+        return denied
+    if sys.platform != "darwin":
+        return web.json_response({"error": "System Settings can only be opened on a Mac.", "reason": "macos_required"}, status=403)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    pane = body.get("pane") if isinstance(body, dict) else None
+    url = MACOS_SETTINGS_PANES.get(pane) if isinstance(pane, str) else None
+    if url is None:
+        return web.json_response({"error": "Unknown System Settings pane.", "reason": "unknown_pane"}, status=400)
+    if pane == "login_items":
+        # The signed helper opens Login Items itself; without the Mac app the deep link does.
+        try:
+            view = await request.app[_PHONE_AVAILABILITY].open_approval()
+            if view.get("state") not in {"unavailable", "not_found"}:
+                return web.json_response({"ok": True, "pane": pane})
+        except Exception:
+            logger.info("Login Items could not be opened through the helper; using the settings link")
+    try:
+        await asyncio.create_subprocess_exec("/usr/bin/open", url, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+    except OSError:
+        logger.exception("System Settings could not be opened")
+        return web.json_response({"error": "System Settings could not be opened.", "reason": "open_failed"}, status=503)
+    return web.json_response({"ok": True, "pane": pane})
 
 
 async def _broadcast_to_owners(event: dict) -> None:
@@ -32880,6 +32956,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/phone/availability/{action}", phone_availability_handler)
     app.router.add_get("/api/mac-power", mac_power_handler)
     app.router.add_post("/api/mac-power/{action}", mac_power_handler)
+    app.router.add_post("/api/macos/open-settings", macos_open_settings_handler)
     app.router.add_post("/api/phone/pair/start", phone_pair_start_handler)
     app.router.add_post("/api/phone/pair/cancel", phone_pair_cancel_handler)
     app.router.add_post("/api/phone/pair/complete", phone_pair_complete_handler)

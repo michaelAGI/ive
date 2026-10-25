@@ -563,10 +563,16 @@ function NativePushCard({ devices }) {
 }
 
 function NotesCard({ desktop }) {
+  const [note, setNote] = useState(null)
+  const openBattery = async () => {
+    setNote(null)
+    try { await api.openMacSettings('battery') } catch (err) { setNote(errText(err)) }
+  }
   return (
     <Section title="Good to know" icon={Wifi} data-phone-notes>
       <ul className="list-disc space-y-1.5 pl-4 text-[12px] leading-relaxed text-x-ink-secondary">
-        <li><b>The Mac must stay awake and IVE must stay open.</b> If either stops, your phone loses the connection. You can adjust sleep behavior in the Mac’s System Settings → Battery/Energy.</li>
+        <li><b>The Mac must stay awake and IVE must stay open.</b> If either stops, your phone loses the connection. Sleep behavior lives in System Settings → Battery.
+          {desktop && <span className="mt-1.5 flex flex-wrap items-center gap-2"><Button size="sm" onClick={openBattery} data-phone-open-battery>Open Battery settings</Button>{note && <span className="text-x-danger">{note}</span>}</span>}</li>
         <li><b>Tunnel</b>: an encrypted internet connection via Cloudflare, for Wi-Fi or mobile data. The free tunnel gets a new address when it starts again. Start the connection on this Mac, then use a fresh pairing code in the iPhone app.</li>
         {desktop ? <li><b>Mac app:</b> use Start secure connection above. Joining the same Wi-Fi alone does not make this app reachable.</li> : <li><b>Other installations:</b> direct Wi-Fi access is available only when the IVE server is configured for network access. Use only an address shown in the pairing card; plain http is unencrypted.</li>}
         <li>Every remote request needs a paired device. Revoking a device ends its access at once, including open terminals.</li>

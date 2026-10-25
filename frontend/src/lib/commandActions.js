@@ -430,10 +430,10 @@ export const ACTIONS = [{
   hideFromPanel: true
 }, {
   id: 'mac-power',
-  label: 'Mac & Energie',
+  label: 'Mac & Power',
   icon: Zap,
   section: 'Config',
-  hint: 'Akku sparen, Deckel schließen, Agenten weiterarbeiten lassen',
+  hint: 'Save battery, close the lid, keep agents working',
   hideFromPanel: true
 }, {
   id: 'model-providers',

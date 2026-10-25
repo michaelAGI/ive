@@ -140,8 +140,8 @@ export const IA_GROUPS = [{
     description: 'Theme and defaults.'
   }, {
     id: 'mac-power',
-    label: 'Mac & Energie',
-    description: 'Agenten bei geschlossenem Deckel weiterarbeiten lassen und dabei Strom sparen.'
+    label: 'Mac & Power',
+    description: 'Keep agents working with the lid closed and save power.'
   }, {
     id: 'model-providers',
     label: 'Model Providers',
