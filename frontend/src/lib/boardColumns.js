@@ -1,16 +1,17 @@
-// Single source of truth for the Feature Board's columns.
+// Single source of truth for the Tasks board (⌘B) columns.
 // Used by FeatureBoard for layout + by WorkspaceSettingsPanel to populate
-// the per-workspace "default destination" dropdowns.
+// the per-workspace "default destination" dropdowns. `hint` sits under the
+// column title, `empty` replaces a bare "no cards".
 export const COLUMNS = [
-  { key: 'backlog', label: 'Backlog' },
-  { key: 'todo', label: 'To Do' },
-  { key: 'planning', label: 'Planning', color: 'text-amber-400' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'review', label: 'Review' },
-  { key: 'testing', label: 'Testing' },
-  { key: 'documenting', label: 'Docs' },
-  { key: 'done', label: 'Done' },
-  { key: 'blocked', label: 'Blocked' },
+  { key: 'backlog', label: 'Backlog', hint: 'Ideas, not started', empty: 'No ideas parked here. Press n or the plus button to add a card.' },
+  { key: 'todo', label: 'To Do', hint: 'Ready to start', empty: 'Nothing is waiting to start.' },
+  { key: 'planning', label: 'Planning', hint: 'Agent plans first', empty: 'No agent is planning right now.' },
+  { key: 'in_progress', label: 'In Progress', hint: 'Agent working', empty: 'No agent is working on a card.' },
+  { key: 'review', label: 'Review', hint: 'Done by an agent, your call', empty: 'Nothing to review. Cards land here when an agent reports it is finished.' },
+  { key: 'testing', label: 'Testing', hint: 'Test agent checking', empty: 'No test agent is checking a card.' },
+  { key: 'documenting', label: 'Docs', hint: 'Being written up', empty: 'Nothing is being written up.' },
+  { key: 'done', label: 'Done', hint: 'Finished', empty: 'Nothing finished yet. Accepted cards land here.' },
+  { key: 'blocked', label: 'Blocked', hint: 'Needs a decision', empty: 'Nothing is blocked.' },
 ]
 
 // Triage is intentionally a view over the board, never a workflow gate. Seven

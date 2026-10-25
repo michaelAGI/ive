@@ -257,7 +257,7 @@ export default function useKeyboard({
       // (word-by-word cursor movement in terminal).
       if (e.altKey && e.ctrlKey && !e.metaKey && !e.shiftKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
 
-        // Skip when a fullscreen overlay (Feature Board, etc.) is active
+        // Skip when a fullscreen overlay (Tasks board, etc.) is active
         if (document.querySelector('[data-board-overlay]')) return
 
         // Tabs visible after the project/workspace scope filter — must match

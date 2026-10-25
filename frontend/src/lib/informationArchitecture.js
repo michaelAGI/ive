@@ -11,8 +11,8 @@ export const IA_GROUPS = [{
     description: 'Open a conversation with an AI agent or continue an existing one.'
   }, {
     id: 'feature-board',
-    label: 'Feature Board',
-    description: 'Organize tasks by status and see what needs attention.'
+    label: 'Tasks',
+    description: 'Cards for each task: who works on it, what came back, what needs your call.'
   }, {
     id: 'pipeline-editor',
     label: 'Pipelines',

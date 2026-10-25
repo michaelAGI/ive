@@ -13,7 +13,7 @@ import '../../lib/i18n/shell'
 import markLight from '../../assets/ive-mark-light.svg'
 import markDark from '../../assets/ive-mark-dark.svg'
 
-// The sidebar: brand, filter, Work (Home · Board · Review · Knowledge), the
+// The sidebar: brand, filter, Work (Home · Overview · Changes · Knowledge), the
 // project tree, Set up (Settings · Connectors · Phone), and the foot. Helper
 // sessions (Commander, Brainstormer) never appear here.
 function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {

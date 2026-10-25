@@ -6882,6 +6882,9 @@ async def create_workspace(request: web.Request) -> web.Response:
         initial = {
             "id": ws_id, "name": name, "path": path,
             "comms_enabled": 1, "coordination_enabled": 1, "context_sharing_enabled": 1,
+            # Databases created before the schema default changed still carry
+            # DEFAULT 'review' for this column; state the current default here.
+            "board_doc_new_column": "backlog",
             **workspace_fields.create_values(),
         }
         await db.execute(
@@ -12647,6 +12650,226 @@ def _task_duplicate_response(candidates: list[dict]) -> dict:
     }
 
 
+_TASK_FILES_CHANGED_CAP = 50
+_TASK_RUN_SUMMARY_CAP = 600
+_TASK_RESULT_TEXT_CAP = 2000
+_TASK_ENRICH_CHUNK = 400
+_VERIFY_STAGE_TOKENS = {"verify", "verification", "test", "tests", "tester", "qa"}
+_IMPLEMENT_STAGE_TOKENS = {"implement", "implementation", "execute", "work", "build"}
+_TEST_QUEUE_VERDICTS = {"queued": "running", "running": "running", "done": "passed", "failed": "failed"}
+
+
+async def _rows_by_key(db, sql: str, keys, key_field: str) -> dict:
+    """Run ``sql`` (with a ``{marks}`` IN list) in chunks and map rows by key_field."""
+    out = {}
+    wanted = sorted({str(k) for k in keys if k})
+    for start in range(0, len(wanted), _TASK_ENRICH_CHUNK):
+        chunk = wanted[start:start + _TASK_ENRICH_CHUNK]
+        cur = await db.execute(sql.format(marks=",".join("?" * len(chunk))), chunk)
+        for row in await cur.fetchall():
+            out[row[key_field]] = dict(row)
+    return out
+
+
+def _task_relative_files(raw, roots) -> list[str]:
+    """Digest files_touched as paths relative to the worktree or workspace, deduplicated."""
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    except (ValueError, TypeError):
+        items = []
+    if not isinstance(items, list):
+        return []
+    bases = [os.path.normpath(os.path.expanduser(str(r))).rstrip(os.sep) for r in roots if r]
+    out: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            item = item.get("path") or item.get("file") or ""
+        path = str(item or "").strip()
+        if not path:
+            continue
+        norm = os.path.normpath(os.path.expanduser(path))
+        rel = path
+        for base in bases:
+            if norm == base:
+                rel = "."
+                break
+            if norm.startswith(base + os.sep):
+                rel = norm[len(base) + 1:]
+                break
+        if rel not in out:
+            out.append(rel)
+    return out
+
+
+def _stage_entry(history: dict, preferred: str, tokens: set) -> dict | None:
+    entry = history.get(preferred)
+    if isinstance(entry, dict):
+        return entry
+    for stage_id, candidate in history.items():
+        if not isinstance(candidate, dict):
+            continue
+        words = set(re.findall(r"[a-z0-9]+", str(stage_id).lower()))
+        if words & tokens and "gate" not in words:
+            return candidate
+    return None
+
+
+def _stage_text(entry, cap: int = _TASK_RUN_SUMMARY_CAP) -> str:
+    """A stage output without the __pipeline_result marker, bounded to ``cap``.
+
+    A reported result keeps its head; a captured terminal tail keeps its end,
+    because that is where the agent's final answer sits.
+    """
+    raw = str((entry or {}).get("output_summary") or "")
+    lines = []
+    for line in raw.split("\n"):
+        if line.startswith("__pipeline_result:"):
+            line = line.split(":", 2)[-1]
+        lines.append(line)
+    text = "\n".join(lines).strip()
+    if len(text) <= cap:
+        return text
+    return text[:cap].rstrip() if raw.startswith("__pipeline_result:") else text[-cap:].lstrip()
+
+
+def _implement_stage(history: dict) -> dict | None:
+    """The implement stage, or the fix stage when it finished after it."""
+    implement = _stage_entry(history, "implement", _IMPLEMENT_STAGE_TOKENS)
+    fix = history.get("fix")
+    if isinstance(fix, dict) and fix.get("status") == "completed" and _stage_text(fix):
+        if (fix.get("completed_at") or 0) >= ((implement or {}).get("completed_at") or 0):
+            return fix
+    return implement
+
+
+def _stage_verdict(entry) -> str:
+    """'passed' | 'failed' | 'running' | 'none' for a verify stage entry."""
+    if not isinstance(entry, dict):
+        return "none"
+    status = entry.get("status")
+    if status == "running":
+        return "running"
+    if status == "failed":
+        return "failed"
+    if status != "completed":
+        return "none"
+    text = str(entry.get("output_summary") or "")
+    for line in text.split("\n"):
+        if line.startswith("__pipeline_result:"):
+            verdict = line.split(":", 2)[1].strip().lower()
+            if verdict in ("pass", "fail"):
+                return "passed" if verdict == "pass" else "failed"
+            break
+    return "none"
+
+
+def _task_verification(run, verify_entry, queue_entry) -> str:
+    """A running test-queue entry wins; otherwise the newer of run and queue verdicts."""
+    queue_verdict = _TEST_QUEUE_VERDICTS.get(str((queue_entry or {}).get("status") or ""), "none")
+    if queue_verdict == "running":
+        return "running"
+    run_verdict = _stage_verdict(verify_entry)
+    if run_verdict != "none" and queue_verdict != "none":
+        newer_queue = str(queue_entry.get("created_at") or "") >= str((run or {}).get("created_at") or "")
+        return queue_verdict if newer_queue else run_verdict
+    return run_verdict if run_verdict != "none" else queue_verdict
+
+
+_BACKSTOP_SUMMARY_MARKER = "auto-documented after the session went idle"
+
+
+def _task_origin(task: dict, labels: set, has_run: bool, agent_event: bool) -> str:
+    if "ive-guided" in labels or has_run:
+        return "guided"
+    if "auto-triage" in labels or _BACKSTOP_SUMMARY_MARKER in str(task.get("result_summary") or "").lower():
+        return "backstop"
+    if agent_event or task.get("commander_session_id"):
+        return "agent"
+    return "user"
+
+
+async def _enrich_task_rows(db, tasks: list[dict]) -> list[dict]:
+    """Add the review fields the Task Board shows (test_list_tasks_review_fields.py).
+
+    Six set-based queries for the whole page, never one per task: sessions,
+    digests, workspace paths, latest pipeline run per task, latest test-queue
+    entry per task and session-authored task events.
+    """
+    if not tasks:
+        return tasks
+    import pipeline_engine
+    task_ids = [t["id"] for t in tasks]
+    session_ids = {t.get("assigned_session_id") for t in tasks} | {t.get("last_agent_session_id") for t in tasks}
+    sessions = await _rows_by_key(
+        db, "SELECT id, name, status, worktree_path, branch_label FROM sessions WHERE id IN ({marks})",
+        session_ids, "id")
+    digests = await _rows_by_key(
+        db, "SELECT session_id, task_summary, current_focus, files_touched "
+            "FROM session_digests WHERE session_id IN ({marks})", session_ids, "session_id")
+    workspaces = await _rows_by_key(
+        db, "SELECT id, path FROM workspaces WHERE id IN ({marks})",
+        {t.get("workspace_id") for t in tasks}, "id")
+    runs = await _rows_by_key(
+        db, """SELECT r.id, r.task_id, r.status, r.stage_history, r.created_at FROM pipeline_runs r
+               WHERE r.task_id IN ({marks})
+                 AND r.rowid = (SELECT r2.rowid FROM pipeline_runs r2 WHERE r2.task_id = r.task_id
+                                ORDER BY r2.created_at DESC, r2.rowid DESC LIMIT 1)""",
+        task_ids, "task_id")
+    queue = await _rows_by_key(
+        db, """SELECT q.task_id, q.status, q.created_at FROM test_queue q
+               WHERE q.task_id IN ({marks})
+                 AND q.rowid = (SELECT q2.rowid FROM test_queue q2 WHERE q2.task_id = q.task_id
+                                ORDER BY q2.created_at DESC, q2.rowid DESC LIMIT 1)""",
+        task_ids, "task_id")
+    agent_tasks = await _rows_by_key(
+        db, """SELECT DISTINCT task_id FROM task_events
+               WHERE task_id IN ({marks}) AND actor LIKE '%:%'
+                 AND (event_type IN ('created', 'result_summary_changed')
+                      OR (event_type = 'status_changed'
+                          AND new_value IN ('review', 'done', 'verified', 'blocked')))""",
+        task_ids, "task_id")
+    for task in tasks:
+        assigned_id = task.get("assigned_session_id") or ""
+        last_agent_id = task.get("last_agent_session_id") or ""
+        assigned = sessions.get(assigned_id)
+        agent = assigned or sessions.get(last_agent_id)
+        digest = digests.get(assigned_id) or digests.get(last_agent_id) or {}
+        worktree_path = (agent or {}).get("worktree_path") or None
+        ws_path = (workspaces.get(task.get("workspace_id")) or {}).get("path")
+        files = _task_relative_files(digest.get("files_touched"), [worktree_path, ws_path])
+        run = runs.get(task["id"])
+        history = {}
+        if run:
+            try:
+                history = json.loads(run.get("stage_history") or "{}")
+            except (ValueError, TypeError):
+                history = {}
+            if not isinstance(history, dict):
+                history = {}
+        verify = _stage_entry(history, "verify", _VERIFY_STAGE_TOKENS)
+        run_summary = _stage_text(_implement_stage(history)) or None
+        verify_summary = _stage_text(verify) or None
+        worker_text = pipeline_engine.worker_result_text(task.get("result_summary"))
+        result_text = (worker_text or run_summary or str(digest.get("task_summary") or "").strip()
+                       or str(digest.get("current_focus") or "").strip())
+        task.update({
+            "assigned_session_name": assigned.get("name") if assigned else None,
+            "assigned_session_status": assigned.get("status") if assigned else None,
+            "assigned_session_alive": bool(pty_mgr.is_alive(assigned_id)) if assigned else None,
+            "worktree_path": worktree_path,
+            "branch_label": (agent or {}).get("branch_label") or None,
+            "files_changed": files[:_TASK_FILES_CHANGED_CAP],
+            "files_changed_count": len(files),
+            "verification": _task_verification(run, verify, queue.get(task["id"])),
+            "origin": _task_origin(task, _task_label_set(task.get("labels")), bool(run), task["id"] in agent_tasks),
+            "latest_run_id": run["id"] if run else None,
+            "latest_run_summary": run_summary,
+            "latest_run_verify_summary": verify_summary,
+            "result_text": result_text[:_TASK_RESULT_TEXT_CAP],
+        })
+    return tasks
+
+
 async def list_tasks(request: web.Request) -> web.Response:
     workspace_id = request.query.get("workspace_id") or request.query.get("workspace")
     ctx = get_auth(request)
@@ -12673,7 +12896,11 @@ async def list_tasks(request: web.Request) -> web.Response:
             f"SELECT * FROM tasks{where} ORDER BY sort_order, created_at DESC", params
         )
         rows = await cur.fetchall()
-        return web.json_response([dict(r) for r in rows])
+        tasks = [dict(r) for r in rows]
+        # ?brief=1: the MCP list tools want the bare rows, not the board fields.
+        if request.query.get("brief") != "1":
+            tasks = await _enrich_task_rows(db, tasks)
+        return web.json_response(tasks)
     finally:
         await db.close()
 
@@ -12821,11 +13048,18 @@ async def create_task(request: web.Request) -> web.Response:
              body.get("blueprint_path"), body.get("blueprint_status"),
              elements_json),
         )
-        # Record creation event
+        # Record creation event. A session that files a task through MCP is
+        # named like update_task does ("planner:1a2b3c4d"); the board reads
+        # that as origin 'agent'.
+        creator = "user"
+        if caller:
+            creator = caller.get("session_type") or "session"
+            if caller.get("session_id"):
+                creator = f"{creator}:{caller['session_id'][:8]}"
         await db.execute(
             """INSERT INTO task_events (task_id, event_type, actor, new_value, message)
-               VALUES (?, 'created', 'user', ?, ?)""",
-            (task_id, body.get("status", "backlog"), f"Task created: {title}"),
+               VALUES (?, 'created', ?, ?, ?)""",
+            (task_id, creator, body.get("status", "backlog"), f"Task created: {title}"),
         )
         await db.commit()
         cur = await db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -12880,7 +13114,9 @@ async def get_task(request: web.Request) -> web.Response:
         row = await cur.fetchone()
         if not row:
             return web.json_response({"error": "task not found"}, status=404)
-        return web.json_response(dict(row))
+        task = dict(row)
+        await _enrich_task_rows(db, [task])
+        return web.json_response(task)
     finally:
         await db.close()
 
@@ -13713,6 +13949,8 @@ async def update_task(request: web.Request) -> web.Response:
         if new_status == "done" and new_status != old.get("status") and not body.get("reviewed_run_id"):
             auto_test_entry = await _auto_enqueue_test_for_task(db, task)
         await db.commit()
+        # The board merges this row over its enriched copy (store.updateTaskInStore).
+        await _enrich_task_rows(db, [task])
     finally:
         await db.close()
 
@@ -14296,6 +14534,9 @@ async def list_task_events(request: web.Request) -> web.Response:
         await db.close()
 
 
+_ITERATE_NOTE_CAP = 4000
+
+
 async def iterate_task(request: web.Request) -> web.Response:
     """Request a revision/iteration on a completed task.
 
@@ -14305,6 +14546,12 @@ async def iterate_task(request: web.Request) -> web.Response:
     """
     task_id = request.match_info["id"]
     body = await request.json()
+    if not isinstance(body, dict):
+        return web.json_response({"error": "body must be an object"}, status=400)
+    raw_note = body.get("note") or body.get("revision_notes") or ""
+    if not isinstance(raw_note, str):
+        return web.json_response({"error": "note must be a string"}, status=400)
+    revision_notes = raw_note.strip()[:_ITERATE_NOTE_CAP]
 
     db = await get_db()
     try:
@@ -14369,7 +14616,12 @@ async def iterate_task(request: web.Request) -> web.Response:
 
         new_description = body.get("description", task.get("description"))
         new_acceptance = body.get("acceptance_criteria", task.get("acceptance_criteria"))
-        revision_notes = body.get("revision_notes", "")
+        if revision_notes:
+            # The next worker reads the description, not the event log: the
+            # note goes into the description and the snapshot of this round.
+            history_entry["review_note"] = revision_notes
+            stamp = f"Review note: {revision_notes}"
+            new_description = f"{str(new_description or '').rstrip()}\n\n{stamp}".strip()
 
         await db.execute(
             """UPDATE tasks SET
@@ -14407,6 +14659,7 @@ async def iterate_task(request: web.Request) -> web.Response:
         await db.commit()
         cur = await db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
         updated = dict(await cur.fetchone())
+        await _enrich_task_rows(db, [updated])
     finally:
         await db.close()
 
@@ -17381,10 +17634,47 @@ async def _get_workspace_path(workspace_id: str) -> str | None:
         await db.close()
 
 
-async def get_workspace_git_status(request: web.Request) -> web.Response:
-    ws_path = await _get_workspace_path(request.match_info["id"])
+async def _resolve_git_target(request: web.Request) -> tuple[str | None, web.Response | None]:
+    """The workspace path, or the session worktree when ?session_id= names one.
+
+    The session must belong to this workspace and its worktree_path must be a
+    directory inside the workspace (Claude keeps worktrees under
+    .claude/worktrees). A session without a worktree reads the workspace itself.
+    """
+    workspace_id = request.match_info["id"]
+    ws_path = await _get_workspace_path(workspace_id)
     if not ws_path:
-        return web.json_response({"error": "workspace not found"}, status=404)
+        return None, web.json_response({"error": "workspace not found"}, status=404)
+    session_id = (request.query.get("session_id") or "").strip()
+    if not session_id:
+        return ws_path, None
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT workspace_id, worktree_path FROM sessions WHERE id = ?", (session_id,)
+        )
+        row = await cur.fetchone()
+    finally:
+        await db.close()
+    # A session of another workspace is "not found" too: no cross-workspace probing.
+    if not row or row["workspace_id"] != workspace_id:
+        return None, web.json_response({"error": "session not found"}, status=404)
+    worktree = str(row["worktree_path"] or "").strip()
+    if not worktree:
+        return ws_path, None
+    root = _Path(ws_path).expanduser().resolve()
+    candidate = _Path(worktree).expanduser().resolve()
+    if candidate != root and not candidate.is_relative_to(root):
+        return None, web.json_response({"error": "worktree is outside the workspace"}, status=403)
+    if not candidate.is_dir():
+        return None, web.json_response({"error": "worktree not found"}, status=404)
+    return str(candidate), None
+
+
+async def get_workspace_git_status(request: web.Request) -> web.Response:
+    ws_path, error = await _resolve_git_target(request)
+    if error:
+        return error
     try:
         result = await git_ops.git_status(ws_path)
         return web.json_response(result)
@@ -17394,9 +17684,9 @@ async def get_workspace_git_status(request: web.Request) -> web.Response:
 
 
 async def get_workspace_git_diff(request: web.Request) -> web.Response:
-    ws_path = await _get_workspace_path(request.match_info["id"])
-    if not ws_path:
-        return web.json_response({"error": "workspace not found"}, status=404)
+    ws_path, error = await _resolve_git_target(request)
+    if error:
+        return error
     staged = request.query.get("staged") == "1"
     commit_range = request.query.get("range")
     file_path = request.query.get("file")
@@ -17411,9 +17701,9 @@ async def get_workspace_git_diff(request: web.Request) -> web.Response:
 
 
 async def get_workspace_git_log(request: web.Request) -> web.Response:
-    ws_path = await _get_workspace_path(request.match_info["id"])
-    if not ws_path:
-        return web.json_response({"error": "workspace not found"}, status=404)
+    ws_path, error = await _resolve_git_target(request)
+    if error:
+        return error
     try:
         count = int(request.query.get("count", 20))
         if count < 1:

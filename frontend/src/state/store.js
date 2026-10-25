@@ -1304,8 +1304,11 @@ const useStore = create((set, get) => ({
     for (const t of tasks) map[t.id] = t
     return { tasks: map }
   }),
+  // Merge over the known row: a task_update broadcast carries the bare table
+  // row, the review fields (assigned_session_name, files_changed, ...) only
+  // come with GET /api/tasks and must survive until the next poll.
   updateTaskInStore: (task) => set((s) => ({
-    tasks: { ...s.tasks, [task.id]: task }
+    tasks: { ...s.tasks, [task.id]: s.tasks[task.id] ? { ...s.tasks[task.id], ...task } : task }
   })),
   removeTaskFromStore: (id) => set((s) => {
     const { [id]: _, ...rest } = s.tasks

@@ -39,7 +39,7 @@ try {
   assert.equal(await p.locator('[data-session-terminal-drawer="open"]').count(), 1, 'Review keeps an open terminal open')
   await checkEnter('s', p.getByRole('button', { name: 'Expand terminal', exact: true }))
   await checkEnter('s', p.getByRole('button', { name: 'Restore small terminal', exact: true }))
-  await p.getByRole('button', { name: 'Hide terminal — show overview', exact: true }).click()
+  await p.getByRole('button', { name: 'Hide terminal, show overview', exact: true }).click()
   await checkEnter('s', p.getByTitle('Toggle PTY Terminal Drawer', { exact: true }))
   await p.evaluate(() => { location.hash = '#board' })
   await p.locator('[data-board-screen]').waitFor()

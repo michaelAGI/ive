@@ -81,15 +81,17 @@ export const api = {
     })
   }),
   getWorkspaceFiles: (workspaceId, path = '') => request(`/workspaces/${workspaceId}/files?path=${encodeURIComponent(path)}`),
-  getGitStatus: workspaceId => request(`/workspaces/${workspaceId}/git/status`),
+  // sessionId: run git in that session's worktree instead of the workspace path.
+  getGitStatus: (workspaceId, opts = {}) => request(`/workspaces/${workspaceId}/git/status${opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : ''}`),
   getGitDiff: (workspaceId, opts = {}) => {
     const params = [];
     if (opts.staged) params.push('staged=1');
     if (opts.range) params.push(`range=${encodeURIComponent(opts.range)}`);
     if (opts.file) params.push(`file=${encodeURIComponent(opts.file)}`);
+    if (opts.sessionId) params.push(`session_id=${encodeURIComponent(opts.sessionId)}`);
     return request(`/workspaces/${workspaceId}/git/diff${params.length ? '?' + params.join('&') : ''}`);
   },
-  getGitLog: (workspaceId, count = 20) => request(`/workspaces/${workspaceId}/git/log?count=${count}`),
+  getGitLog: (workspaceId, count = 20, opts = {}) => request(`/workspaces/${workspaceId}/git/log?count=${count}${opts.sessionId ? `&session_id=${encodeURIComponent(opts.sessionId)}` : ''}`),
   composeReviewBrief: data => request('/review/brief', {
     method: 'POST',
     body: JSON.stringify(data)

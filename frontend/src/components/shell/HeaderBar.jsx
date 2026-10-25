@@ -9,7 +9,7 @@ import { formatKeyCombo } from '../../lib/keybindings'
 import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
 
-// 44 px header: sidebar toggle, breadcrumb (Home / Board / project › session),
+// 44 px header: sidebar toggle, breadcrumb (Home / Overview / project › session),
 // the address (ive/demo-app/add-rate-limiting), two portal slots the screens
 // fill (crumb, actions) and the global buttons. In a session only the side
 // chat button stays; new session, search and settings live on ⌃N / ⌘K.

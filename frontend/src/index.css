@@ -974,10 +974,17 @@ textarea.x-operator-policy-text {
   background: var(--x-hover) !important;
 }
 
-.x-task-card .text-x-ink {
+.x-task-card .x-card-title {
   font-size: 13px;
   font-weight: 600;
 }
+
+.x-card-link, .x-card-link-muted { display: inline-flex; align-items: center; min-height: 26px; padding: 0 2px; font-size: 11px; white-space: nowrap; border-radius: 4px; }
+.x-card-link { font-weight: 500; color: var(--x-accent-ink); }
+.x-card-link:hover { text-decoration: underline; }
+.x-card-link:focus-visible { outline: 1px solid var(--x-focus); outline-offset: 2px; }
+.x-card-link-muted { color: var(--x-muted); }
+@media (pointer: coarse) { .x-card-link, .x-card-link-muted { min-height: 40px; } }
 
 .x-board-surface > nav[aria-label="Board workspace"] {
   background: var(--x-surface) !important;
@@ -1963,3 +1970,39 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 @media (forced-colors: active) {
   :root, html[data-theme] { --x-focus: CanvasText; }
 }
+
+/* ─── Tasks board (⌘B): review cards and the Review tab ─────────────────────
+   Cards show origin, agent, result, files and a verification badge; the
+   modal's Review tab reuses the SessionBrief three-column grid. */
+.x-board-help { margin-top: 8px; }
+.x-board-help > summary { font-size: 12px; }
+.x-card-files > summary::-webkit-details-marker { display: none; }
+.x-card-files[open] .x-card-chevron { transform: rotate(90deg); }
+.x-card-chevron { transition: transform 120ms var(--x-ease); }
+.x-review-tab { display: flex; flex-direction: column; gap: 20px; min-width: 0; font-size: 13px; }
+.x-review-columns { align-items: start; }
+.x-review-columns > section > h3,
+.x-review-timeline > h3 { font-weight: 600; margin-bottom: 7px; }
+.x-review-markdown { font-size: 13px; line-height: 1.6; }
+.x-review-markdown p, .x-review-markdown ul, .x-review-markdown ol { margin: 6px 0; }
+.x-review-markdown pre { max-height: 240px; }
+.x-review-more { margin-top: 8px; }
+.x-review-more > summary { cursor: pointer; color: var(--x-muted); font-size: 12px; }
+.x-review-more > summary:hover { color: var(--x-ink); }
+.x-review-files { margin: 6px 0 8px; font-family: var(--font-mono); font-size: 11px; }
+.x-review-files li { list-style: none; }
+.x-review-diff { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--x-line); border-radius: 6px; background: var(--x-surface-2); font: 11px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 380px; }
+.x-review-diff .x-diff-add { color: var(--x-good); }
+.x-review-diff .x-diff-remove { color: var(--x-danger); }
+.x-review-diff .x-diff-hunk-header { color: var(--x-accent-ink); }
+.x-review-diff .x-diff-file-header { color: var(--x-ink); font-weight: 600; }
+.x-review-diff .x-diff-info { color: var(--x-muted); }
+.x-review-sendback { padding: 12px 14px; border: 1px solid var(--x-line); border-radius: 8px; background: var(--x-surface); }
+.x-review-timeline ol { border: 1px solid var(--x-line); border-radius: 8px; overflow: hidden; }
+.x-review-timeline li { padding: 8px 12px; background: var(--x-surface-2); font-size: 12px; }
+.x-review-timeline li + li { border-top: 1px solid var(--x-line); }
+.x-review-timeline li p { margin: 3px 0 0; color: var(--x-ink-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.x-review-event-type { font-weight: 600; }
+.x-review-event-actor { color: var(--x-muted); font-weight: 400; }
+.x-review-event-time { float: right; color: var(--x-muted); font-size: 11px; }
+@media (max-width: 900px) { .x-review-columns { grid-template-columns: 1fr; } }
