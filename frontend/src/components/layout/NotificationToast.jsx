@@ -1,11 +1,9 @@
 import HelpDetails from '../ui/HelpDetails'
 import { Component, useEffect, useLayoutEffect, useState, useRef } from 'react'
-import { Shield, Check, X, MessageSquare, FileText, RotateCcw, Sparkles, Server, Zap, GitBranch, Brain, KeyRound, UserPlus, RefreshCw, AlertTriangle, Info, ChevronDown, ArrowUpRight } from 'lucide-react'
+import { Shield, Check, X, MessageSquare, FileText, RotateCcw, Sparkles, Server, GitBranch, Brain, KeyRound, UserPlus, RefreshCw, AlertTriangle, Info, ChevronDown, ArrowUpRight } from 'lucide-react'
 import useStore from '../../state/store'
 import ProviderLogo from '../ui/ProviderLogo'
 import { groupNotifications, affectedSessions, notificationDuration, notificationPreview } from '../../lib/notificationPresentation'
-import { sendTerminalCommand, typeInTerminal, sendPlanChoice } from '../../lib/terminal'
-import { clearPromptBuffer } from '../../lib/outputParser'
 import { notificationSessionId, notificationSessionReady } from '../../lib/operatorDesk'
 
 // Notification types rendered inline in the QuickActions bar instead of as popouts.
@@ -88,9 +86,48 @@ export default function NotificationToast({ sideChatOpen = false }) {
   )
 }
 
+// Backend `codex_hook_trust_report()` reasons travel as `trust_reason`; older
+// payloads only carry the sentence, so the reason is read off its wording.
+const HOOK_NOTICE_COPY = {
+  disabled: {
+    title: "IVE's Codex hooks are switched off",
+    status: 'IVE checks for Codex are trusted but switched off in Codex.',
+    steps: ['Run /hooks in Codex and open the listed event.', 'Space toggles the IVE handler on, or enable it in the Codex app under hook settings.'],
+  },
+  config_unreadable: {
+    title: 'Codex config could not be read',
+    status: 'IVE cannot read the hooks in ~/.codex/config.toml.',
+    steps: ['Fix the TOML in ~/.codex/config.toml (codex doctor shows the parse error).', 'Restart the session so IVE can install and trust its hooks.'],
+  },
+  needs_review: {
+    title: 'Finish connecting Codex',
+    status: 'Enable IVE checks for Codex.',
+    steps: ['Open the affected session\u2019s terminal.', 'Run /hooks in Codex.', 'Review the IVE hooks and enable the ones you trust. Restart the session when it is idle.'],
+  },
+}
+
+export function hookNoticeReason(notice) {
+  const given = String(notice?.trust_reason || '')
+  if (given in HOOK_NOTICE_COPY) return given
+  if (given === 'settings_unreadable' || given === 'invalid_hooks_section') return 'config_unreadable'
+  const text = String(notice?.message || '')
+  if (/switched off in Codex/i.test(text)) return 'disabled'
+  if (/cannot read the Codex hooks/i.test(text)) return 'config_unreadable'
+  return 'needs_review'
+}
+
+export function hookNoticePresentation(notices) {
+  const reasons = notices.map(hookNoticeReason)
+  const reason = ['config_unreadable', 'disabled', 'needs_review'].find(r => reasons.includes(r)) || 'needs_review'
+  const copy = HOOK_NOTICE_COPY[reason]
+  const given = [...new Set(notices.flatMap(n => Array.isArray(n.steps) ? n.steps.filter(s => typeof s === 'string' && s.trim()) : []))]
+  return { reason, title: copy.title, status: copy.status, steps: given.length ? given : copy.steps }
+}
+
 function HookSetupNotice({ notices, sessions }) {
   const [expanded, setExpanded] = useState(false)
   const affected = affectedSessions(notices, sessions)
+  const { title, status, steps } = hookNoticePresentation(notices)
   const dismiss = () => notices.forEach(n => useStore.getState().removeNotification(n.id))
   const openTerminal = session => {
     const store = useStore.getState()
@@ -101,17 +138,17 @@ function HookSetupNotice({ notices, sessions }) {
   return <article className="ive-notice ive-notice--setup" aria-label="Codex setup notice">
     <div className="ive-notice-heading">
       <span className="ive-notice-provider"><ProviderLogo provider="codex" size={19}/></span>
-      <div className="ive-notice-title"><h2>Finish connecting Codex</h2></div>
+      <div className="ive-notice-title"><h2>{title}</h2></div>
       <button className="ive-notice-close" aria-label="Dismiss Codex setup notification" onClick={dismiss}><X size={16}/></button>
     </div>
-    <p role="status">Enable IVE checks for Codex.</p>
+    <p role="status">{status}</p>
     <div className="ive-notice-footer">
       <span className="ive-notice-context">{affected.length > 1 ? `${affected.length} sessions affected` : affected[0]?.name || 'Codex session'}</span>
       <button className="ive-notice-action" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Hide steps':'Review setup'}<ChevronDown size={13}/></button>
     </div>
     {expanded && <div className="ive-notice-details">
-      <ol><li>Open the affected session’s terminal.</li><li>Run <code>/hooks</code> in Codex.</li><li>Review the IVE hooks and enable the ones you trust. Restart the session when it is idle.</li></ol>
-      <p>IVE checks remain unavailable until Codex loads the trusted hooks.</p>
+      <ol>{steps.map(step => <li key={step}>{step.split(/(\/hooks)/).map((part, i) => part === '/hooks' ? <code key={i}>/hooks</code> : part)}</li>)}</ol>
+      <p>IVE checks remain unavailable until Codex runs the IVE hooks.</p>
       <div className="ive-notice-sessions">{affected.map(session=><button key={session.id} onClick={()=>openTerminal(session)} aria-label={`Open terminal for ${session.name} (${session.id.slice(0,8)})`}><span><strong>{session.name}</strong><small>{session.id.slice(0,8)}</small></span><ArrowUpRight size={15}/></button>)}</div>
       {!affected.length && <p>This session is no longer available. You can dismiss this notice.</p>}
     </div>}
@@ -414,21 +451,6 @@ function Toast({ notif, paused = false }) {
 
   const dismiss = () => useStore.getState().removeNotification(notif.id)
 
-  // Map logical key names to PTY sequences
-  const KEY_SEQ = {
-    enter: '\r', escape: '\x1b', tab: '\t',
-    'ctrl-a': '\x01', 'ctrl-b': '\x02', 'ctrl-c': '\x03',
-    'ctrl-d': '\x04', 'ctrl-e': '\x05', 'ctrl-g': '\x07',
-  }
-
-  const handleAction = (action) => {
-    const seq = KEY_SEQ[action.key] || action.key
-    typeInTerminal(notif.sessionId, seq)
-    clearPromptBuffer(notif.sessionId)
-    useStore.getState().setSessionPlanWaiting(notif.sessionId, false)
-    dismiss()
-  }
-
   const handleFocus = () => {
     const store = useStore.getState()
     // Switch workspace context first so the session is visible in
@@ -539,167 +561,6 @@ function Toast({ notif, paused = false }) {
     )
   }
 
-  if (notif.type === 'input_needed') {
-    const options = notif.options || []
-    const actions = notif.actions || [
-      { label: 'Allow', key: 'enter', style: 'primary' },
-      { label: 'Reject', key: 'escape', style: 'danger' },
-    ]
-    const handleOption = (opt) => {
-      sendPlanChoice(notif.sessionId, opt.num)
-      clearPromptBuffer(notif.sessionId)
-      dismiss()
-    }
-
-    const actionStyle = (style) => {
-      if (style === 'primary') return 'bg-x-good/20 hover:bg-x-good/30 text-x-good border border-x-good/30'
-      if (style === 'danger') return 'bg-x-accent-ink/20 hover:bg-x-accent-ink/30 text-x-accent-ink border border-x-accent-ink/30'
-      return 'text-x-muted hover:text-x-ink-secondary hover:bg-x-hover border border-x-line'
-    }
-
-    return (
-      <div className="bg-x-surface border border-x-line rounded-lg shadow-x-1 overflow-hidden animate-in slide-in-from-right max-w-sm">
-        <div className="flex items-center gap-1 px-2.5 py-1.5 bg-x-surface-2 border-b border-x-line">
-          <MessageSquare size={12} className="text-x-accent-ink" />
-          <span className="text-[11px] font-medium text-x-accent-ink flex-1 truncate">
-            {session?.name || notif.sessionId.slice(0, 8)}
-          </span>
-          <button onClick={dismiss} className="p-1.5 rounded hover:bg-x-hover text-x-muted hover:text-x-ink transition-colors duration-[80ms]">
-            <X size={12} />
-          </button>
-        </div>
-        <div className="px-2.5 py-1.5">
-          <p className="text-[11px] text-x-ink-secondary leading-relaxed">{notif.message}</p>
-          {notif.context && !options.length && (
-            <pre className="mt-1 text-[11px] font-mono text-x-muted leading-tight max-h-24 overflow-y-auto whitespace-pre-wrap break-words">
-              {notif.context.split('\n').filter(l => l.trim()).slice(-10).join('\n')}
-            </pre>
-          )}
-        </div>
-
-        {options.length > 0 && (
-          <div className="px-2.5 py-1.5 border-t border-x-line space-y-1">
-            {options.map((opt) => (
-              <button
-                key={opt.num}
-                onClick={() => handleOption(opt)}
-                className={`w-full text-left px-2.5 py-1.5 text-[11px] rounded transition-colors flex items-center gap-1 ${
-                  opt.num === 1
-                    ? 'bg-x-good/15 hover:bg-x-good/25 text-x-good border border-x-good/20'
-                    : opt.text.toLowerCase().includes('no') || opt.text.toLowerCase().includes('reject')
-                      ? 'bg-x-accent-ink/10 hover:bg-x-accent-ink/20 text-x-accent-ink border border-x-accent-ink/20'
-                      : 'bg-x-surface hover:bg-x-hover text-x-ink-secondary border border-x-line'
-                }`}
-              >
-                <span className="text-x-muted">{opt.num}.</span>
-                <span className="truncate">{opt.text}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-t border-x-line">
-          {actions.map((action, i) => (
-            <button
-              key={i}
-              onClick={() => handleAction(action)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 text-[11px] rounded transition-colors ${actionStyle(action.style)}`}
-            >
-              {action.style === 'primary' && <Check size={10} />}
-              {action.style === 'danger' && <X size={10} />}
-              {action.label}
-            </button>
-          ))}
-          <button
-            onClick={handleFocus}
-            className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] text-x-muted hover:text-x-ink-secondary hover:bg-x-hover rounded transition-colors duration-[80ms] ml-auto"
-          >
-            View session
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (notif.type === 'permission_question') {
-    const options = notif.options || []
-    const handleJustDoIt = () => {
-      sendTerminalCommand(notif.sessionId, 'Yes, go ahead and implement it.')
-      clearPromptBuffer(notif.sessionId)
-      dismiss()
-    }
-    const handleOption = (opt) => {
-      sendPlanChoice(notif.sessionId, opt.num)
-      clearPromptBuffer(notif.sessionId)
-      dismiss()
-    }
-
-    return (
-      <div className="bg-x-surface border border-x-line rounded-lg shadow-x-1 overflow-hidden animate-in slide-in-from-right max-w-sm">
-        <div className="flex items-center gap-1 px-2.5 py-1.5 bg-x-surface-2 border-b border-x-line">
-          <Zap size={12} className="text-x-accent-ink" />
-          <span className="text-[11px] font-medium text-x-accent-ink flex-1 truncate">
-            {session?.name || notif.sessionId.slice(0, 8)} — asking permission
-          </span>
-          <button onClick={dismiss} className="p-1.5 rounded hover:bg-x-hover text-x-muted hover:text-x-ink transition-colors duration-[80ms]">
-            <X size={12} />
-          </button>
-        </div>
-        <div className="px-2.5 py-1.5">
-          {notif.question && (
-            <p className="text-[11px] text-x-ink-secondary leading-relaxed line-clamp-2 italic">
-              &ldquo;{notif.question}&rdquo;
-            </p>
-          )}
-          {notif.context && !options.length && (
-            <pre className="mt-1 text-[11px] font-mono text-x-muted leading-tight max-h-16 overflow-y-auto whitespace-pre-wrap break-words">
-              {notif.context.split('\n').filter(l => l.trim()).slice(-5).join('\n')}
-            </pre>
-          )}
-        </div>
-
-        {options.length > 0 && (
-          <div className="px-2.5 py-1.5 border-t border-x-line space-y-1">
-            {options.map((opt) => (
-              <button
-                key={opt.num}
-                onClick={() => handleOption(opt)}
-                className={`w-full text-left px-2.5 py-1.5 text-[11px] rounded transition-colors flex items-center gap-1 ${
-                  opt.num === 1
-                    ? 'bg-x-good/15 hover:bg-x-good/25 text-x-good border border-x-good/20'
-                    : opt.text.toLowerCase().includes('no') || opt.text.toLowerCase().includes('reject')
-                      ? 'bg-x-accent-ink/10 hover:bg-x-accent-ink/20 text-x-accent-ink border border-x-accent-ink/20'
-                      : 'bg-x-surface hover:bg-x-hover text-x-ink-secondary border border-x-line'
-                }`}
-              >
-                <span className="text-x-muted">{opt.num}.</span>
-                <span className="truncate">{opt.text}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-t border-x-line">
-          {!options.length && (
-            <button
-              onClick={handleJustDoIt}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] bg-x-accent-ink/20 hover:bg-x-accent-ink/30 text-x-accent-ink border border-x-accent-ink/30 rounded transition-colors"
-            >
-              <Zap size={10} />
-              Just do it
-            </button>
-          )}
-          <button
-            onClick={handleFocus}
-            className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] text-x-muted hover:text-x-ink-secondary hover:bg-x-hover rounded transition-colors duration-[80ms] ml-auto"
-          >
-            View session
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   if (notif.type === 'session_done') {
     return (
       <div className="bg-x-surface border border-x-good/30 rounded-lg shadow-x-1 overflow-hidden animate-in slide-in-from-right">
@@ -745,20 +606,6 @@ function Toast({ notif, paused = false }) {
         </div>
 
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-t border-x-line">
-          <button
-            onClick={() => handleAction({ key: 'enter' })}
-            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] bg-x-good/20 hover:bg-x-good/30 text-x-good border border-x-good/30 rounded transition-colors"
-          >
-            <Check size={10} />
-            Allow
-          </button>
-          <button
-            onClick={() => handleAction({ key: 'escape' })}
-            className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] bg-x-accent-ink/20 hover:bg-x-accent-ink/30 text-x-accent-ink border border-x-accent-ink/30 rounded transition-colors"
-          >
-            <X size={12} />
-            Reject
-          </button>
           <button
             onClick={handleFocus}
             className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] text-x-muted hover:text-x-ink-secondary hover:bg-x-hover rounded transition-colors duration-[80ms] ml-auto"

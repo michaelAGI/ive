@@ -5,6 +5,8 @@ import { api, rewriteLocalPreviewUrl, demoApi, localPreviewUrl } from '../../lib
 import useMediaQuery from '../../hooks/useMediaQuery'
 import DemoPanel from './DemoPanel'
 import { Button } from '../ui'
+import { hasScreenCapture, noticeFromBrowserDenial } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
 
 export default function LivePreview({ url: initialUrl, taskId: initialTaskId, onScreenshot, onClose }) {
   // When IVE is served via Cloudflare tunnel / multiplayer mode, localhost
@@ -14,6 +16,9 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
   const [loading, setLoading] = useState(true)
   const [capturing, setCapturing] = useState(false)
   const [error, setError] = useState(null)
+  // macOS refused screen recording: the sentence and settings button stay
+  // until dismissed, unlike the short-lived error toast.
+  const [permissionNotice, setPermissionNotice] = useState(null)
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false)
   const [previewId, setPreviewId] = useState(null)
   const [needsInstall, setNeedsInstall] = useState(false)
@@ -127,9 +132,14 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
       }
 
     } catch (err) {
-      console.error('Failed to start screen share:', err)
-      setError(`Screen share failed: ${err.message}`)
-      setTimeout(() => setError(null), 4000)
+      const notice = noticeFromBrowserDenial(err, 'screen')
+      if (notice) {
+        setPermissionNotice(notice)
+      } else {
+        console.error('Failed to start screen share:', err)
+        setError(`Screen share failed: ${err.message}`)
+        setTimeout(() => setError(null), 4000)
+      }
       setPreviewSource('playwright')
       setLoading(false)
     }
@@ -996,7 +1006,7 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
           >
             Browser
           </button>
-          <button
+          {hasScreenCapture() && <button
             onClick={() => {
               // Desktop mode is unusable without the floating controls — once
               // the user picks a window to share, Chrome loses focus and
@@ -1016,7 +1026,7 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
             }`}
           >
             Desktop
-          </button>
+          </button>}
         </div>
 
         <input
@@ -1146,6 +1156,16 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
         </Button>
       </div>
 
+      {permissionNotice && (
+        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10 w-[420px] max-w-[90%]">
+          <MacPermissionNotice
+            notice={permissionNotice}
+            onRetry={() => { setPermissionNotice(null); setPreviewSource('screen') }}
+            onDismiss={() => setPermissionNotice(null)}
+          />
+        </div>
+      )}
+
       {/* ── Error toast ──────────────────────────────────── */}
       {error && (
         <div className="absolute top-14 left-1/2 -translate-x-1/2 z-10 px-4 py-2 text-[11px] text-x-accent-ink bg-x-accent-ink/10 border border-x-accent-ink/30 rounded-md shadow-x-1 max-w-[500px] break-all">
@@ -1189,7 +1209,7 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
                       Close
                     </Button>
                   </div>
-                  <div className="text-[11px] text-x-muted">
+                  {hasScreenCapture() && <div className="text-[11px] text-x-muted">
                     or{' '}
                     <button
                       onClick={() => setPreviewSource('screen')}
@@ -1198,7 +1218,7 @@ export default function LivePreview({ url: initialUrl, taskId: initialTaskId, on
                       Use Desktop Share
                     </button>{' '}
                     to annotate any window/screen directly.
-                  </div>
+                  </div>}
                 </div>
                 {installing && (
                   <p className="text-[11px] text-x-muted">

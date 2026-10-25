@@ -6,14 +6,14 @@ import { registerDictionary } from '../i18n.js'
 registerDictionary('nav', {
   en: {
     work: 'Work', projects: 'Projects', setup: 'Set up',
-    home: 'Home', board: 'Board', review: 'Review', knowledge: 'Knowledge',
+    home: 'Home', board: 'Overview', review: 'Changes', knowledge: 'Knowledge',
     settings: 'Settings', connectors: 'Connectors', phone: 'Phone',
     search: 'Search', searchCommands: 'Search commands', newSession: 'New session', newChat: 'New chat', addProject: 'Add project', projectTools: 'Project tools', withoutProject: 'Without project',
     filterSessions: 'Filter sessions by name or model',
   },
   de: {
     work: 'Arbeiten', projects: 'Projekte', setup: 'Einrichten',
-    home: 'Home', board: 'Board', review: 'Review', knowledge: 'Wissen',
+    home: 'Home', board: 'Übersicht', review: 'Änderungen', knowledge: 'Wissen',
     settings: 'Einstellungen', connectors: 'Verbindungen', phone: 'Handy',
     search: 'Suchen', searchCommands: 'Befehle suchen', newSession: 'Neue Session', newChat: 'Neuer Chat', addProject: 'Projekt hinzufügen', projectTools: 'Projektwerkzeuge', withoutProject: 'Ohne Projekt',
     filterSessions: 'Sessions nach Name oder Modell filtern',
@@ -24,14 +24,14 @@ registerDictionary('header', {
   en: {
     new: 'New', search: 'Search commands', sideChat: 'Chat with Claude', settings: 'Settings',
     newSession: 'Create a new session', hideSidebar: 'Hide sidebar', showSidebar: 'Show sidebar',
-    home: 'Home', board: 'Board', terminal: 'Terminal', toHide: 'to hide',
-    expandTerminal: 'Expand terminal', restoreTerminal: 'Restore small terminal', hideTerminal: 'Hide terminal — show overview',
+    home: 'Home', board: 'Overview', terminal: 'Terminal', toHide: 'to hide',
+    expandTerminal: 'Expand terminal', restoreTerminal: 'Restore small terminal', hideTerminal: 'Hide terminal, show overview',
   },
   de: {
     new: 'Neu', search: 'Befehle suchen', sideChat: 'Mit Claude chatten', settings: 'Einstellungen',
     newSession: 'Neue Session anlegen', hideSidebar: 'Seitenleiste ausblenden', showSidebar: 'Seitenleiste einblenden',
-    home: 'Home', board: 'Board', terminal: 'Terminal', toHide: 'zum Ausblenden',
-    expandTerminal: 'Terminal vergrößern', restoreTerminal: 'Kleines Terminal wiederherstellen', hideTerminal: 'Terminal ausblenden — nur Übersicht',
+    home: 'Home', board: 'Übersicht', terminal: 'Terminal', toHide: 'zum Ausblenden',
+    expandTerminal: 'Terminal vergrößern', restoreTerminal: 'Kleines Terminal wiederherstellen', hideTerminal: 'Terminal ausblenden, nur Übersicht',
   },
 })
 

@@ -158,7 +158,7 @@ test('⌘J is the terminal drawer, Scratchpad and the launcher have no default, 
   assert.deepEqual(bindings.goHome, { key: 'H', meta: true, shift: true })
   assert.ok(matchesKey(event('H', { metaKey: true, shiftKey: true }), bindings.goHome))
   assert.deepEqual(bindings.toggleSessionLevel, { key: 'E', meta: true, shift: true })
-  assert.equal(KEYBINDING_DEFS.find((def) => def.id === 'toggleSessionLevel').label, 'Switch Board ⇄ Session')
+  assert.equal(KEYBINDING_DEFS.find((def) => def.id === 'toggleSessionLevel').label, 'Switch Overview ⇄ Session')
   assert.ok(!isGlobalShortcut(event('j', { metaKey: true, shiftKey: false, ctrlKey: true }), bindings))
 })
 

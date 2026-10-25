@@ -1288,8 +1288,58 @@ async def _execute_approval_stage(run_id: str, stage_id: str, stage: dict, run: 
     await _broadcast_run(await get_run(run_id))
 
 
+# Fixed texts the generated task_update stages write. They describe the
+# pipeline, not the work, so reviewers must never see them as "the result".
+TASK_UPDATE_REVIEW_TEXT = "Verification passed. Review the implementation and verification reports before accepting."
+TASK_UPDATE_DONE_TEXT = "Pipeline completed successfully."
+TASK_UPDATE_READY_TEXT = "Implementation completed and is ready for review."
+TASK_UPDATE_BLOCKED_TEXT = "Verification failed. See pipeline verification summary."
+TASK_UPDATE_FALLBACK_TEXT = "Task updated."
+TASK_UPDATE_BOILERPLATE = (
+    TASK_UPDATE_REVIEW_TEXT, TASK_UPDATE_DONE_TEXT, TASK_UPDATE_READY_TEXT,
+    TASK_UPDATE_BLOCKED_TEXT, TASK_UPDATE_FALLBACK_TEXT,
+)
+
+
+def _normalize_boilerplate(text: str) -> str:
+    return " ".join(str(text or "").split()).strip().rstrip(".").lower()
+
+
+_BOILERPLATE_KEYS = {_normalize_boilerplate(t) for t in TASK_UPDATE_BOILERPLATE}
+
+
+def is_task_update_boilerplate(text) -> bool:
+    """True when a result_summary paragraph is only pipeline stage text."""
+    key = _normalize_boilerplate(text)
+    if not key:
+        return True
+    if key.startswith("__pipeline_result:"):
+        return is_task_update_boilerplate(key.split(":", 2)[-1])
+    return key in _BOILERPLATE_KEYS
+
+
+def worker_result_text(result_summary) -> str:
+    """The parts of a task result_summary that an agent or person actually wrote.
+
+    Pipeline stage boilerplate paragraphs are dropped (see
+    _execute_task_update_stage); the backstop separator keeps its segments.
+    """
+    text = str(result_summary or "").strip()
+    if not text:
+        return ""
+    segments = [seg.strip() for seg in text.replace("\r\n", "\n").split("\n\n---\n")]
+    kept = [seg for seg in segments if seg and not is_task_update_boilerplate(seg)]
+    return "\n\n---\n".join(kept).strip()
+
+
 async def _execute_task_update_stage(run_id: str, stage_id: str, stage: dict, run: dict):
-    """Update the task as a first-class pipeline stage."""
+    """Update the task as a first-class pipeline stage.
+
+    The stage text is pipeline narration ("Verification passed. Review ...").
+    It only fills result_summary when nothing is there yet or when the current
+    text is older stage narration; a summary the worker reported stays
+    untouched. The text always lands in task_events.
+    """
     task_id = run.get("task_id")
     config = stage.get("config", {}) or {}
     status = config.get("status")
@@ -1304,13 +1354,18 @@ async def _execute_task_update_stage(run_id: str, stage_id: str, stage: dict, ru
         if pipeline_stage:
             fields.append("pipeline_stage = ?")
             values.append(pipeline_stage)
-        if result_summary:
-            fields.append("result_summary = ?")
-            values.append(result_summary[:4000])
-        fields.append("updated_at = datetime('now')")
-        values.append(task_id)
         db = await get_db()
         try:
+            existing = ""
+            if result_summary:
+                cur = await db.execute("SELECT result_summary FROM tasks WHERE id = ?", (task_id,))
+                row = await cur.fetchone()
+                existing = str((row["result_summary"] if row else "") or "").strip()
+            if result_summary and (not existing or is_task_update_boilerplate(existing)):
+                fields.append("result_summary = ?")
+                values.append(result_summary[:4000])
+            fields.append("updated_at = datetime('now')")
+            values.append(task_id)
             await db.execute(f"UPDATE tasks SET {', '.join(fields)} WHERE id = ?", values)
             await db.execute(
                 """INSERT INTO task_events (task_id, event_type, actor, new_value, message)
@@ -1323,7 +1378,7 @@ async def _execute_task_update_stage(run_id: str, stage_id: str, stage: dict, ru
 
     await _update_stage_status(
         run_id, stage_id, "completed",
-        output_summary=f"__pipeline_result:pass:{result_summary or 'Task updated.'}",
+        output_summary=f"__pipeline_result:pass:{result_summary or TASK_UPDATE_FALLBACK_TEXT}",
     )
     await _complete_stage(run_id, stage_id)
 
@@ -3291,7 +3346,7 @@ async def _start_task_execution_pipeline(
                 "id": "blocked",
                 "name": "Mark Blocked",
                 "type": "task_update",
-                "prompt_template": "Verification failed. See pipeline verification summary.",
+                "prompt_template": TASK_UPDATE_BLOCKED_TEXT,
                 "position": {"x": 1840 if plan_first else 980, "y": 300},
                 "config": {"icon": "x", "status": "blocked", "pipeline_stage": "blocked"},
             })
@@ -3301,7 +3356,7 @@ async def _start_task_execution_pipeline(
             "id": "done",
             "name": "Ready for Review" if require_result_review else "Mark Done",
             "type": "task_update",
-            "prompt_template": "Verification passed. Review the implementation and verification reports before accepting." if require_result_review else "Pipeline completed successfully.",
+            "prompt_template": TASK_UPDATE_REVIEW_TEXT if require_result_review else TASK_UPDATE_DONE_TEXT,
             "position": {"x": 1840 if plan_first else 980, "y": 120},
             "config": {"icon": "check", "status": "review" if require_result_review else "done", "pipeline_stage": "review" if require_result_review else "done"},
         })
@@ -3311,7 +3366,7 @@ async def _start_task_execution_pipeline(
             "id": "review",
             "name": "Mark Review",
             "type": "task_update",
-            "prompt_template": "Implementation completed and is ready for review.",
+            "prompt_template": TASK_UPDATE_READY_TEXT,
             "position": {"x": 1400 if plan_first else 540, "y": 180},
             "config": {"icon": "eye", "status": "review", "pipeline_stage": "review"},
         })

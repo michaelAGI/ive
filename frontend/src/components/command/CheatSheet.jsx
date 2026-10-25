@@ -10,7 +10,7 @@ const EVERYDAY = [
   { id: 'new-session', icon: Plus, label: 'New session', how: '“New” in the header, or + in the sidebar', binding: 'newSession' },
   { id: 'side-chat', icon: MessageCircle, label: 'Open Side chat', how: 'The chat bubble in the header. A separate conversation; add project context when needed', binding: 'sideChat' },
   { id: 'find-session', icon: MessageSquare, label: 'Open a session', how: 'Click it under Projects in the sidebar, or search its name', binding: 'commandPalette' },
-  { id: 'inbox', icon: BellRing, label: 'See what needs you', how: 'The Waiting count next to Board in the sidebar, or the inbox', binding: 'inbox' },
+  { id: 'inbox', icon: BellRing, label: 'See what needs you', how: 'The Waiting count next to Overview in the sidebar, or the inbox', binding: 'inbox' },
   { id: 'code-review', icon: GitCompareArrows, label: 'Review changes', how: '“Review” in the sidebar, on the open session', binding: 'codeReview' },
   { id: 'switch-project', icon: FolderOpen, label: 'Switch project', how: 'Click a project in the left list, or search it', binding: 'commandPalette' },
   { id: 'guidelines', icon: BookOpen, label: 'Save reusable instructions', how: 'Guidelines are saved rules. Send selected rules and a note with “context” in a session' },
@@ -22,7 +22,7 @@ const EVERYDAY = [
   { id: 'search', icon: Search, label: 'Search all sessions', how: 'Finds earlier conversations by their content', binding: 'globalSearch' },
 ]
 
-const SECTION_ORDER = ['Navigation', 'Sessions', 'Panels', 'Feature Board', 'Task Modal']
+const SECTION_ORDER = ['Navigation', 'Sessions', 'Panels', 'Tasks', 'Task Modal']
 
 function Kbd({ children }) {
   return (

@@ -97,3 +97,11 @@ test('session-scoped types are left for the session switch', () => {
   assert.equal(handleGlobalEvent({ type: 'output', session_id: 's1', data: 'x' }, ctx), false)
   assert.equal(calls.dispatched.length, 0)
 })
+
+test('broadcast_skipped (no session_id) becomes one notice with the count of sessions left out', () => {
+  const { store, ctx } = fixture()
+  assert.equal(handleGlobalEvent({ type: 'broadcast_skipped', session_ids: ['a', 'b'], reason: 'question_open' }, ctx), true)
+  assert.deepEqual(store.notifications, [{ type: 'warning', message: 'Skipped 2 sessions with an open question. Answer it there first.' }])
+  assert.equal(handleGlobalEvent({ type: 'broadcast_skipped', session_ids: [] }, ctx), true)
+  assert.equal(store.notifications.length, 1, 'nothing skipped, nothing said')
+})

@@ -23,6 +23,9 @@ function memoizeArgs(fn) {
 const visibleOf = memoizeArgs((sessions) => visibleSessions(sessions))
 const countsOf = memoizeArgs((sessions, sessionStarted) => countByState(visibleOf(sessions), sessionStarted))
 const waitingOf = memoizeArgs((sessions, sessionStarted) => visibleOf(sessions).filter((session) => sessionStateOf(session, sessionStarted).state === 'waiting'))
+// Waiting sessions with a question the pop-up can show (store attention with
+// or without a menu); startup blockers and plain "waiting" states stay out.
+const needsYouOf = memoizeArgs((sessions, sessionStarted) => waitingOf(sessions, sessionStarted).filter((session) => !!session.attention))
 const summaryOf = memoizeArgs((workspaces, sessions, sessionStarted) => (workspaces || [])
   .filter((workspace) => !workspace.is_quick)
   .map((workspace) => ({ workspace, counts: countByState(visibleSessionsOf(sessions, workspace.id), sessionStarted) })))
@@ -44,6 +47,7 @@ export const selectRecentSessions = (limit = 8) => (s) => recentOf(limit)(s.sess
 // {running, waiting, done, failed, stopped, total}
 export const selectCounts = (s) => countsOf(s.sessions, s.sessionStarted)
 export const selectWaitingSessions = (s) => waitingOf(s.sessions, s.sessionStarted)
+export const selectNeedsYouSessions = (s) => needsYouOf(s.sessions, s.sessionStarted)
 export const selectSessionState = (id) => (s) => sessionStateOf(s.sessions[id], s.sessionStarted)
 export const selectSessionCost = (id) => (s) => s.sessionCosts?.[id]?.cost_usd ?? s.sessions[id]?.total_cost_usd ?? null
 export const selectSessionTokens = (id) => (s) => s.sessionCosts?.[id]?.tokens ?? s.sessions[id]?.token_count ?? null

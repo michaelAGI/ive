@@ -36,11 +36,13 @@ class BroadcastContractTests(unittest.IsolatedAsyncioTestCase):
         self.visible = Mock(return_value=True)
         self.mode = Mock(return_value=None)
         self.config = AsyncMock(side_effect=lambda sid: {"id": sid, "cli_type": "gemini" if sid == "gemini" else "claude"})
+        self.question_open = Mock(return_value=False)
         self.send = load_handler("broadcast_input", pty_mgr=self.pty, get_session_config=self.config,
             _session_visible_to_request=self.visible, get_auth=lambda _: None,
             _terminal_control_violation=self.mode, _record_terminal_mode_violation=AsyncMock(),
             _asyncio=SimpleNamespace(sleep=AsyncMock()), bus=SimpleNamespace(emit=self.emit),
-            CommanderEvent=SimpleNamespace(COMMANDER_BROADCAST="broadcast"))
+            CommanderEvent=SimpleNamespace(COMMANDER_BROADCAST="broadcast"),
+            _session_question_open=self.question_open)
 
     async def request(self, ids=None, message="Hello"):
         response = await self.send(Request({"session_ids": ids or ["one", "two"], "message": message}))
@@ -102,6 +104,28 @@ class BroadcastContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["ok"])
         self.pty.write.assert_any_call("claude", b"\x1b[200~first\nsecond\x1b[201~")
         self.pty.write.assert_any_call("gemini", b"first second")
+
+    async def test_a_session_with_an_open_question_is_skipped_and_reported(self):
+        # The text would answer its dialog: nothing is written there, the others get it.
+        self.question_open.side_effect = lambda sid: sid == "asking"
+        status, result = await self.request(["asking", "two", "gemini"])
+        self.assertEqual(status, 200)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["sent_to"], ["two", "gemini"])
+        self.assertEqual(result["skipped"], [{"session_id": "asking", "reason": "question_open"}])
+        self.assertEqual(result["failed"], [])
+        self.assertFalse(any(call.args[0] == "asking" for call in self.pty.write.call_args_list))
+        self.assertEqual(self.emit.call_args.args[1]["session_ids"], ["two", "gemini"])
+        # Gemini is never probed: the parsers know Claude and Codex dialogs only.
+        self.assertEqual([call.args[0] for call in self.question_open.call_args_list], ["asking", "two"])
+        # Everyone asking: nothing sent, 409, the skipped list says why.
+        self.question_open.side_effect = None
+        self.question_open.return_value = True
+        self.pty.write.reset_mock()
+        status, result = await self.request(["one", "two"])
+        self.assertEqual(status, 409)
+        self.assertEqual([entry["session_id"] for entry in result["skipped"]], ["one", "two"])
+        self.pty.write.assert_not_called()
 
 
 class WorktreeUpdateContractTests(unittest.IsolatedAsyncioTestCase):

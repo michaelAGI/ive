@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLabel, hasVisibleMessage, permissionPresentation } from '../src/lib/conversationPresentation.js'
+import { activityLabel, choiceTone, hasVisibleMessage, promptNotice } from '../src/lib/conversationPresentation.js'
 import { parseSessionPermissionPrompt, submitSessionPromptReply } from '../src/lib/sessionPrompt.js'
 import { promptChoices } from '../src/lib/sessionPrompt.js'
+import { menuFromPrompt } from '../src/lib/promptMenu.js'
 
 const two = `Bash command
 Find Orbit and traffic projects
@@ -20,10 +21,11 @@ test('two-choice permission exposes native refusal, not persistent approval', as
   assert.deepEqual(prompt.choices.map(c=>c.value), ['1','2'])
   assert.deepEqual(promptChoices({prompt}).allowSession, null)
   assert.equal(promptChoices({prompt}).deny, '2')
-  const display=permissionPresentation(prompt)
-  assert.equal(display.description, 'Find Orbit and traffic projects')
-  assert.match(display.notice, /safety check needs setup/i)
-  assert.deepEqual(display.choices.map(c=>c.label), ['Allow once', 'Don’t allow'])
+  const menu=menuFromPrompt(prompt)
+  // The CLI's words stay; presentation adds only tone and the setup notice.
+  assert.deepEqual(menu.options.map(o=>o.label), ['Yes', 'No'])
+  assert.deepEqual(menu.options.map((o,i)=>choiceTone(o,i,menu)), ['allow', 'deny'])
+  assert.match(promptNotice(menu), /safety check needs setup/i)
   let sent
   await submitSessionPromptReply('s',two,'2',{sendInput:async (...args)=>{sent=args;return {ok:true}}})
   assert.deepEqual(sent,['s','2',{expected_screen:two,ready_timeout:0}])
@@ -34,9 +36,10 @@ test('incomplete and historical two-choice requests never expose approval', () =
 test('persistent scope stays verbatim and separate from one-time consent', () => {
   const prompt=parseSessionPermissionPrompt(two.replace('2. No',"2. Yes, and don't ask again in /production\n   3. No"))
   assert.equal(promptChoices({prompt}).deny,'3')
-  const display=permissionPresentation(prompt)
-  assert.equal(display.choices[1].label,"Yes, and don't ask again in /production")
-  assert.equal(display.choices[1].kind,'persistent')
+  const menu=menuFromPrompt(prompt)
+  assert.equal(menu.options[1].label,"Yes, and don't ask again in /production")
+  assert.equal(choiceTone(menu.options[1],1,menu),'persistent')
+  assert.equal(promptNotice({...menu,excerpt:'Bash command\nls'}),'')
 })
 test('activity summaries do not expose shell commands or tool payloads', () => {
   const steps=[{type:'tool_execution',tool_use:{name:'Bash',input:{command:'cat secret.env'}}}]

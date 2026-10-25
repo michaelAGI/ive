@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from phone_availability import PhoneAvailability
+from phone_availability import PhoneAvailability, PowerConflict, PowerRefusal
 from test_phone_availability import Helper
 
 
@@ -42,8 +42,9 @@ class MacPowerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_phone_mode_cannot_silently_replace_agent_mode(self):
         await self.controller.start(**self.options)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(PowerConflict) as failure:
             await self.controller.start(allow_battery=True)
+        self.assertEqual((failure.exception.reason, failure.exception.state), ('already_running', 'active'))
         self.assertFalse(any(c['action'] == 'stop' for c in self.helper.calls))
 
     async def test_invalid_or_dangerous_options_do_not_reach_native_helper(self):
@@ -58,9 +59,41 @@ class MacPowerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_old_helper_cannot_claim_lid_saving_is_supported(self):
         self.controller.caller = self.helper
-        with self.assertRaisesRegex(RuntimeError, 'Update'):
+        with self.assertRaises(PowerRefusal) as failure:
             await self.controller.start(**self.options)
+        self.assertEqual(failure.exception.reason, 'helper_outdated')
+        self.assertEqual((failure.exception.state, failure.exception.settings_pane), ('ready', 'login_items'))
         self.assertEqual([c['action'] for c in self.helper.calls], ['status'])
+
+    async def test_refusal_wording_differs_between_start_and_ended_session(self):
+        self.helper.refusal = 'battery_cutoff'
+        with self.assertRaises(PowerRefusal) as failure:
+            await self.controller.start(**self.options)
+        self.assertEqual(failure.exception.settings_pane, 'battery')
+        self.assertIn('then try again', str(failure.exception))
+        self.assertEqual(self.controller.last['message'], str(failure.exception))
+        self.helper.refusal = None
+        await self.controller.start(**self.options)
+        await self.controller._cancel_heartbeat()
+        async def renewed(payload):
+            return {'ok': False, 'status': 'ready', 'reason': 'battery_cutoff'}
+        self.controller.caller = renewed
+        with patch('phone_availability.asyncio.sleep', new=AsyncMock()):
+            await self.controller._heartbeat()
+        self.assertIsNone(self.controller.lease)
+        self.assertIn('Availability ended', self.controller.last['message'])
+        self.assertEqual(self.controller.last['settings_pane'], 'battery')
+
+    async def test_lost_heartbeat_names_the_helper_connection(self):
+        await self.controller.start(**self.options)
+        await self.controller._cancel_heartbeat()
+        async def gone(payload):
+            raise OSError('fixture: helper gone')
+        self.controller.caller = gone
+        with patch('phone_availability.asyncio.sleep', new=AsyncMock()):
+            await self.controller._heartbeat()
+        self.assertEqual((self.controller.last['state'], self.controller.last['reason'], self.controller.last['settings_pane']),
+                         ('restoring', 'helper_connection_failed', 'login_items'))
 
     async def test_unapproved_helper_never_starts_from_status(self):
         self.helper.phase = 'needs_approval'
@@ -77,7 +110,7 @@ class MacPowerTests(unittest.IsolatedAsyncioTestCase):
         self.controller.caller = fail
         with self.assertRaises(TimeoutError):
             await self.controller.start(**self.options)
-        self.assertEqual(self.controller.last['state'], 'restoring')
+        self.assertEqual((self.controller.last['state'], self.controller.last['reason']), ('restoring', 'helper_connection_failed'))
         self.assertIsNone(self.controller.task)
 
     async def test_agent_heartbeat_survives_disconnected_tunnel(self):

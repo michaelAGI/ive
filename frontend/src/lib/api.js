@@ -81,15 +81,17 @@ export const api = {
     })
   }),
   getWorkspaceFiles: (workspaceId, path = '') => request(`/workspaces/${workspaceId}/files?path=${encodeURIComponent(path)}`),
-  getGitStatus: workspaceId => request(`/workspaces/${workspaceId}/git/status`),
+  // sessionId: run git in that session's worktree instead of the workspace path.
+  getGitStatus: (workspaceId, opts = {}) => request(`/workspaces/${workspaceId}/git/status${opts.sessionId ? `?session_id=${encodeURIComponent(opts.sessionId)}` : ''}`),
   getGitDiff: (workspaceId, opts = {}) => {
     const params = [];
     if (opts.staged) params.push('staged=1');
     if (opts.range) params.push(`range=${encodeURIComponent(opts.range)}`);
     if (opts.file) params.push(`file=${encodeURIComponent(opts.file)}`);
+    if (opts.sessionId) params.push(`session_id=${encodeURIComponent(opts.sessionId)}`);
     return request(`/workspaces/${workspaceId}/git/diff${params.length ? '?' + params.join('&') : ''}`);
   },
-  getGitLog: (workspaceId, count = 20) => request(`/workspaces/${workspaceId}/git/log?count=${count}`),
+  getGitLog: (workspaceId, count = 20, opts = {}) => request(`/workspaces/${workspaceId}/git/log?count=${count}${opts.sessionId ? `&session_id=${encodeURIComponent(opts.sessionId)}` : ''}`),
   composeReviewBrief: data => request('/review/brief', {
     method: 'POST',
     body: JSON.stringify(data)
@@ -1241,6 +1243,14 @@ export const api = {
   phoneAvailabilityStart: () => request('/phone/availability/start', { method: 'POST' }),
   phoneAvailabilityStop: () => request('/phone/availability/stop', { method: 'POST' }),
   phoneAvailabilityApprove: () => request('/phone/availability/approval', { method: 'POST' }),
+  // Opens one fixed System Settings pane; the backend owns the pane table.
+  openMacSettings: pane => request('/macos/open-settings', { method: 'POST', body: JSON.stringify({ pane }), signal: AbortSignal.timeout(15000) }),
+  macPower: {
+    status: () => request('/mac-power', { signal: AbortSignal.timeout(30000) }),
+    start: options => request('/mac-power/start', { method: 'POST', body: JSON.stringify(options), signal: AbortSignal.timeout(90000) }),
+    stop: () => request('/mac-power/stop', { method: 'POST', signal: AbortSignal.timeout(90000) }),
+    approval: () => request('/mac-power/approval', { method: 'POST', signal: AbortSignal.timeout(90000) }),
+  },
   phonePairStart: () => request('/phone/pair/start', { method: 'POST' }),
   phonePairCancel: () => request('/phone/pair/cancel', { method: 'POST' }),
   phoneDevices: () => request('/phone/devices'),
@@ -1330,6 +1340,9 @@ export const demoApi = {
   log: wsId => request(`/workspaces/${wsId}/demo/log`),
   list: () => request('/demos')
 };
+// Refusals from the power endpoints throw ApiError with .status and .body
+// ({error, reason, state, settings_pane}); panels branch on body.reason.
+export const { openMacSettings, macPower } = api;
 export const portApi = {
   list: (wsId, opts = {}) => {
     const params = new URLSearchParams();

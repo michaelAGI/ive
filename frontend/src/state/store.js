@@ -8,6 +8,7 @@ import { uuid } from '../lib/uuid'
 import { getSessionLevelTarget, isMobileViewport } from '../lib/focusableSessions'
 import { notificationSessionId, reconcileGridAssignments, reconcileSessionReferences } from '../lib/operatorDesk'
 import { readSidebarVisibility, persistSidebarVisibility } from '../lib/sidebarPreference'
+import { normalizeNeedsYouMode } from '../lib/needsYou'
 import { isHelperSession } from '../lib/visibleSessions'
 import { beginReplyWait, hasNewReply } from '../lib/replyPending'
 
@@ -548,6 +549,10 @@ const useStore = create((set, get) => ({
   setSoundOnAgentDone: (v) => { localStorage.setItem('cc-soundAgentDone', v ? '1' : '0'); set({ soundOnAgentDone: v }) },
   setSoundOnPlanReady: (v) => { localStorage.setItem('cc-soundPlanReady', v ? '1' : '0'); set({ soundOnPlanReady: v }) },
   setSoundOnInputNeeded: (v) => { localStorage.setItem('cc-soundInputNeeded', v ? '1' : '0'); set({ soundOnInputNeeded: v }) },
+  // "When an agent needs you": 'off' | 'popup' | 'popup_macos' (pop-up plus a
+  // macOS notification; the native part arrives with the Tauri shell step).
+  needsYouAlert: normalizeNeedsYouMode(localStorage.getItem('cc-needsYouAlert')),
+  setNeedsYouAlert: (v) => { const mode = normalizeNeedsYouMode(v); localStorage.setItem('cc-needsYouAlert', mode); set({ needsYouAlert: mode }) },
 
   // ─── Notifications ─────────────────────────
   // Live permission-mode apply per session, from PUT responses and
@@ -606,16 +611,14 @@ const useStore = create((set, get) => ({
   setPlanFilePaths: (mapping) =>
     set((s) => ({ planFilePaths: { ...s.planFilePaths, ...mapping } })),
   setAllPlanFiles: (plans) => set({ allPlanFiles: plans }),
-  planWaiting: {}, // sessionId → true when Claude is showing the "Ready to code?" prompt
+  // sessionId → true only while the recognised dialog is a plan approval
+  // (attention.menu.kind === 'plan'); permission dialogs do not open the plan UI.
+  planWaiting: {},
   setSessionAttention: (id, attention) => set((s) => {
     const session = s.sessions[id]
     if (!session) return {}
     const wasWaiting = ['waiting', 'prompting', 'input_needed', 'needs_input'].includes(session.status)
-    if (
-      !attention && !session.attention && !session.resolvedAttentionContext && !wasWaiting
-      && s.planWaiting[id] === false
-      && !s.notifications.some((n) => n.sessionId === id && ['input_needed', 'permission_question'].includes(n.type))
-    ) {
+    if (!attention && !session.attention && !session.resolvedAttentionContext && !wasWaiting && !s.planWaiting[id]) {
       attentionTouches.set(id, (attentionTouches.get(id) || 0) + 1)
       return s
     }
@@ -625,8 +628,7 @@ const useStore = create((set, get) => ({
         resolvedAttentionContext: !attention && session.attention?.context ? session.attention.context : null,
         ...(attention ? { status: 'waiting', agentState: 'prompting' } : wasWaiting ? { status: 'idle', agentState: 'idle' } : {}),
       } },
-      planWaiting: { ...s.planWaiting, [id]: !!attention },
-      ...(!attention ? { notifications: s.notifications.filter((n) => n.sessionId !== id || !['input_needed', 'permission_question'].includes(n.type)) } : {}),
+      planWaiting: { ...s.planWaiting, [id]: attention?.menu?.kind === 'plan' },
     }
   }),
   setSessionPlanWaiting: (sessionId, waiting) =>
@@ -959,7 +961,7 @@ const useStore = create((set, get) => ({
           map[sess.id].status = 'waiting'
           map[sess.id].agentState = 'prompting'
         }
-        if (Object.hasOwn(sess, 'attention')) planWaiting[sess.id] = !!sess.attention
+        if (Object.hasOwn(sess, 'attention')) planWaiting[sess.id] = sess.attention?.menu?.kind === 'plan'
         if (sess.pty_alive && !ptyStartedAt[sess.id]) ptyStartedAt[sess.id] = Date.now()
         const status = String(map[sess.id]?.status || '').toLowerCase()
         const agentState = String(map[sess.id]?.agentState || '').toLowerCase()
@@ -1304,8 +1306,11 @@ const useStore = create((set, get) => ({
     for (const t of tasks) map[t.id] = t
     return { tasks: map }
   }),
+  // Merge over the known row: a task_update broadcast carries the bare table
+  // row, the review fields (assigned_session_name, files_changed, ...) only
+  // come with GET /api/tasks and must survive until the next poll.
   updateTaskInStore: (task) => set((s) => ({
-    tasks: { ...s.tasks, [task.id]: task }
+    tasks: { ...s.tasks, [task.id]: s.tasks[task.id] ? { ...s.tasks[task.id], ...task } : task }
   })),
   removeTaskFromStore: (id) => set((s) => {
     const { [id]: _, ...rest } = s.tasks

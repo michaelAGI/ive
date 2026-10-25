@@ -18,19 +18,19 @@ export const ACTIONS = [{
   get shortcut() { return formatKeyCombo(getKeybindings().goHome) }
 }, {
   id: 'board',
-  label: 'Board',
+  label: 'Overview',
   icon: Columns3,
   section: 'Navigation',
   hint: 'Every session in Running / Waiting / Done',
-  keywords: 'overview sessions running waiting done columns',
+  keywords: 'board overview sessions running waiting done columns',
   get shortcut() { return formatKeyCombo(getKeybindings().toggleSessionLevel) }
 }, {
   id: 'review',
-  label: 'Review changes',
+  label: 'Changes',
   icon: GitCompareArrows,
   section: 'Navigation',
   hint: 'Diff of the open session',
-  keywords: 'git diff files changed',
+  keywords: 'review git diff files changed',
   get shortcut() { return formatKeyCombo(getKeybindings().codeReview) }
 }, {
   id: 'knowledge',
@@ -248,32 +248,34 @@ export const ACTIONS = [{
   hideFromPanel: true
 }, {
   id: 'feature-board',
-  label: 'Feature Board',
+  label: 'Tasks',
   icon: Kanban,
   section: 'Orchestration',
+  hint: 'Cards for this project: what agents did, what needs your call',
+  keywords: 'feature board kanban cards review accept',
   shortcut: '⌘B'
 }, {
   id: 'board-new-card',
-  label: 'Board: New Card',
+  label: 'Tasks: New Card',
   icon: Plus,
-  section: 'Feature Board',
+  section: 'Tasks',
   hint: 'Title-only, optional capture'
 }, {
   id: 'board-needs-attention',
-  label: 'Board: Needs Attention',
+  label: 'Tasks: Needs Attention',
   icon: ListChecks,
-  section: 'Feature Board',
+  section: 'Tasks',
   hint: 'Open the non-blocking triage filter'
 }, {
   id: 'board-filter',
-  label: 'Board: Focus Filter',
+  label: 'Tasks: Focus Filter',
   icon: Search,
-  section: 'Feature Board'
+  section: 'Tasks'
 }, {
   id: 'board-shortcuts',
-  label: 'Board: Keyboard Shortcuts',
+  label: 'Tasks: Keyboard Shortcuts',
   icon: Keyboard,
-  section: 'Feature Board'
+  section: 'Tasks'
 }, {
   id: 'pipeline-editor',
   label: 'Pipelines',
@@ -430,10 +432,10 @@ export const ACTIONS = [{
   hideFromPanel: true
 }, {
   id: 'mac-power',
-  label: 'Mac & Energie',
+  label: 'Mac & Power',
   icon: Zap,
   section: 'Config',
-  hint: 'Akku sparen, Deckel schließen, Agenten weiterarbeiten lassen',
+  hint: 'Save battery, close the lid, keep agents working',
   hideFromPanel: true
 }, {
   id: 'model-providers',

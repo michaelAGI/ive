@@ -28,6 +28,8 @@ import { addRecentAnnotations, loadRecentAnnotations, saveRecentAnnotations } fr
 import { createUsageOnceFilter } from '../../lib/usageOnce'
 import { getChatActivity } from '../../lib/chatActivity'
 import SessionPromptActions from '../session/SessionPromptActions'
+import { shortcutChoice } from '../../lib/promptMenu'
+import { QUESTION_OPEN_HINT, SENDING_HINT } from '../../lib/promptAnswer'
 import { activityLabel, hasVisibleMessage } from '../../lib/conversationPresentation'
 import ChatFindBar from '../find/ChatFindBar'
 import ComposerQueue from './ComposerQueue'
@@ -2741,6 +2743,10 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const scrollContainerRef = useRef(null)
   const textareaRef = useRef(null)
   const focusChatComposer = useCallback(() => textareaRef.current?.focus(), [])
+  // The agent's open question (PromptMenu above the composer). While it is
+  // open, Enter and y/n/1-9 answer it and other text is held back.
+  const promptActionsRef = useRef(null)
+  const [promptHint, setPromptHint] = useState('')
   // Session started or opened (App's cc-focus-terminal): in the chat view the
   // cursor goes into this composer, like Claude Code / Codex / Cursor.
   useEffect(() => {
@@ -3228,7 +3234,8 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       }
       setMessages((prev) => prev.filter((msg) => !failed(msg)))
       setIsAgentExecuting(false)
-      setDeliveryIssue(e.detail?.reason || 'The assistant could not accept your message.')
+      if (e.detail?.code === 'question_open') setPromptHint(QUESTION_OPEN_HINT)
+      else setDeliveryIssue(e.detail?.reason || 'The assistant could not accept your message.')
       optimisticBusyStartedAtRef.current = null
     }
     window.addEventListener('cc-terminal-send-failed', handleSendFailed)
@@ -4125,6 +4132,25 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   // Form submission handler
   const handleSend = (e, options = {}) => {
     e?.preventDefault()
+    // A question is open: y/yes, n/no and 1-9 answer it through the guarded
+    // menu reply; anything else waits until it is answered. Nothing typed
+    // here reaches the terminal while the dialog is on screen.
+    const openPrompt = promptActionsRef.current
+    if (openPrompt?.menu) {
+      const text = readInput()
+      const hasExtras = pastedImages.length > 0 || textAnnotations.length > 0 || !!pendingAnnotation?.quote || chatContext.items.length > 0
+      const option = !hasExtras && shortcutChoice(text, openPrompt.menu)
+      if (option) {
+        openPrompt.reply(option.key).then((ok) => {
+          if (ok) { setInputVal(''); setPromptHint(''); return }
+          // Swallowed because the last answer is still on its way: say so.
+          setPromptHint(openPrompt.busy ? SENDING_HINT : QUESTION_OPEN_HINT)
+        })
+        return
+      }
+      if (text.trim() || hasExtras) setPromptHint(QUESTION_OPEN_HINT)
+      return
+    }
     const aside = readInput().trim().match(/^\/btw(?:\s+([\s\S]*))?$/i)
     if (aside && canAskAside) {
       setInputVal('')
@@ -4289,6 +4315,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     onChange: (e) => {
       const val = e.target.value
       setInputVal(val)
+      if (promptHint) setPromptHint('')
       updateAutocomplete(val, e.target.selectionStart)
     },
     onSelect: (e) => updateAutocomplete(e.target.value, e.target.selectionStart),
@@ -4321,6 +4348,11 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
+        const openPrompt = promptActionsRef.current
+        if (openPrompt?.menu && !readInput().trim() && pastedImages.length === 0 && !hasComposerAnnotations && chatContext.items.length === 0) {
+          openPrompt.focus()
+          return
+        }
         handleSend(e)
       }
     },
@@ -4718,8 +4750,6 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
                 </>
               )}
 
-              <SessionPromptActions sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} onOpenTerminal={onOpenTerminal} />
-
               {showReplyPending ? (
                 <ReplyPending provider={cliType} label={!wsConnected ? 'Reconnecting… Your reply is still pending.' : 'Waiting for a reply…'} />
               ) : chatActivity && !replyWait && (
@@ -4880,6 +4910,8 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
               </button>
             </div>
           )}
+
+          <SessionPromptActions ref={promptActionsRef} sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} variant={inGrid ? 'tile' : 'card'} hint={promptHint} />
 
           {showSessionRecovery && (
             <div role="alert" data-chat-delivery-issue className="rounded-lg border border-x-line-strong bg-x-surface px-3 py-2 text-xs text-x-ink">

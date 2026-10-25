@@ -4,7 +4,7 @@ import { terminalWriters } from '../lib/terminalWriters'
 import { startedSessions, lastOutputAt } from '../lib/terminalWriters'
 import { detectPlan, detectPlanFile, clearPromptBuffer } from '../lib/outputParser'
 import { api } from '../lib/api'
-import { sendTerminalCommand } from '../lib/terminal'
+import { answerOrSay, approvePlanAutomatically } from '../lib/planAnswer'
 import { SOUNDS } from '../lib/sounds'
 import { hasBadThinkingSignatureError } from '../lib/sessionRuntime'
 import { attentionDetails, handleAttentionEvent } from '../lib/sessionAttention'
@@ -403,8 +403,9 @@ export default function useWebSocket() {
                 || session?.auto_approve_plan
 
               if (planTask && planTask.auto_approve_plan) {
-                // Task-level auto-approve (existing behavior)
-                sendTerminalCommand(sid, 'Plan looks good, proceed with implementation.')
+                // Task-level auto-approve: the plan approval's first option
+                // through the guarded endpoint, the sentence only at a free prompt.
+                approvePlanAutomatically(sid)
                 store.addNotification({
                   sessionId: sid,
                   type: 'plan_ready',
@@ -413,7 +414,7 @@ export default function useWebSocket() {
                 })
               } else if (shouldAutoApprove) {
                 // Session or cascade-level auto-approve
-                sendTerminalCommand(sid, 'Plan looks good, proceed with implementation.')
+                approvePlanAutomatically(sid)
                 store.addNotification({
                   sessionId: sid,
                   type: 'plan_ready',
@@ -508,6 +509,8 @@ export default function useWebSocket() {
                 sessionId: sid,
                 type: 'warning',
                 reason: data.reason,
+                trust_reason: data.trust_reason,
+                steps: Array.isArray(data.steps) ? data.steps : [],
                 cli: data.cli,
                 message: data.message || 'Codex hooks need review: run /hooks in Codex.',
               })
@@ -663,7 +666,8 @@ export default function useWebSocket() {
             const oversight = workspace?.human_oversight || 'approve_plans'
 
             if (oversight === 'full_auto') {
-              sendTerminalCommand(sid, 'Yes, go ahead and implement it.')
+              // An open menu gets its first option; plain text waits for the prompt.
+              answerOrSay(sid, 'Yes, go ahead and implement it.')
             } else {
               if (!sess.attention) maybePling('soundOnInputNeeded')
               store.setSessionAttention(sid, attentionDetails(data))
@@ -696,8 +700,9 @@ export default function useWebSocket() {
               if (data.tool_name) store.setSessionLastTool(sid, { tool_name: data.tool_name, summary: '', input: null, at: Date.now() })
             } else if (data.state === 'prompting') {
               requestSessionMessageRefresh(sid, 'session_prompting')
-              const wasWaiting = store.planWaiting[sid]
-              store.setSessionPlanWaiting(sid, true)
+              // planWaiting follows the recognised dialog (handleAttentionEvent
+              // above): only a plan approval opens the plan UI.
+              const wasWaiting = store.planWaiting[sid] || !!store.sessions[sid]?.attention
               store.setSessionStatus(sid, 'waiting', { pty_alive: true })
               if (!wasWaiting) maybePling('soundOnInputNeeded')
             } else if (data.state === 'idle') {

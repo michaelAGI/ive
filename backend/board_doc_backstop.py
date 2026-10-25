@@ -13,14 +13,17 @@ Modes (workspace.board_doc_mode):
 Behaviour per session:
   - Has a digest with artifacts AND an active/task ticket → PUT ticket to
     workspace.board_doc_existing_column (default 'review') + mark updated.
-  - Has artifacts but no ticket → POST a new [auto-triage] ticket in backlog
-    + mark created.
+  - Has artifacts but no ticket → POST a new [auto-triage] ticket in
+    workspace.board_doc_new_column (default 'backlog') + mark created. The
+    description is a plain English digest, never raw JSON.
   - No artifacts → mark skipped (board_action='skipped', no ticket touched).
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 
 from db import get_db
 
@@ -29,6 +32,8 @@ logger = logging.getLogger(__name__)
 SWEEP_INTERVAL = 3600        # seconds between sweeps
 STARTUP_DELAY  = 180         # seconds after server start before first sweep
 IDLE_THRESHOLD = "'-2 hours'"  # SQL: sessions idle for at least this long
+DEFAULT_NEW_COLUMN = "backlog"       # a card nobody reviewed yet is an idea, not a decision
+DEFAULT_EXISTING_COLUMN = "review"
 
 _broadcast_fn = None
 _task: asyncio.Task | None = None
@@ -91,8 +96,8 @@ async def _check_and_run() -> None:
 
 async def _sweep_workspace(ws: dict) -> None:
     ws_id = ws["id"]
-    existing_col = ws["board_doc_existing_column"] or "review"
-    new_col = ws["board_doc_new_column"] or "review"
+    existing_col = ws["board_doc_existing_column"] or DEFAULT_EXISTING_COLUMN
+    new_col = ws["board_doc_new_column"] or DEFAULT_NEW_COLUMN
 
     db = await get_db()
     try:
@@ -214,15 +219,61 @@ async def _create_task(ws_id: str, session_id: str, name: str,
         await db.close()
 
 
+def _digest_items(value) -> list[str]:
+    """Digest columns hold JSON lists of strings or dicts; tolerate plain text."""
+    if not value:
+        return []
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return [value.strip()] if value.strip() else []
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        text = str(parsed).strip()
+        return [text] if text else []
+    items: list[str] = []
+    for item in parsed:
+        if isinstance(item, dict):
+            item = (item.get("text") or item.get("summary") or item.get("note")
+                    or item.get("path") or item.get("file") or "")
+        text = str(item or "").strip()
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
+def _sentence(text: str) -> str:
+    text = " ".join(str(text).split())
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text[-1] in ".!?" else text + "."
+
+
 def _digest_summary(s: dict) -> str:
-    parts = []
-    if s.get("discoveries"):
-        parts.append(f"Discoveries: {s['discoveries']}")
-    if s.get("decisions"):
-        parts.append(f"Decisions: {s['decisions']}")
-    if s.get("files_touched"):
-        parts.append(f"Files touched: {s['files_touched']}")
-    return "\n".join(parts) if parts else "(no digest available)"
+    """Plain English for the card description; a person reads this, never JSON."""
+    name = str(s.get("name") or "").strip() or str(s.get("id") or "")[:8] or "unnamed"
+    files = _digest_items(s.get("files_touched"))
+    if files:
+        listing = ", ".join(os.path.basename(f.rstrip("/")) or f for f in files[:3])
+        if len(files) > 3:
+            listing += f" and {len(files) - 3} more"
+        unit = "file" if len(files) == 1 else "files"
+        lead = (f"Session «{name}» edited {len(files)} {unit} ({listing}), "
+                "then went idle without reporting a result.")
+    else:
+        lead = f"Session «{name}» went idle without reporting a result."
+    lines = [lead]
+    discoveries = [_sentence(t) for t in _digest_items(s.get("discoveries"))]
+    if discoveries:
+        lines.append("Discoveries: " + " ".join(discoveries))
+    decisions = [_sentence(t) for t in _digest_items(s.get("decisions"))]
+    if decisions:
+        lines.append("Decisions: " + " ".join(decisions))
+    return "\n".join(lines)
 
 
 async def _process_session(s: dict, ws_id: str, existing_col: str, new_col: str) -> None:
@@ -241,7 +292,7 @@ async def _process_session(s: dict, ws_id: str, existing_col: str, new_col: str)
     if target:
         ok = await _append_task_result(
             target,
-            f"[auto-documented by backstop]\n{digest_text}",
+            f"Auto-documented after the session went idle:\n{digest_text}",
             existing_col,
         )
         if ok:

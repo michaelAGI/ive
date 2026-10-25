@@ -89,6 +89,7 @@ const QuickActionPalette = lazyPanel(() => import('./components/command/QuickAct
 import CascadeBar from './components/chat/CascadeBar'
 import CascadeVariableDialog from './components/prompts/CascadeVariableDialog'
 import NotificationToast, { ToastBoundary } from './components/layout/NotificationToast'
+import NeedsYouPopover from './components/layout/NeedsYouPopover'
 import PanelBoundary from './components/PanelBoundary'
 import { canRestoreTerminalFocus } from './lib/gridFocus'
 import { openFindInSession } from './lib/findRouter'
@@ -98,7 +99,7 @@ import { toggleTheme } from './lib/theme'
 import { loadLanguageSetting } from './lib/i18n'
 import { installRouter, viewOf } from './lib/route'
 import { api } from './lib/api'
-import { typeInTerminal } from './lib/terminal'
+import { typeInTerminalUnlessQuestion } from './lib/terminal'
 
 const OWNER_ACTORS = ['localhost', 'owner_legacy', 'owner_device']
 
@@ -670,6 +671,19 @@ export default function App() {
     setShowQuickFeature(false); setQuickFeaturePrefill(''); setQuickFeatureVoice(false)
   }, [])
 
+  // A result in review opens its card on the Review tab of Tasks (⌘B); plan
+  // approvals, paused runs and blockers keep the guided TaskFlow dialog.
+  const openTaskReview = useCallback((taskId) => {
+    closeExclusivePanels()
+    setBoardInitialAction(`review:${taskId}`)
+    setShowBoard(true)
+  }, [closeExclusivePanels])
+  const reviewTask = useCallback((taskId) => {
+    if (useStore.getState().tasks[taskId]?.status === 'review') { openTaskReview(taskId); return }
+    closeExclusivePanels()
+    setTaskFlow({ taskId })
+  }, [closeExclusivePanels, openTaskReview])
+
   const openSessionSidebarTab = useCallback((tab, { toggle = false } = {}) => {
     if (toggle && showSessionSidebar && sessionSidebarTab === tab) {
       setShowSessionSidebar(false)
@@ -924,7 +938,8 @@ export default function App() {
         [view === 'session' && !!terminalDrawer[activeSessionId] && !typingTarget, () => useStore.getState().toggleTerminalDrawer(activeSessionId, false)],
         // Session → Board, including when the enlarged terminal has focus.
         // Consume the key here so it cannot also interrupt the running CLI.
-        [gridFocus && !useStore.getState().showHome && (!typingTarget || inTerminal), leaveGridFocus],
+        // Tasks (⌘B) runs its own Escape chain (note, modal, board); not here.
+        [gridFocus && !showBoard && !useStore.getState().showHome && (!typingTarget || inTerminal), leaveGridFocus],
       ]
       for (const [isOpen, close, nonModal] of escapeStack) {
         if (isOpen && !(nonModal && inTerminal)) { e.preventDefault(); e.stopPropagation(); close(); return }
@@ -1280,7 +1295,7 @@ export default function App() {
       onFindProject={(q) => { setWorkspaceSearchQuery(q || ''); setShowWorkspacePicker(true) }}
       onOpenPanel={executeHomeAction}
       onOpenSession={(id) => useStore.getState().goSession(id)}
-      onReviewTask={(taskId) => setTaskFlow({ taskId })}
+      onReviewTask={reviewTask}
     />
   )
 
@@ -1470,7 +1485,7 @@ export default function App() {
         <>
           {/* Lazy-loaded overlay panels — only the modal region suspends (fallback=null), never the shell. */}
           <Suspense fallback={null}>
-          {taskFlow && <TaskFlow key={taskFlow.tourKey || taskFlow.taskId || 'task-draft'} initial={taskFlow} onClose={() => setTaskFlow(null)} onCreated={() => {}} onBoard={(workspaceId) => { if (workspaceId) useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('feature-board') }} onKnowledge={(workspaceId) => { useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('memory') }} />}
+          {taskFlow && <TaskFlow key={taskFlow.tourKey || taskFlow.taskId || 'task-draft'} initial={taskFlow} onClose={() => setTaskFlow(null)} onCreated={() => {}} onBoard={(workspaceId, options) => { if (workspaceId) useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); if (options?.reviewTaskId) openTaskReview(options.reviewTaskId); else executeHomeAction('feature-board') }} onKnowledge={(workspaceId) => { useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('memory') }} />}
           {showCommand && <CommandPalette initialQuery={commandQuery} onClose={() => { setShowCommand(false); setCommandQuery('') }} onAction={handleCommandAction} />}
           {showCheatSheet && <CheatSheet onClose={() => setShowCheatSheet(false)} onRun={runCheatSheetAction} />}
           {showWorkspacePicker && <WorkspacePicker
@@ -1494,7 +1509,7 @@ export default function App() {
           {showAttention && (
             <Modal title="Needs your attention" size="md" onClose={() => setShowAttention(false)} bodyClassName="overflow-y-auto p-4">
               <AttentionBar showAll emptyMessage="Nothing needs your attention right now."
-                onReviewTask={(taskId) => { closeExclusivePanels(); setTaskFlow({ taskId }) }}
+                onReviewTask={reviewTask}
                 onReviewSession={(sessionId) => {
                   closeExclusivePanels()
                   const store = useStore.getState()
@@ -1667,7 +1682,8 @@ export default function App() {
               onClose={() => { URL.revokeObjectURL(screenshotData.imageUrl); setScreenshotData(null) }}
               onSendToSession={(filePath) => {
                 const sid = useStore.getState().activeSessionId
-                if (sid) typeInTerminal(sid, filePath)
+                // A path's digits would select and confirm an open dialog's option.
+                if (sid) typeInTerminalUnlessQuestion(sid, filePath)
               }}
             />
           )}
@@ -1702,6 +1718,7 @@ export default function App() {
           <SessionDeleteDialog />
           <SessionRenameDialog />
           <ToastBoundary><NotificationToast sideChatOpen={showSideChat} /></ToastBoundary>
+          <ToastBoundary><NeedsYouPopover sideChatOpen={showSideChat} /></ToastBoundary>
         </>
       )}
     >

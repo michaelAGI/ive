@@ -203,9 +203,11 @@ export default function TaskFlow({ initial = {}, onClose, onCreated, onBoard, on
   })
   const accept = () => action(async () => {
     // Re-read before accepting so stale UI cannot approve a newly started run.
+    // reviewed_run_id goes along only with a passing verification; the backend
+    // refuses it otherwise, and a plain status change is the normal path.
     const [freshTask, freshRuns] = await Promise.all([api.getTask(taskId), api.listPipelineRuns(undefined, undefined, false, taskId)])
-    if (!canAcceptTaskResult(freshTask, freshRuns[0]) || freshRuns.some((item) => ['running', 'paused'].includes(item.status)) || freshRuns[0]?.id !== run.id) throw new Error('The task changed. Refresh and review its current result first.')
-    const updated = await api.updateTask2(taskId, { status: 'done', reviewed_run_id: run.id })
+    if (!canAcceptTaskResult(freshTask, freshRuns[0]) || freshRuns.some((item) => ['running', 'paused'].includes(item.status)) || (freshRuns[0]?.id || null) !== (run?.id || null)) throw new Error('The task changed. Refresh and review its current result first.')
+    const updated = await api.updateTask2(taskId, run?.id && hasPassingVerification(run) ? { status: 'done', reviewed_run_id: run.id } : { status: 'done' })
     setTask(updated); useStore.getState().updateTaskInStore(updated)
   })
   const requestRevision = () => action(async () => {
@@ -272,7 +274,7 @@ export default function TaskFlow({ initial = {}, onClose, onCreated, onBoard, on
         <section className={`ive-flow-next ${current.tone === 'danger' ? 'is-error' : ''}`}><div><p className="ive-eyebrow">Next step</p><h3>{current.label}</h3><p>{current.detail}</p></div><div className="ive-flow-next-actions">
           {run?.status === 'paused' && <Button data-tour={current.approval ? 'plan-approve' : undefined} variant="primary" disabled={busy || !!refreshError} icon={ArrowRight} onClick={resume}>{current.approval ? 'Approve plan & start' : 'Resume run'}</Button>}
           {canAccept && <Button data-tour="result-accept" variant="primary" icon={Check} disabled={busy || !!refreshError} onClick={accept}>Accept result</Button>}
-          {current.boardReview && <Button variant="primary" onClick={() => onBoard(task.workspace_id)} disabled={busy}>Open full task board</Button>}
+          {current.boardReview && <Button variant={canAccept ? 'default' : 'primary'} onClick={() => onBoard(task.workspace_id, { reviewTaskId: task.id })} disabled={busy}>Open review</Button>}
           {!run && ['backlog', 'todo'].includes(task.status) && <Button data-tour="plan-submit" variant="primary" icon={ArrowRight} disabled={busy || !!refreshError} onClick={plan}>Prepare plan</Button>}
           {run && !['running', 'paused', 'completed'].includes(run.status) && <Button onClick={replan} disabled={busy || !!refreshError}>Prepare a new plan</Button>}
           {run && <Button data-tour="run-details" onClick={() => setDetailRun(run.id)} disabled={busy}>Run details</Button>}
@@ -288,12 +290,12 @@ export default function TaskFlow({ initial = {}, onClose, onCreated, onBoard, on
         {current.approval && <details className="ive-flow-settings"><summary>Request a plan revision</summary><label className="ive-flow-field">What should change?<textarea aria-label="Plan revision" value={feedback} onChange={(e) => setFeedback(e.target.value)} disabled={busy} rows={3} maxLength={12000} /></label><Button onClick={replan} disabled={busy || !feedback.trim() || !!refreshError}>Revise plan</Button><p>The current plan remains in previous runs. IVE prepares a new plan for your approval.</p></details>}
         {task.result_summary && <Report title="Task summary" output={task.result_summary} />}
         {['review', 'done'].includes(task.status) && <>
-          {!verified && <p className="text-sm text-x-muted">{task.status === 'done' ? 'This task was completed without a passing verification report for this run.' : 'Acceptance here requires a completed run with a passing verification report. You can review and manage this task manually in the full task board.'}</p>}
+          {!verified && <p className="text-sm text-x-muted">{task.status === 'done' ? 'This task was completed without a passing verification report for this run.' : 'No passing verification report for this result. Read the changes below, or open the review for the agent report, the diff and the checks, then accept or send back.'}</p>}
           <section className="ive-flow-report"><header><h3>Inspect the result</h3></header><p className="text-sm text-x-muted">Project changes include the current staged and unstaged diff; they can include work from other tasks. Committed changes are available in the full review tools.</p><div className="flex flex-wrap gap-2 mt-3"><Button data-tour="result-changes" icon={changesBusy ? Loader2 : RefreshCw} disabled={!workspace || changesBusy} onClick={loadChanges}>{changes ? 'Refresh project changes' : 'Show project changes'}</Button>{safeUrl(workspace?.preview_url) && <a className="ive-flow-link" href={safeUrl(workspace.preview_url)} target="_blank" rel="noreferrer">Open project preview <ExternalLink size={14} /></a>}</div>{!safeUrl(workspace?.preview_url) && <p className="mt-3 text-xs text-x-muted">No project preview is configured. Any preview provided by the agent appears in its report.</p>}{changesError && <p role="alert" className="ive-flow-error">{changesError}</p>}{changes?.truncated && <p className="mt-3 text-sm text-x-muted">This diff is truncated. Use the full review tools to inspect all changes.</p>}{changes && <><h4 className="mt-4 text-sm font-semibold">Unstaged changes</h4><pre className="ive-flow-diff">{changes.unstaged || 'No unstaged diff.'}</pre><h4 className="mt-4 text-sm font-semibold">Staged changes</h4><pre className="ive-flow-diff">{changes.staged || 'No staged diff.'}</pre></>}</section>
           <section className="ive-flow-report"><h3>Something still needs work?</h3><label className="ive-flow-field">Feedback<textarea aria-label="Feedback" value={feedback} disabled={busy || !!revision} onChange={(e) => setFeedback(e.target.value)} rows={3} maxLength={12000} placeholder="Describe what should be corrected." /></label><Button disabled={busy || !feedback.trim() || !!refreshError} onClick={requestRevision}>Create follow-up for review</Button><p className="mt-2 text-xs text-x-muted">Keeps this result and its evidence. The linked follow-up gets its own plan and approval.</p></section>
         </>}
         {runs.length > 1 && <details className="ive-flow-settings"><summary>Previous runs ({runs.length - 1})</summary>{runs.filter((item) => item.id !== run?.id).map((item) => <button className="ive-task-row" key={item.id} onClick={() => setDetailRun(item.id)}>{item.status} · {item.created_at}<ArrowRight size={14} /></button>)}</details>}
-        <div className="ive-flow-actions"><p>{workspace?.path}</p><Button onClick={() => onBoard(task.workspace_id)} disabled={busy}>Full task board</Button></div>
+        <div className="ive-flow-actions"><p>{workspace?.path}</p><Button onClick={() => onBoard(task.workspace_id)} disabled={busy}>Open Tasks</Button></div>
       </>}
     </div>
   </Modal>

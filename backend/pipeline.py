@@ -306,7 +306,10 @@ async def _route_to_documentor(task_id: str, workspace_id: str, test_results: st
     # Build doc prompt and send to documentor PTY
     prompt = _build_doc_prompt(task, test_results)
     await _start_session_if_needed(documentor_id)
-    if _pty_mgr and _pty_mgr.is_alive(documentor_id):
+    from open_question import session_has_open_question
+    if _pty_mgr and _pty_mgr.is_alive(documentor_id) and session_has_open_question(documentor_id):
+        logger.warning("Pipeline: documentor %s has a question open; documentation prompt not sent", documentor_id[:8])
+    elif _pty_mgr and _pty_mgr.is_alive(documentor_id):
         from pty_manager import submit_prompt
         if not await submit_prompt(_pty_mgr, documentor_id, prompt.encode("utf-8")):
             logger.error("Pipeline: documentor %s rejected the doc prompt", documentor_id[:8])

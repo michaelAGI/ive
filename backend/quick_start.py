@@ -23,6 +23,8 @@ import uuid
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+from board_doc_backstop import DEFAULT_NEW_COLUMN
+
 logger = logging.getLogger(__name__)
 
 ROOT_KEY = "quick_start_root"
@@ -168,6 +170,7 @@ async def ensure_workspace(db) -> dict:
             "context_sharing_enabled": 1,
             **workspace_fields.create_values(),
             "default_worktree": 0,
+            "board_doc_new_column": DEFAULT_NEW_COLUMN,
         }
         await db.execute(
             f"INSERT INTO workspaces ({', '.join(initial)}) "
@@ -264,6 +267,7 @@ async def find_or_create_workspace(db, path: str) -> tuple[dict, bool]:
         "id": ws_id, "name": os.path.basename(path) or path, "path": path,
         "comms_enabled": 1, "coordination_enabled": 1, "context_sharing_enabled": 1,
         **workspace_fields.create_values(),
+        "board_doc_new_column": DEFAULT_NEW_COLUMN,
     }
     await db.execute(
         f"INSERT INTO workspaces ({', '.join(initial)}) "

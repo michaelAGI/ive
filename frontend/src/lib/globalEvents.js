@@ -6,6 +6,7 @@
 //   store            useStore.getState()
 //   dispatch(n, d)   window.dispatchEvent(new CustomEvent(n, { detail: d }))
 //   refreshWorkspaces()  reload the workspace list from the API
+import { broadcastSkippedMessage } from './broadcastScope.js'
 
 function handleResearch(data, { store, dispatch }) {
   // research_error is a failed run: reuse the research_done(failed) path
@@ -85,6 +86,14 @@ export function handleGlobalEvent(data, ctx) {
       // for the next poll tick.
       dispatch('ive:phone-paired', { device_id: data.device_id, label: data.label })
       return true
+
+    case 'broadcast_skipped': {
+      // A raw WS broadcast left out sessions whose CLI shows a dialog: the
+      // text would have answered it. One notice with the count.
+      const count = Array.isArray(data.session_ids) ? data.session_ids.length : 0
+      if (count) store.addNotification({ type: 'warning', message: broadcastSkippedMessage(count) })
+      return true
+    }
 
     default:
       return false

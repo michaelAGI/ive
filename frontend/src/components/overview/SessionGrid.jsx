@@ -4,10 +4,12 @@ import useStore from '../../state/store'
 import ChatPanel from '../chat/ChatPanel'
 import TerminalSlot from '../shell/TerminalSlot'
 import SessionCloseButton from '../session/SessionCloseButton'
+import SessionPromptActions from '../session/SessionPromptActions'
 import useSessionChipMenu from '../session/SessionChipMenu'
 import StatusDot from '../ui/StatusDot'
 import { isShellSession } from '../../lib/sessionStatus'
 import { sessionStateOf } from '../../lib/sessionVocabulary'
+import { getSessionDisplayStatus } from '../../lib/sessionStatus'
 import { isHelperSession } from '../../lib/visibleSessions'
 import { sessionNeedsAttention } from '../../lib/sessionAttention'
 import { shouldFocusGridTerminal } from '../../lib/gridFocus'
@@ -157,10 +159,15 @@ export default function SessionGrid() {
     </div>
   )
 
+  // Terminal tiles answer the agent's question in a band above the xterm;
+  // chat tiles show it above their composer (ChatPanel).
   const renderBody = (id) => (
     <div className="flex-1 min-h-0 flex flex-col relative">
       {isSessionTerminalView(id)
-        ? <TerminalSlot sessionId={id} mode="tile" focusOnMount />
+        ? <>
+            {!isShellSession(sessions[id]) && <SessionPromptActions sessionId={id} variant="band" active={getSessionDisplayStatus(sessions[id], sessionStarted).tone === 'waiting'} disabled={!!sessions[id]?.read_only} />}
+            <TerminalSlot sessionId={id} mode="tile" focusOnMount />
+          </>
         : <ChatPanel sessionId={id} inGrid={true} onToggleTerminal={() => toggleSessionGridView(id)} />}
     </div>
   )

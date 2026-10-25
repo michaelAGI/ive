@@ -23,13 +23,13 @@ export const KEYBINDING_DEFS = [
   { id: 'previewUrl', label: 'Preview (screenshot / open)', section: 'Navigation', defaultKey: { key: 'p', meta: true } },
   { id: 'sidebar', label: 'Toggle Sidebar', section: 'Navigation', defaultKey: { key: '\\', meta: true } },
   // ⌘J shows or hides the terminal drawer of the open session (Scratchpad
-  // moved to the ⋯ menu and ⌘K); ⌘⇧E switches Board ⇄ Session, ⌘⇧H goes Home.
+  // moved to the ⋯ menu and ⌘K); ⌘⇧E switches Overview ⇄ Session, ⌘⇧H goes Home.
   { id: 'toggleTerminal', label: 'Toggle Terminal', section: 'Navigation', defaultKey: { key: 'j', meta: true } },
-  { id: 'toggleSessionLevel', label: 'Switch Board ⇄ Session', section: 'Navigation', defaultKey: { key: 'E', meta: true, shift: true } },
+  { id: 'toggleSessionLevel', label: 'Switch Overview ⇄ Session', section: 'Navigation', defaultKey: { key: 'E', meta: true, shift: true } },
   { id: 'goHome', label: 'Go to Home', section: 'Navigation', defaultKey: { key: 'H', meta: true, shift: true } },
 
   // ── Panels ──
-  { id: 'featureBoard', label: 'Feature Board', section: 'Panels', defaultKey: { key: 'b', meta: true } },
+  { id: 'featureBoard', label: 'Tasks', section: 'Panels', defaultKey: { key: 'b', meta: true } },
   { id: 'pipelineEditor', label: 'Pipeline Editor', section: 'Panels', defaultKey: { key: 'L', meta: true, shift: true } },
   { id: 'missionControl', label: 'Mission Control', section: 'Panels', defaultKey: { key: 'm', meta: true } },
   { id: 'guidelines', label: 'Guidelines', section: 'Panels', defaultKey: { key: 'g', meta: true } },
@@ -60,10 +60,12 @@ export const KEYBINDING_DEFS = [
   { id: 'usage', label: 'Usage', section: 'Sessions', defaultKey: { key: 'u', meta: true } },
   { id: 'msgPrev', label: 'Jump to previous message start', section: 'Sessions', defaultKey: { key: 'ArrowUp', meta: true, shift: true } },
   { id: 'msgNext', label: 'Jump to next message start', section: 'Sessions', defaultKey: { key: 'ArrowDown', meta: true, shift: true } },
+  // ⌘⇧Y focuses the oldest waiting question (PromptMenu); ⌘⇧A is annotate.
+  { id: 'answerNext', label: 'Answer next question', section: 'Sessions', defaultKey: { key: 'Y', meta: true, shift: true } },
 
-  // ── Feature Board ──
-  { id: 'boardTabPrev', label: 'Previous workspace tab', section: 'Feature Board', defaultKey: { key: '[' } },
-  { id: 'boardTabNext', label: 'Next workspace tab', section: 'Feature Board', defaultKey: { key: ']' } },
+  // ── Tasks (⌘B board) ──
+  { id: 'boardTabPrev', label: 'Previous workspace tab', section: 'Tasks', defaultKey: { key: '[' } },
+  { id: 'boardTabNext', label: 'Next workspace tab', section: 'Tasks', defaultKey: { key: ']' } },
 
   // ── Task Modal ──
   { id: 'taskTabPrev', label: 'Previous tab', section: 'Task Modal', defaultKey: { key: 'ArrowLeft', alt: true } },

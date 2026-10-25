@@ -1,7 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main IVE window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Default capability for the main IVE window, also when it shows the local backend",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:5112",
+      "http://127.0.0.1:*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-focus",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-is-focused"
+  ]
 }

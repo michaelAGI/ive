@@ -33,6 +33,12 @@ class ClaudeReadinessTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(screen=screen):
                 self.assertFalse(self.ns['_looks_ready_for_input']('claude', screen))
 
+    def test_menu_cursor_is_an_open_question_not_the_composer(self):
+        from test_session_prompt_guard import MENU
+        self.assertFalse(self.ns['_looks_ready_for_input']('claude', 'Claude Code\n' + MENU))
+        self.assertFalse(self.ns['_looks_ready_for_input']('claude', 'Pick one\n❯ 2) Second option'))
+        self.assertTrue(self.ns['_looks_ready_for_input']('claude', 'Claude Code\n' + MENU + '\n❯ '))
+
     def test_inline_arrows_and_non_prompt_banner_are_not_ready(self):
         for screen in ['Loading workspace', 'Claude ❯\u00a0still starting', '❯Try without a separator', '\u2028❯\u00a0not a terminal line']:
             with self.subTest(screen=screen):

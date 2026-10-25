@@ -13,10 +13,11 @@ from aiohttp import web
 def handlers(**dependencies):
     tree = ast.parse(Path(__file__).with_name("server.py").read_text())
     names = {"list_workspace_files", "get_workspace_git_log"}
+    helpers = {"_resolve_git_target"}
     module = ast.Module(body=[node for node in tree.body
-                             if isinstance(node, ast.AsyncFunctionDef) and node.name in names],
+                             if isinstance(node, ast.AsyncFunctionDef) and node.name in names | helpers],
                         type_ignores=[])
-    namespace = {"web": web, **dependencies}
+    namespace = {"web": web, "_Path": Path, **dependencies}
     exec(compile(module, "server.py", "exec"), namespace)
     return SimpleNamespace(**{name: namespace[name] for name in names})
 

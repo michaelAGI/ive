@@ -10,6 +10,7 @@ import TaskCard from './TaskCard'
 import TaskDetailModal from './TaskDetailModal'
 import NewTaskForm from './NewTaskForm'
 import DependencyGraph from './DependencyGraph'
+import HelpDetails from '../ui/HelpDetails'
 import usePanelCreate from '../../hooks/usePanelCreate'
 import {
   BOARD_PARK_DAYS,
@@ -20,10 +21,17 @@ import {
   parkTaskLabels,
   taskLabels,
 } from '../../lib/boardColumns'
+import { acceptPayload, autoTestEnabled, reviewSessionId, sendBackPayload } from '../../lib/taskReview'
 
 const FILTER_ALL = 'all'
 const FILTER_ATTENTION = 'attention'
 const ARCHIVE_UNDO_MS = 6500
+// initialAction 'review:<taskId>' opens that card on its Review tab (attention
+// modal, TaskFlow and open-panel events use it).
+const REVIEW_ACTION = 'review:'
+// "Test agent checking…" stays on an accepted card until the verification
+// badge settles, at most this long.
+const CHECKING_MS = 30 * 60 * 1000
 
 function settingKey(workspaceId) {
   const scope = String(workspaceId || 'all').toLowerCase().replace(/[^a-z0-9]+/g, '_')
@@ -58,6 +66,10 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
   const removeTaskFromStore = useStore((state) => state.removeTaskFromStore)
 
   const [selectedTask, setSelectedTask] = useState(null)
+  const [detailInitialTab, setDetailInitialTab] = useState(null)
+  const [pendingReviewId, setPendingReviewId] = useState(null)
+  const [checkingIds, setCheckingIds] = useState({})
+  const [busyIds, setBusyIds] = useState({})
   const [detailDirty, setDetailDirty] = useState(false)
   const [showNewTask, setShowNewTask] = useState(false)
   const [composerDirty, setComposerDirty] = useState(false)
@@ -131,9 +143,55 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
       requestAnimationFrame(() => searchRef.current?.focus())
     } else if (initialAction === 'shortcuts') {
       setShortcutsOpen(true)
+    } else if (typeof initialAction === 'string' && initialAction.startsWith(REVIEW_ACTION)) {
+      setViewMode('kanban')
+      setPendingReviewId(initialAction.slice(REVIEW_ACTION.length))
     }
     onActionConsumed?.()
   }, [initialAction, onActionConsumed])
+
+  const openTaskDetail = useCallback((task, tab = null) => {
+    setDetailDirty(false)
+    setDetailInitialTab(tab)
+    setSelectedTask(task)
+  }, [])
+
+  // The card may not be in the store yet (board opened from Home or the
+  // attention list before the first poll): fetch it, then open its Review tab.
+  useEffect(() => {
+    if (!pendingReviewId) return undefined
+    const task = tasks[pendingReviewId]
+    if (task) {
+      setPendingReviewId(null)
+      setBoardWsId((current) => (current && current !== task.workspace_id ? task.workspace_id : current))
+      openTaskDetail(task, 'review')
+      return undefined
+    }
+    let cancelled = false
+    api.getTask(pendingReviewId).then((row) => {
+      if (cancelled) return
+      if (row?.id) updateTaskInStore(row)
+      else { setPendingReviewId(null); showNote('Card not found', 'error') }
+    }).catch(() => {
+      if (cancelled) return
+      setPendingReviewId(null)
+      showNote('Card not found', 'error')
+    })
+    return () => { cancelled = true }
+  }, [pendingReviewId, tasks, openTaskDetail, showNote, updateTaskInStore])
+
+  // Drop "checking" once the verification value moves on from what it was at
+  // acceptance (the test agent reported), or the card is gone, or after a while.
+  useEffect(() => {
+    setCheckingIds((current) => {
+      const next = {}
+      for (const [id, mark] of Object.entries(current)) {
+        const task = tasks[id]
+        if (task && (task.verification || null) === mark.verification && Date.now() - mark.since < CHECKING_MS) next[id] = mark
+      }
+      return Object.keys(next).length === Object.keys(current).length ? current : next
+    })
+  }, [tasks])
 
   usePanelCreate({
     enabled: !selectedTask && !showNewTask,
@@ -142,6 +200,10 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
 
   const wsMap = useMemo(
     () => Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace.name])),
+    [workspaces]
+  )
+  const wsPaths = useMemo(
+    () => Object.fromEntries(workspaces.map((workspace) => [workspace.id, workspace.path])),
     [workspaces]
   )
   const attentionByTask = useMemo(() => {
@@ -240,6 +302,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
   const closeTaskDetail = useCallback(() => {
     if (detailDirty && !window.confirm('Discard unsaved card changes?')) return false
     setSelectedTask(null)
+    setDetailInitialTab(null)
     setDetailDirty(false)
     requestAnimationFrame(() => boardRef.current?.focus({ preventScroll: true }))
     return true
@@ -248,6 +311,8 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
   useEffect(() => {
     const handler = (event) => {
       if (event.key !== 'Escape') return
+      // A "Send back" note closes itself on Escape; the board stays open.
+      if (event.target?.closest?.('[data-card-note]')) return
       if (searchRef.current === event.target) {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -301,7 +366,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
       return updated
     } catch (error) {
       updateTaskInStore(before)
-      showNote(failureText || 'Change rolled back', 'error')
+      showNote((typeof failureText === 'function' ? failureText(error) : failureText) || 'Change rolled back', 'error')
       throw error
     }
   }, [showNote, updateTaskInStore])
@@ -382,12 +447,75 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
     onClose?.()
   }, [activeWorkspaceId, onClose])
 
+  const markBusy = useCallback((id, busy) => {
+    setBusyIds((current) => {
+      if (busy) return { ...current, [id]: true }
+      const { [id]: _, ...rest } = current
+      return rest
+    })
+  }, [])
+
+  // Review actions. Accept = PUT status done (+ reviewed_run_id when the run
+  // passed verification); Send back = POST iterate with the note; both leave
+  // sessions alone. A refusal shows the backend's own sentence.
+  const acceptTask = useCallback(async (task) => {
+    if (!task || task.status !== 'review' || busyIds[task.id]) return
+    markBusy(task.id, true)
+    try {
+      const updated = await optimisticUpdate(task, acceptPayload(task), (error) => (error?.message ? `Accept failed: ${error.message}` : 'Accept rolled back'))
+      const workspace = workspaces.find((item) => item.id === task.workspace_id)
+      if (autoTestEnabled(workspace)) {
+        setCheckingIds((current) => ({ ...current, [task.id]: { since: Date.now(), verification: (updated?.verification ?? task.verification) || null } }))
+        showNote('Accepted. Test agent checking…')
+      } else showNote('Accepted')
+      setSelectedTask((current) => (current?.id === task.id ? null : current))
+      if (selectedTask?.id === task.id) setDetailDirty(false)
+    } catch {} finally { markBusy(task.id, false) }
+  }, [busyIds, markBusy, optimisticUpdate, selectedTask, showNote, workspaces])
+
+  const sendBackTask = useCallback(async (task, note) => {
+    const text = String(note || '').trim()
+    if (!task || !text || busyIds[task.id]) return
+    markBusy(task.id, true)
+    try {
+      const updated = await api.iterateTask(task.id, sendBackPayload(text))
+      if (updated?.id) updateTaskInStore(updated)
+      showNote('Sent back. The next worker reads your note first.')
+      setSelectedTask((current) => (current?.id === task.id ? null : current))
+      if (selectedTask?.id === task.id) setDetailDirty(false)
+    } catch (error) {
+      showNote(error?.message || 'Send back failed', 'error')
+    } finally { markBusy(task.id, false) }
+  }, [busyIds, markBusy, selectedTask, showNote, updateTaskInStore])
+
+  // "Open session" only when the store still knows the session; a deleted one
+  // would open an empty main area.
+  const taskSessionAvailable = useCallback((task) => {
+    const sessionId = reviewSessionId(task)
+    return !!sessionId && !!sessions[sessionId]
+  }, [sessions])
+
+  const openTaskSession = useCallback((task) => {
+    const sessionId = reviewSessionId(task)
+    if (!sessionId) return
+    const store = useStore.getState()
+    if (task.workspace_id) store.setActiveWorkspace(task.workspace_id)
+    store.goSession(sessionId)
+    onClose?.()
+  }, [onClose])
+
+  const showTaskChanges = useCallback((task) => {
+    setTaskFocus(task)
+    openTaskDetail(task, 'review')
+  }, [openTaskDetail, setTaskFocus])
+
   const handleBoardKeyDown = useCallback((event) => {
     if (event.defaultPrevented) return
     const target = event.target
     const tag = target?.tagName?.toLowerCase()
     const isField = tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable
-    if (isField) return
+    // Buttons, links and the file list inside a card keep Enter and Space.
+    if (isField || target?.closest?.('button, a, summary, [data-card-note]')) return
 
     const keybindings = useStore.getState().keybindings
     if (matchesKey(event, keybindings.boardTabPrev) || matchesKey(event, keybindings.boardTabNext)) {
@@ -427,8 +555,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
       moveHorizontal(-1)
     } else if (event.key === 'Enter' && focusedTask) {
       event.preventDefault()
-      setDetailDirty(false)
-      setSelectedTask(focusedTask)
+      openTaskDetail(focusedTask)
     } else if (event.key.toLowerCase() === 'e' && focusedTask) {
       event.preventDefault()
       startTitleEdit(focusedTask)
@@ -448,7 +575,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
         moveTask(focusedTask, column.key)
       }
     }
-  }, [archiveTask, boardWsId, focusedTask, moveHorizontal, moveLinear, moveTask, parkTask, routeToWorker, smartFilter, startTitleEdit, tabIds])
+  }, [archiveTask, boardWsId, focusedTask, moveHorizontal, moveLinear, moveTask, openTaskDetail, parkTask, routeToWorker, smartFilter, startTitleEdit, tabIds])
 
   const persistSavedFilters = useCallback((next) => {
     setSavedFilters(next)
@@ -525,7 +652,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
       <section
         ref={boardRef}
         tabIndex={-1}
-        aria-label="Feature Board"
+        aria-label="Tasks"
         data-testid="feature-board"
         className="x-board-surface flex-1 flex flex-col m-2 md:m-4 x-panel shadow-x-3 overflow-hidden min-w-0 scale-in focus:outline-none"
         onClick={(event) => event.stopPropagation()}
@@ -536,7 +663,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
             <span className="w-6 h-6 rounded-lg bg-x-surface-2 border border-x-line flex items-center justify-center">
               <LayoutGrid size={13} className="text-x-muted" />
             </span>
-            <span className="text-[13px] text-x-ink font-semibold">Feature Board</span>
+            <span className="text-[13px] text-x-ink font-semibold">Tasks</span>
           </div>
           <div className="flex-1 min-w-[1rem]" />
 
@@ -581,17 +708,22 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
           >
             <CircleHelp size={14} />
           </button>
-          <button onClick={requestBoardClose} aria-label="Close Feature Board" className="h-8 w-8 rounded-lg text-x-muted hover:text-x-ink hover:bg-x-hover flex items-center justify-center">
+          <button onClick={requestBoardClose} aria-label="Close Tasks" className="h-8 w-8 rounded-lg text-x-muted hover:text-x-ink hover:bg-x-hover flex items-center justify-center">
             <X size={16} />
           </button>
         </header>
 
         <div className="x-entity-header px-5 md:px-7 py-4 shrink-0">
-          <div className="x-entity-eyebrow">Projects <span>›</span> <strong>Feature Board</strong></div>
+          <div className="x-entity-eyebrow">Projects <span>›</span> <strong>Tasks</strong></div>
           <div className="x-entity-title-row">
-            <div>
-              <h1>Feature Board</h1>
-              <p>A mirror of work already in motion — optional, immediate, and never a gate.</p>
+            <div className="min-w-0">
+              <h1>Tasks</h1>
+              <p data-testid="board-subtitle">Tasks for this project. Agents and you move the cards. Review means an agent is done and you decide.</p>
+              <HelpDetails label="How this board works" className="x-board-help">
+                <p>Cards come from you (the plus button or n), from agents that report their work, and from IVE when a session sits idle for two hours without a report.</p>
+                <p>Review means an agent says it is finished. Accept moves the card to Done; Send back puts it in To Do with your note for the next worker.</p>
+                <p>Nothing here blocks a running session. Agents keep working whatever you do with the cards.</p>
+              </HelpDetails>
             </div>
             <div className="x-entity-actions">
               <span className="x-pill font-mono">{totalCount} shown</span>
@@ -690,20 +822,23 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
                   onDragLeave={() => setDragOverCol(null)}
                   onDrop={(event) => handleDrop(event, column.key)}
                 >
-                  <header className="flex items-center gap-2 px-3 py-2.5 border-b border-x-line bg-x-surface shrink-0 select-none">
-                    <span className={`text-[11px] font-mono uppercase tracking-[0.06em] ${columnAccent[column.key]}`}>{column.label}</span>
-                    <span className="text-[10px] font-mono text-x-muted">({columnTasks.length})</span>
-                    <span className="flex-1" />
-                    {column.key === 'backlog' && (
-                      <button
-                        onClick={() => { if (showNewTask) closeComposer(); else setShowNewTask(true) }}
-                        aria-label="Add card"
-                        title="Add card (n)"
-                        className="w-6 h-6 rounded-full bg-x-accent text-x-on-accent flex items-center justify-center hover:bg-x-accent-ink transition-colors duration-[80ms]"
-                      >
-                        <Plus size={13} />
-                      </button>
-                    )}
+                  <header className="flex flex-col gap-0.5 px-3 py-2.5 border-b border-x-line bg-x-surface shrink-0 select-none">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[11px] font-mono uppercase tracking-[0.06em] ${columnAccent[column.key]}`}>{column.label}</span>
+                      <span className="text-[10px] font-mono text-x-muted">({columnTasks.length})</span>
+                      <span className="flex-1" />
+                      {column.key === 'backlog' && (
+                        <button
+                          onClick={() => { if (showNewTask) closeComposer(); else setShowNewTask(true) }}
+                          aria-label="Add card"
+                          title="Add card (n)"
+                          className="w-6 h-6 rounded-full bg-x-accent text-x-on-accent flex items-center justify-center hover:bg-x-accent-ink transition-colors duration-[80ms]"
+                        >
+                          <Plus size={13} />
+                        </button>
+                      )}
+                    </div>
+                    {column.hint && <span className="text-[11px] text-x-muted leading-snug" data-column-hint>{column.hint}</span>}
                   </header>
 
                   {column.key === 'backlog' && showNewTask && (
@@ -729,7 +864,15 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
                             onStart={routeToWorker}
                             isFocused={focusCol === colIdx && focusRow === rowIdx}
                             workspaceName={isAllView ? wsMap[task.workspace_id] : undefined}
-                            onClick={(clicked) => { setTaskFocus(clicked); setDetailDirty(false); setSelectedTask(clicked) }}
+                            workspacePath={wsPaths[task.workspace_id]}
+                            onClick={(clicked) => { setTaskFocus(clicked); openTaskDetail(clicked) }}
+                            onAccept={acceptTask}
+                            onSendBack={sendBackTask}
+                            onOpenSession={openTaskSession}
+                            onShowChanges={showTaskChanges}
+                            sessionAvailable={taskSessionAvailable(task)}
+                            busy={!!busyIds[task.id]}
+                            checking={!!checkingIds[task.id]}
                             relState={relState}
                             onMouseEnter={() => setHoveredTaskId(task.id)}
                             onMouseLeave={() => setHoveredTaskId(null)}
@@ -744,7 +887,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
                       )
                     })}
                     {columnTasks.length === 0 && !(column.key === 'backlog' && showNewTask) && (
-                      <div className="text-center py-8 text-[11px] font-mono text-x-faint">no cards</div>
+                      <p className="text-center px-3 py-8 text-[11px] leading-relaxed text-x-muted" data-column-empty>{column.empty || 'No cards'}</p>
                     )}
                   </div>
                 </section>
@@ -752,7 +895,7 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
             })}
           </div>
         ) : (
-          <DependencyGraph tasks={filteredTasks} onTaskClick={(task) => { setDetailDirty(false); setSelectedTask(task) }} workspaceId={effectiveWsId} />
+          <DependencyGraph tasks={filteredTasks} onTaskClick={(task) => openTaskDetail(task)} workspaceId={effectiveWsId} />
         )}
 
         <footer className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 md:px-6 pr-20 md:pr-24 py-2 border-t border-x-line shrink-0 select-none text-[10px] font-mono text-x-muted">
@@ -767,8 +910,16 @@ export default function FeatureBoard({ onClose, initialAction = null, onActionCo
 
       {selectedTask && (
         <TaskDetailModal
+          key={selectedTask.id}
           task={tasks[selectedTask.id] || selectedTask}
           workspaceId={selectedTask.workspace_id || effectiveWsId}
+          initialTab={detailInitialTab}
+          onAccept={acceptTask}
+          onSendBack={sendBackTask}
+          onOpenSession={openTaskSession}
+          sessionAvailable={taskSessionAvailable(tasks[selectedTask.id] || selectedTask)}
+          actionBusy={!!busyIds[selectedTask.id]}
+          checking={!!checkingIds[selectedTask.id]}
           commanderSessionId={(() => {
             const matches = Object.values(sessions).filter((session) => session.workspace_id === (selectedTask.workspace_id || effectiveWsId) && session.session_type === 'commander')
             return (matches.find((session) => session.status !== 'exited') || matches[0])?.id

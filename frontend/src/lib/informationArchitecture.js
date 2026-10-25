@@ -11,8 +11,8 @@ export const IA_GROUPS = [{
     description: 'Open a conversation with an AI agent or continue an existing one.'
   }, {
     id: 'feature-board',
-    label: 'Feature Board',
-    description: 'Organize tasks by status and see what needs attention.'
+    label: 'Tasks',
+    description: 'Cards for each task: who works on it, what came back, what needs your call.'
   }, {
     id: 'pipeline-editor',
     label: 'Pipelines',
@@ -140,8 +140,8 @@ export const IA_GROUPS = [{
     description: 'Theme and defaults.'
   }, {
     id: 'mac-power',
-    label: 'Mac & Energie',
-    description: 'Agenten bei geschlossenem Deckel weiterarbeiten lassen und dabei Strom sparen.'
+    label: 'Mac & Power',
+    description: 'Keep agents working with the lid closed and save power.'
   }, {
     id: 'model-providers',
     label: 'Model Providers',

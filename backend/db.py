@@ -178,6 +178,8 @@ async def init_db():
         await migrate_model_switching(connection)
         from effort_migration import migrate_fake_high_effort
         await migrate_fake_high_effort(connection)
+        from board_doc_migration import migrate_board_doc_new_column
+        await migrate_board_doc_new_column(connection)
         await refresh_ownership(connection, commit=False)
         await connection.commit()
         _mark_verified()
