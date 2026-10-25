@@ -9,6 +9,8 @@ import { cardIdentity, stackCards, wantsLine } from '../../lib/needsYou'
 import { focusPromptMenuWhenRendered } from '../../lib/promptFocus'
 import { isShown } from '../../lib/sessionInputFocus'
 import { SOUNDS } from '../../lib/sounds'
+import { isNativeAlertsAvailable, nativeNotify, setDockBadge, windowIsFocused } from '../../lib/nativeAlerts'
+import { orderWaitingSessions } from '../../lib/promptMenu'
 
 // The small stack top right that says which agent needs you while its
 // terminal or chat is not in front of you: another session's screen, Home,
@@ -122,7 +124,20 @@ function useRegionOffset(active, sideChatOpen) {
   return active ? style : undefined
 }
 
+// Set while a macOS notification is out; the next window focus (macOS gives
+// the page no click payload) jumps to the oldest open question.
+let nativeNoticePending = false
+
 function notifyOutsideWindow(session, line) {
+  const title = `${session.name || 'A session'} needs you`
+  const tag = `ive-needs-you-${session.id}`
+  if (isNativeAlertsAvailable()) {
+    windowIsFocused().then((focused) => {
+      if (focused) return
+      nativeNotify({ title, body: line, tag }).then((shown) => { if (shown) nativeNoticePending = true })
+    })
+    return
+  }
   if (typeof window === 'undefined' || typeof window.Notification !== 'function' || window.Notification.permission !== 'granted') return
   if (document.hasFocus?.()) return
   try {
@@ -158,6 +173,22 @@ function useNeedsYouSignals(waiting, mode, workspaces) {
     }
     for (const id of [...lastIdentityBySession.keys()]) if (!current.has(id)) lastIdentityBySession.delete(id)
   }, [waiting, mode, workspaces])
+  // Dock badge = number of waiting sessions (cleared when the alert is off).
+  useEffect(() => { setDockBadge(mode === 'off' ? 0 : waiting.length) }, [waiting.length, mode])
+  // After a macOS notification the next window focus lands on the oldest question.
+  useEffect(() => {
+    if (!isNativeAlertsAvailable() || typeof window === 'undefined') return undefined
+    const onFocus = () => {
+      if (!nativeNoticePending) return
+      nativeNoticePending = false
+      const oldest = orderWaitingSessions(waiting)[0]
+      if (!oldest) return
+      useStore.getState().goSession(oldest.id)
+      focusPromptMenuWhenRendered(oldest.id)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [waiting])
 }
 
 function NeedsYouCard({ session, dismissKey, workspace, onDismiss, autoFocus }) {
