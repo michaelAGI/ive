@@ -13,6 +13,8 @@ import useStore from '../../state/store'
 import { matchesKey, formatKeyCombo } from '../../lib/keybindings'
 import { sendTerminalCommand } from '../../lib/terminal'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
+import { hasScreenCapture, noticeFromBrowserDenial } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
 import { hasReviewTab, reviewSessionId, reviewTabFirst } from '../../lib/taskReview'
 
 import ExcalidrawWrapper, { extractDiagramNotes } from './ExcalidrawWrapper'
@@ -470,7 +472,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
   }, [tab, tabs])
 
   // Screenshot using browser's screen capture API
+  const [screenshotNotice, setScreenshotNotice] = useState(null)
   const captureScreenshot = async () => {
+    setScreenshotNotice(null)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'monitor' },
@@ -499,9 +503,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
         loadAttachments()
       }, 'image/png')
     } catch (err) {
-      if (err.name !== 'NotAllowedError') {
-        console.error('Screenshot failed:', err)
-      }
+      const notice = noticeFromBrowserDenial(err, 'screen')
+      if (notice) setScreenshotNotice(notice)
+      else if (err.name !== 'NotAllowedError') console.error('Screenshot failed:', err)
     }
   }
 
@@ -1634,13 +1638,13 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
                 >
                   <ExternalLink size={10} /> open
                 </Button>
-                <Button type="submit"
+                {hasScreenCapture() && <Button type="submit"
                   onClick={captureScreenshot}
                   className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium bg-x-tint border border-x-accent/30 text-x-accent hover:bg-x-accent/15 transition-colors duration-[80ms]"
                   title="Browser will ask you to pick a screen/window to capture"
                 >
                   <Camera size={10} /> screenshot & attach
-                </Button>
+                </Button>}
                 <Button type="submit"
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('open-live-preview', {
@@ -1654,6 +1658,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
                   <Camera size={10} /> Live Annotator
                 </Button>
               </div>
+              {screenshotNotice && (
+                <MacPermissionNotice notice={screenshotNotice} onRetry={captureScreenshot} onDismiss={() => setScreenshotNotice(null)} className="mb-2" />
+              )}
               <div className="flex-1 rounded-lg border border-x-line overflow-hidden bg-white">
                 <iframe
                   ref={iframeRef}

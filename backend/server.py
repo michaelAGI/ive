@@ -10,6 +10,7 @@ if __name__ == "__main__":
 
 import asyncio
 import base64
+import errno
 import codecs
 import datetime
 import hmac
@@ -6722,6 +6723,59 @@ async def get_overview(request: web.Request) -> web.Response:
         await db.close()
 
 
+# macOS "Files and Folders": reading these roots needs the user's consent for
+# IVE. A refusal arrives as EPERM and must not pass for a missing folder.
+_TCC_FOLDER_ROOTS = (
+    ("~/Desktop", "your Desktop folder"),
+    ("~/Documents", "your Documents folder"),
+    ("~/Downloads", "your Downloads folder"),
+    ("~/Library/Mobile Documents", "iCloud Drive"),
+    ("/Volumes", "external volumes"),
+)
+
+
+def _tcc_folder_label(path) -> Optional[str]:
+    """The consent-protected root that `path` lies in, named as the user knows it."""
+    target = os.path.normpath(os.path.expanduser(os.fspath(path)))
+    for root, label in _TCC_FOLDER_ROOTS:
+        base = os.path.normpath(os.path.expanduser(root))
+        if target == base or target.startswith(base + os.sep):
+            if base == "/Volumes" and target != base:
+                return f'the volume "{target[len(base) + 1:].split(os.sep)[0]}"'
+            return label
+    return None
+
+
+def _tcc_denied_response(path, exc: BaseException) -> Optional[web.Response]:
+    """403 with a reason when macOS refused IVE access to a protected folder."""
+    if sys.platform != "darwin" or getattr(exc, "errno", None) != errno.EPERM:
+        return None
+    label = _tcc_folder_label(path)
+    if label is None:
+        return None
+    return web.json_response({
+        "error": f"macOS has not allowed IVE to read {label}.",
+        "reason": "files_folders_denied",
+        "settings_pane": "privacy_files",
+    }, status=403)
+
+
+_APPLE_EVENTS_DENIED = re.compile(r"Apple events to (.+?)\. \(-1743\)")
+
+
+def _automation_denied(stderr: str, app: Optional[str] = None) -> Optional[web.Response]:
+    """409 with a reason when macOS blocked IVE from controlling another app (-1743)."""
+    if "-1743" not in stderr:
+        return None
+    match = _APPLE_EVENTS_DENIED.search(stderr)
+    target = app or (match.group(1) if match else "another app")
+    return web.json_response({
+        "error": f"macOS has not allowed IVE to control {target}.",
+        "reason": "automation_denied",
+        "settings_pane": "privacy_automation",
+    }, status=409)
+
+
 async def list_workspace_files(request: web.Request) -> web.Response:
     workspace_id = request.match_info["id"]
     if not _workspace_visible_to_auth(workspace_id, get_auth(request)):
@@ -6752,8 +6806,15 @@ async def list_workspace_files(request: web.Request) -> web.Response:
     except (ValueError, OSError, RuntimeError):
         return web.json_response({"error": "access denied"}, status=403)
 
-    if not os.path.exists(target_dir):
+    try:
+        os.stat(target_dir)
+    except FileNotFoundError:
         return web.json_response({"error": "directory not found"}, status=404)
+    except OSError as e:
+        denied = _tcc_denied_response(target_dir, e)
+        if denied is not None:
+            return denied
+        return web.json_response({"error": str(e)}, status=500)
 
     if not os.path.isdir(target_dir):
         return web.json_response({"error": "not a directory"}, status=400)
@@ -6784,6 +6845,9 @@ async def list_workspace_files(request: web.Request) -> web.Response:
                 "size": size
             })
     except OSError as e:
+        denied = _tcc_denied_response(target_dir, e)
+        if denied is not None:
+            return denied
         return web.json_response({"error": str(e)}, status=500)
 
     items.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
@@ -6829,13 +6893,29 @@ async def browse_folder(request: web.Request) -> web.Response:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            return web.json_response({"error": "cancelled"}, status=400)
+            message = stderr.decode(errors="replace")
+            if "-128" in message or not message.strip():
+                return web.json_response({"error": "cancelled"}, status=400)
+            denied = _automation_denied(message)
+            if denied is not None:
+                return denied
+            return web.json_response(
+                {"error": "The folder picker could not be opened.", "detail": message.strip()[:200]},
+                status=500)
         path = stdout.decode().strip().rstrip("/")
-        return web.json_response({"path": path})
     except FileNotFoundError:
         return web.json_response({"error": "folder picker not available"}, status=500)
+    try:
+        # Opening the folder shows a macOS refusal now, not as an empty tree later.
+        with os.scandir(path):
+            pass
+    except OSError as e:
+        denied = _tcc_denied_response(path, e)
+        if denied is not None:
+            return denied
+    return web.json_response({"path": path})
 
 
 async def search_local_projects(request: web.Request) -> web.Response:
@@ -6871,11 +6951,25 @@ async def create_workspace(request: web.Request) -> web.Response:
         # A bare "my-project" / "Desktop/x" must never resolve against the
         # server's cwd — anchor relative paths at the user's home.
         expanded = os.path.join(os.path.expanduser("~"), expanded)
-    if not os.path.isdir(expanded):
+    is_dir = os.path.isdir(expanded)
+    if not is_dir:
+        # isdir() swallows EPERM; stat() tells a macOS refusal from a missing folder.
+        try:
+            os.stat(expanded)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            denied = _tcc_denied_response(expanded, e)
+            if denied is not None:
+                return denied
+    if not is_dir:
         if body.get("create_dir"):
             try:
                 os.makedirs(expanded, exist_ok=True)
             except OSError as e:
+                denied = _tcc_denied_response(expanded, e)
+                if denied is not None:
+                    return denied
                 return web.json_response(
                     {"error": f"could not create directory: {e}"}, status=400)
         else:
@@ -23160,6 +23254,34 @@ async def restart_with_account(request: web.Request) -> web.Response:
 
 # ─── REST: Native Terminal Pop-Out ──────────────────────────────────────────
 
+_ITERM_APP_PATHS = ("/Applications/iTerm.app", "~/Applications/iTerm.app")
+
+
+def _popout_terminal_target() -> str:
+    """One target for the pop-out: iTerm when installed, otherwise Terminal."""
+    if any(os.path.isdir(os.path.expanduser(p)) for p in _ITERM_APP_PATHS):
+        return "iTerm"
+    return "Terminal"
+
+
+def _popout_terminal_script(target: str, command: str) -> str:
+    if target == "iTerm":
+        return (
+            'tell application "iTerm"\n'
+            '  create window with default profile\n'
+            '  tell current session of current window\n'
+            f'    write text {json.dumps(command)}\n'
+            '  end tell\n'
+            'end tell'
+        )
+    return (
+        'tell application "Terminal"\n'
+        f'  do script {json.dumps(command)}\n'
+        '  activate\n'
+        'end tell'
+    )
+
+
 async def pop_out_session(request: web.Request) -> web.Response:
     """POST /api/sessions/{id}/pop-out
 
@@ -23270,47 +23392,23 @@ async def pop_out_session(request: web.Request) -> web.Response:
 
     # Open in native terminal (macOS)
     if sys.platform == "darwin":
-        # Try iTerm2 first, fall back to Terminal.app
-        iterm_script = (
-            f'tell application "iTerm"\n'
-            f'  create window with default profile\n'
-            f'  tell current session of current window\n'
-            f'    write text {json.dumps(full_cmd)}\n'
-            f'  end tell\n'
-            f'end tell'
+        target = _popout_terminal_target()
+        proc = await _asyncio.create_subprocess_exec(
+            "osascript", "-e", _popout_terminal_script(target, full_cmd),
+            stdout=_asyncio.subprocess.PIPE,
+            stderr=_asyncio.subprocess.PIPE,
         )
-        terminal_script = (
-            f'tell application "Terminal"\n'
-            f'  do script {json.dumps(full_cmd)}\n'
-            f'  activate\n'
-            f'end tell'
-        )
-
-        # Prefer iTerm2 if installed
-        try:
-            proc = await _asyncio.create_subprocess_exec(
-                "osascript", "-e", iterm_script,
-                stdout=_asyncio.subprocess.PIPE,
-                stderr=_asyncio.subprocess.PIPE,
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            message = stderr.decode(errors="replace")
+            denied = _automation_denied(message, target)
+            if denied is not None:
+                return denied
+            return web.json_response(
+                {"error": f"Failed to open terminal: {message[:200]}"},
+                status=500,
             )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise RuntimeError(stderr.decode())
-            terminal_app = "iTerm2"
-        except Exception:
-            # Fall back to Terminal.app
-            proc = await _asyncio.create_subprocess_exec(
-                "osascript", "-e", terminal_script,
-                stdout=_asyncio.subprocess.PIPE,
-                stderr=_asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                return web.json_response(
-                    {"error": f"Failed to open terminal: {stderr.decode()[:200]}"},
-                    status=500,
-                )
-            terminal_app = "Terminal.app"
+        terminal_app = "iTerm2" if target == "iTerm" else "Terminal.app"
     else:
         return web.json_response(
             {"error": "Native terminal pop-out is currently macOS-only"},

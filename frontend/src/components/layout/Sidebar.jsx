@@ -26,6 +26,8 @@ const CoordinationSidebarBadge = resolveExtensionPanel('swarmlock', 'Coordinatio
 const IndexWorkspaceAction = resolveExtensionPanel('forge', 'IndexWorkspaceAction')
 import { Button } from '../ui'
 import { isQuickWorkspace, openQuickStart, shortenHome } from '../../lib/quickStart'
+import { noticeFromApiError } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
 
 // The project tree inside NavSidebar: one group per project with its
 // sessions (status dot, name, word on hover), sub-agents, background tasks,
@@ -311,6 +313,9 @@ function WorkspaceFileTree({ workspaceId }) {
   const [expandedPaths, setExpandedPaths] = useState({})
   const [loadingPaths, setLoadingPaths] = useState({})
   const [loadingRoot, setLoadingRoot] = useState(false)
+  // macOS refused the folder (Desktop, Documents, iCloud, ...): one sentence
+  // with the settings button instead of a silently empty tree.
+  const [accessNotice, setAccessNotice] = useState(null)
 
   const loadFolder = async (path) => {
     setLoadingPaths(p => ({ ...p, [path]: true }))
@@ -318,9 +323,12 @@ function WorkspaceFileTree({ workspaceId }) {
       const res = await api.getWorkspaceFiles(workspaceId, path)
       if (res && res.items) {
         setTreeData(t => ({ ...t, [path]: res.items }))
+        setAccessNotice(null)
       }
     } catch (err) {
-      console.error("Failed to load folder", path, err)
+      const notice = noticeFromApiError(err)
+      if (notice) setAccessNotice({ ...notice, path })
+      else console.error("Failed to load folder", path, err)
     } finally {
       setLoadingPaths(p => ({ ...p, [path]: false }))
     }
@@ -376,6 +384,9 @@ function WorkspaceFileTree({ workspaceId }) {
 
       {isOpen && (
         <div className="flex flex-col mt-0.5 pb-2 max-h-[300px] overflow-y-auto scrollbar-thin select-none">
+          {accessNotice && (
+            <MacPermissionNotice compact notice={accessNotice} onRetry={() => loadFolder(accessNotice.path)} className="mx-2 my-1" />
+          )}
           {loadingRoot ? (
             <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-x-faint font-mono">
               <RefreshCw size={10} className="animate-spin text-x-accent shrink-0" />
@@ -395,7 +406,7 @@ function WorkspaceFileTree({ workspaceId }) {
                 onOpenFile={handleOpenFile}
               />
             ))
-          ) : (
+          ) : accessNotice ? null : (
             <div className="px-3 py-2 text-[11px] text-x-faint italic font-mono">
               No files found
             </div>

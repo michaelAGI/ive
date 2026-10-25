@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, FolderOpen, Loader2, Search } from 'lucide-react'
 import { api } from '../../lib/api'
+import { noticeFromApiError } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
 import { Button, Modal } from '../ui'
 
 export default function WorkspacePicker({ initialQuery = '', onSelect, onClose, forContext = false, title, subtitle }) {
@@ -9,6 +11,7 @@ export default function WorkspacePicker({ initialQuery = '', onSelect, onClose, 
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [actionNotice, setActionNotice] = useState(null)
   const [busy, setBusy] = useState(false)
   const [manualPath, setManualPath] = useState('')
   const inputRef = useRef(null)
@@ -35,12 +38,19 @@ export default function WorkspacePicker({ initialQuery = '', onSelect, onClose, 
     return () => { clearTimeout(timer); controller.abort() }
   }, [query])
 
+  const failed = (error, fallback) => {
+    const notice = noticeFromApiError(error)
+    if (notice) setActionNotice(notice)
+    else setActionError(error.message || fallback)
+  }
+
   const select = async (project) => {
     if (busy) return
     setBusy(true)
     setActionError('')
+    setActionNotice(null)
     try { await onSelect(project) }
-    catch (error) { setActionError(error.message || 'Could not connect this project.') }
+    catch (error) { failed(error, 'Could not connect this project.') }
     finally { setBusy(false) }
   }
 
@@ -48,11 +58,12 @@ export default function WorkspacePicker({ initialQuery = '', onSelect, onClose, 
     if (busy) return
     setBusy(true)
     setActionError('')
+    setActionNotice(null)
     try {
       const { path } = await api.browseFolder()
       if (path) await onSelect({ path })
     } catch (error) {
-      if (error.message !== 'cancelled') setActionError(error.message || 'Could not open the folder picker.')
+      if (error.message !== 'cancelled') failed(error, 'Could not open the folder picker.')
     } finally { setBusy(false) }
   }
 
@@ -111,6 +122,7 @@ export default function WorkspacePicker({ initialQuery = '', onSelect, onClose, 
           {!searching && result?.partial && <p className="mt-3 text-xs text-x-muted">Only part of your folders could be searched. You can also choose a folder below.</p>}
         </div>
         {actionError && <p role="alert" className="mt-3 text-sm text-x-danger">{actionError}</p>}
+        {actionNotice && <MacPermissionNotice notice={actionNotice} className="mt-3" />}
         <div className="mt-5 border-t border-x-line pt-4">
           <Button icon={FolderOpen} onClick={browse} disabled={busy}>Choose folder…</Button>
           <details className="mt-4 text-xs text-x-muted">

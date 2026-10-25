@@ -1,4 +1,20 @@
 import { useState, useRef, useCallback } from 'react'
+import useStore from '../state/store'
+import { api } from '../lib/api'
+import { noticeFromBrowserDenial } from '../lib/macPermissions'
+
+// A refused microphone is told once per refusal, with the button that opens
+// the right System Settings pane in the desktop app. Callers with their own
+// onError handle it themselves.
+function reportMicrophoneRefusal(reason) {
+  const notice = noticeFromBrowserDenial(reason, 'microphone')
+  if (!notice) return
+  useStore.getState().addNotification({
+    type: 'warning',
+    message: notice.sentence,
+    ...(notice.pane ? { action: { label: notice.buttonLabel, onClick: () => api.openMacSettings(notice.pane) } } : {}),
+  })
+}
 
 /**
  * Hook for browser-native speech recognition (Web Speech API).
@@ -65,7 +81,8 @@ export function useVoiceInput(
       if (e.error !== 'aborted' && e.error !== 'no-speech') {
         console.error('Speech recognition error:', e.error)
       }
-      onError?.(e.error)
+      if (onError) onError(e.error)
+      else reportMicrophoneRefusal(e.error)
       if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(e.error)) {
         manualStopRef.current = true
       }

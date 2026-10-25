@@ -10,6 +10,9 @@ import { api } from '../../lib/api'
 import { ACTIONS } from '../../lib/commandActions'
 import { IA_SURFACES } from '../../lib/informationArchitecture'
 import { formatKeyCombo, getTabSwitchCombo } from '../../lib/keybindings'
+import { noticeFromApiError } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
+import { Button } from '../ui'
 
 // Shown first when nothing is typed: the everyday actions, so the palette is
 // a starting point and not only a long alphabet of tools.
@@ -26,8 +29,13 @@ const SUGGESTED_LAST = ['cheat-sheet']
 export default function CommandPalette({ onClose, onAction, initialQuery = '' }) {
   const [query, setQuery] = useState(initialQuery)
   const [selectedIdx, setSelectedIdx] = useState(0)
+  // The pop-out keeps the palette open until macOS answered: a refusal gets
+  // its sentence and buttons here, a success closes the palette.
+  const [popOut, setPopOut] = useState(null)
   const inputRef = useRef(null)
   const listRef = useRef(null)
+  const popOutRef = useRef(null)
+  useEffect(() => { if (popOut?.phase === 'busy') popOutRef.current?.focus() }, [popOut?.phase])
 
   const workspaces = useStore((s) => s.workspaces)
   const sessions = useStore((s) => s.sessions)
@@ -120,7 +128,29 @@ export default function CommandPalette({ onClose, onAction, initialQuery = '' })
     }
   }, [selectedIdx])
 
+  const runPopOut = async (sid) => {
+    setPopOut({ phase: 'busy', sid })
+    try {
+      const res = await api.popOutSession(sid)
+      if (res.ok && useStore.getState().sessions[sid]) {
+        useStore.setState((s) => ({
+          sessions: { ...s.sessions, [sid]: { ...s.sessions[sid], is_external: 1 } }
+        }))
+      }
+      onClose()
+    } catch (err) {
+      const notice = noticeFromApiError(err)
+      setPopOut(notice ? { phase: 'denied', sid, notice } : { phase: 'failed', sid, message: `Pop out failed: ${err.message}` })
+    }
+  }
+
   const execute = (action) => {
+    if (action.id === 'pop-out-terminal') {
+      const sid = useStore.getState().activeSessionId
+      if (sid) runPopOut(sid)
+      else onClose()
+      return
+    }
     onClose()
 
     const store = useStore.getState()
@@ -176,22 +206,6 @@ export default function CommandPalette({ onClose, onAction, initialQuery = '' })
         break
       case 'distill-session':
         onAction?.('distill-session')
-        break
-      case 'pop-out-terminal':
-        if (store.activeSessionId) {
-          const sid = store.activeSessionId
-          api.popOutSession(sid).then((res) => {
-            if (res.ok) {
-              // Mark session as external in local state
-              const cur = store.sessions[sid]
-              if (cur) {
-                useStore.setState((s) => ({
-                  sessions: { ...s.sessions, [sid]: { ...s.sessions[sid], is_external: 1 } }
-                }))
-              }
-            }
-          }).catch((err) => alert(`Pop out failed: ${err.message}`))
-        }
         break
       case 'search':
         onAction?.('search')
@@ -328,7 +342,27 @@ export default function CommandPalette({ onClose, onAction, initialQuery = '' })
       <div
         className="w-[520px] x-panel shadow-x-3 overflow-hidden scale-in"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={popOut ? (e) => { if (e.key === 'Escape') onClose() } : undefined}
       >
+        {popOut ? (
+          <div ref={popOutRef} tabIndex={-1} className="px-5 py-4 outline-none" data-popout-state={popOut.phase}>
+            {popOut.phase === 'busy' && (
+              <p className="text-xs text-x-muted">Opening the session in a terminal window. macOS may ask for permission first.</p>
+            )}
+            {popOut.phase === 'denied' && (
+              <MacPermissionNotice notice={popOut.notice} autoFocus onRetry={() => runPopOut(popOut.sid)} onDismiss={onClose} />
+            )}
+            {popOut.phase === 'failed' && (
+              <div>
+                <p role="alert" className="text-xs text-x-danger">{popOut.message}</p>
+                <div className="mt-3 flex items-center gap-2">
+                  <Button size="sm" autoFocus onClick={() => runPopOut(popOut.sid)}>Try again</Button>
+                  <Button size="sm" onClick={onClose}>Close</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (<>
         {/* Search input */}
         <div className="relative">
           <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-x-muted" />
@@ -387,6 +421,7 @@ export default function CommandPalette({ onClose, onAction, initialQuery = '' })
             </div>
           )}
         </div>
+        </>)}
 
         {/* Footer hint */}
         <div className="flex items-center gap-3 px-4 py-2 border-t border-x-line text-[11px] text-x-muted">
