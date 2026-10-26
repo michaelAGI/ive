@@ -27,8 +27,8 @@ def notice(name, version, directory):
 
 notice('IVE', json.loads((ROOT/'frontend/src-tauri/tauri.conf.json').read_text())['version'], ROOT)
 notice('Python', sys.version.split()[0], Path(sys.base_prefix)/'lib/python3.12')
-notice('cloudflared (https://github.com/cloudflare/cloudflared)', '2026.10.0',
-       ROOT/'packaging/artifacts/cloudflared-2026.10.0')
+notice('cloudflared (https://github.com/cloudflare/cloudflared)', '2026.10.4',
+       ROOT/'packaging/artifacts/cloudflared-2026.10.4')
 for distribution in sorted(importlib.metadata.distributions(),key=lambda d:d.metadata['Name']):
     for item in distribution.files or []:
         if str(item).endswith('.dist-info/METADATA'):

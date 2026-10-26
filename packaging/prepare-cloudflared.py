@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Build pinned cloudflared for macOS 13.5 without installing a global Go.
 
-Cloudflare's prebuilt 2026.10.0 arm64 release requires macOS 15. Build its exact
-source commit with the official Go 1.26.9 toolchain instead (Go supports macOS12).
+Cloudflare's prebuilt 2026.10.4 arm64 release requires macOS 15. Build its exact
+source commit with the official Go 1.27.3 toolchain instead (Go 1.27 supports macOS 13).
+Go 1.27.3 / cloudflared 2026.10.2+ carry the crypto/x509 distrust of the eight
+compromised eMudhra/emSign intermediates (CVE-2026-111943); older pins do not.
 Every archive is checksum-pinned before extraction; modules use upstream go.sum.
 Build tools/caches/output stay in ignored packaging/artifacts. The original
 upstream executable, if present, is never overwritten.
 """
 from pathlib import Path, PurePosixPath
+import datetime
 import fcntl
 import hashlib
 import json
@@ -21,20 +24,22 @@ import tarfile
 import tempfile
 import urllib.request
 
-VERSION = '2026.10.0'
+VERSION = '2026.10.4'
 # Retained as upstream provenance only; this is NOT the compatible source build.
-ARCHIVE_SHA = 'a2f79ff7b9420aa537d74af239f376da170bbabeb529aec416002adac6a72e70'
-BINARY_SHA = '72edfd3eea463aef4d5cb89e2e209cecb048cc756c2b01915de2e0ad7cb39830'
+ARCHIVE_SHA = '68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f'
+BINARY_SHA = '49e7963072b2ca83fb44c09f4d4a7cda52d390c0c9c6f55bac83454a5bc43910'
 LICENSE_SHA = '58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd'
-SOURCE_COMMIT = '18cdfe0a6fc7b72a0702d255a1f984e776ce0498'
-SOURCE_SHA = '303c531b416b986bfcc2157c0a90556c94c519ec4d71e64d32abbe5c451f59ec'
-GO_VERSION = '1.26.9'
-GO_SHA = 'f9bb7c0a02506c5d9bf0d1eb1f7ee6c7684f844ae49558308a0427b830e022cc'
-GO_MOD_SHA = '1a9fbf726b1816625d709fcaabfd27a24005ce89e16bee76838e70d2ee423fee'
-GO_SUM_SHA = 'a99cd810e0a3ee653472c414a4d419f889565fb9c3f4c62f6fd1a0135a2b67e5'
-BUILD_TIME = '2026-10-05T15:39:13Z'  # official annotated release tag timestamp
-COMPAT_BINARY_SHA = 'e7e2785cfb53d7ec777a70ad4f0722bcdf0f29c1f49262ea8005337836c250dd'
-NOTICES_SHA = 'd915d487457abf80312c448e89fa72cd5a8664481b1332fecbd104e32cf261b0'
+SOURCE_COMMIT = 'dc3b264da64a801bc3a8d5301a6db21401910ad5'
+SOURCE_SHA = 'c761bd5bc430dce7186ad7984e795c341acd59893228988b368e18407d2d7bb2'
+GO_VERSION = '1.27.3'
+GO_SHA = 'dd3908cf20959d798c1e06ebe5b72213f0505ce01373b40ce3110975a6cd99c2'
+GO_MOD_SHA = '878f6489ee629fb3456c9f3c7bb356a23d421505cab3224a9761b0e3ed224eab'
+GO_SUM_SHA = '554f02c1db99a87ddc792897d6fb9c5a85b383832642f0173ac9c7832f7cd126'
+BUILD_TIME = '2026-10-26T09:34:58Z'  # official annotated release tag timestamp
+SOURCE_DATE_EPOCH = str(int(datetime.datetime.strptime(BUILD_TIME, '%Y-%m-%dT%H:%M:%SZ')
+                             .replace(tzinfo=datetime.timezone.utc).timestamp()))
+COMPAT_BINARY_SHA = '1b3e5e73c8a779f23e8cc8c5eb9bac8b03b5378dea98387c6598e05185b35c4c'
+NOTICES_SHA = '94c2ffa83fe7ebb2b7cbe69e46afd3b9c629c624708340b5fc29f69aad63e156'
 ROOT = Path(__file__).resolve().parent
 DEST = ROOT / 'artifacts' / f'cloudflared-{VERSION}'
 COMPAT = DEST / 'compat'
@@ -177,7 +182,7 @@ def go_environment(toolchain):
         'GOSUMDB': 'sum.golang.org', 'GOFLAGS': '-mod=readonly',
         'GOOS': 'darwin', 'GOARCH': 'arm64', 'GOARM64': 'v8.0', 'CGO_ENABLED': '0',
         'MACOSX_DEPLOYMENT_TARGET': '13.5', 'GOMAXPROCS': '4',
-        'SOURCE_DATE_EPOCH': '1791214753', 'TZ': 'UTC',
+        'SOURCE_DATE_EPOCH': SOURCE_DATE_EPOCH, 'TZ': 'UTC',
     })
     return env
 
@@ -240,9 +245,10 @@ def prepare():
             if any(stored.get(key) != value for key, value in metadata.items()):
                 raise RuntimeError('Cached cloudflared provenance does not match pinned build')
             checked_file(DEST / 'LICENSE', LICENSE_SHA)
-            if stored.get('notices_sha256') != NOTICES_SHA:
-                raise RuntimeError('Cached dependency notice provenance mismatch')
-            checked_file(DEST / 'NOTICE-dependencies.txt', NOTICES_SHA)
+            if NOTICES_SHA:
+                if stored.get('notices_sha256') != NOTICES_SHA:
+                    raise RuntimeError('Cached dependency notice provenance mismatch')
+                checked_file(DEST / 'NOTICE-dependencies.txt', NOTICES_SHA)
             return binary
         source_archive = archive(f'cloudflared-source-{SOURCE_COMMIT}.tar.gz', SOURCE_URL, SOURCE_SHA)
         go_archive = archive(f'go{GO_VERSION}.darwin-arm64.tar.gz', GO_URL, GO_SHA)
@@ -277,7 +283,8 @@ def prepare():
             checked_file(source / 'go.sum', GO_SUM_SHA)
             metadata = build_metadata(output)
             count = collect_notices(go, source, toolchain, env)
-            checked_file(DEST / 'NOTICE-dependencies.txt', NOTICES_SHA)
+            if NOTICES_SHA:  # empty only while bootstrapping a new pin
+                checked_file(DEST / 'NOTICE-dependencies.txt', NOTICES_SHA)
             metadata.update({'linked_module_count': count, 'notices_sha256': sha(DEST / 'NOTICE-dependencies.txt')})
             output.chmod(0o755)
             output.replace(binary)
