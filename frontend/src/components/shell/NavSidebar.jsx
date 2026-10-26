@@ -7,6 +7,8 @@ import useView from '../../hooks/useView'
 import { selectCounts } from '../../state/selectors'
 import { isSurfaceAvailable } from '../../lib/extensionRegistry'
 import Sidebar from '../layout/Sidebar'
+import NewTerminalButton from '../session/NewTerminalButton'
+import { formatKeyCombo } from '../../lib/keybindings'
 import SidebarFoot from './SidebarFoot'
 import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
@@ -40,6 +42,7 @@ export default function NavSidebar({
 }) {
   const t = useT()
   const view = useView()
+  const newSessionKey = useStore((s) => s.keybindings?.newSession)
   const counts = useStore(selectCounts)
   const sessions = useStore(s=>s.sessions)
   const waitingSessions = visibleSessions(sessions).filter(sessionNeedsAttention)
@@ -69,8 +72,9 @@ export default function NavSidebar({
         </div>
       </div>
 
+      <NewTerminalButton sidebar />
       <button type="button" data-sidebar-new-chat className="ive-sidebar-new-chat" onClick={onNewSession}>
-        <SquarePen size={16} aria-hidden="true" /><span>{t('nav.newSession')}</span><kbd className="ive-kbd">⌘N</kbd>
+        <SquarePen size={16} aria-hidden="true" /><span>{t('nav.newSession')}</span>{newSessionKey && <kbd className="ive-kbd">{formatKeyCombo(newSessionKey)}</kbd>}
       </button>
 
       <div className="ive-sidebar-filter">

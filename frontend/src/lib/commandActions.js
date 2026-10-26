@@ -87,6 +87,7 @@ export const ACTIONS = [{
   label: 'New terminal',
   icon: SquareTerminal,
   section: 'Sessions',
+  get shortcut() { return formatKeyCombo(getKeybindings().newTerminal) },
   hint: 'Your login shell in the current project, no AI',
   keywords: 'shell zsh bash console command line'
 }, {

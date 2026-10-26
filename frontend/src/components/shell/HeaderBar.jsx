@@ -1,4 +1,5 @@
 import SessionContextActions from '../session/SessionContextActions'
+import NewTerminalButton from '../session/NewTerminalButton'
 import { Plus, Search, MessageCircle, Settings } from 'lucide-react'
 import useStore from '../../state/store'
 import SidebarToggle from '../layout/SidebarToggle'
@@ -65,6 +66,7 @@ export default function HeaderBar({ view, onGoHome, onGoBoard, onNewSession, onO
       <span className="ive-header-address mono" data-header-address="" title={address}>{address}</span>
       <div data-header-slot="crumb" className="ive-header-slot" ref={(el) => registerHeaderSlot('crumb', el)} />
       <div className="ive-header-fill" />
+      <NewTerminalButton />
       <div data-header-slot="actions" className="ive-header-slot ive-header-slot--actions" ref={(el) => registerHeaderSlot('actions', el)} />
       <div className="ive-header-global">
         {(inSession || view === 'board') && session && session.cli_type !== 'shell' && <SessionContextActions sessionId={session.id} readOnly={!!session.read_only} phone />}

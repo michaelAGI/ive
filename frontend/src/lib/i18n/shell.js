@@ -5,6 +5,7 @@ import { registerDictionary } from '../i18n.js'
 
 registerDictionary('nav', {
   en: {
+    newTerminal: 'New terminal',
     work: 'Work', projects: 'Projects', setup: 'Set up',
     home: 'Home', board: 'Board', review: 'Review', knowledge: 'Knowledge',
     settings: 'Settings', connectors: 'Connectors', phone: 'Phone',
@@ -12,6 +13,7 @@ registerDictionary('nav', {
     filterSessions: 'Filter sessions by name or model',
   },
   de: {
+    newTerminal: 'Neues Terminal',
     work: 'Arbeiten', projects: 'Projekte', setup: 'Einrichten',
     home: 'Home', board: 'Board', review: 'Review', knowledge: 'Wissen',
     settings: 'Einstellungen', connectors: 'Verbindungen', phone: 'Handy',

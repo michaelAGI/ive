@@ -32,6 +32,7 @@
     "test:pty-start": "node --test tests/pty-start-unit.mjs",
     "test:session-chips": "node tests/session-chips.mjs",
     "test:terminal-open": "node tests/terminal-open.mjs",
+    "test:terminal-tabs": "node tests/terminal-tabs.mjs",
     "test:quick-start": "node tests/quick-start.mjs",
     "test:overview-grid": "node tests/overview-grid.mjs",
     "test:onboarding": "node --test tests/onboarding-unit.mjs tests/guided-tour-unit.mjs",

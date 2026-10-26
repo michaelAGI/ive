@@ -1,0 +1,10 @@
+.ive-terminal-tabs { display: flex; align-items: center; flex-shrink: 0; min-width: 0; padding-right: 6px; border-bottom: 1px solid var(--x-line); background: var(--x-surface-2); }
+.ive-terminal-tabs-list { display: flex; align-items: stretch; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.ive-terminal-tab { display: flex; align-items: center; flex: 0 0 auto; max-width: 240px; padding-right: 3px; border-right: 1px solid var(--x-line); border-top: 2px solid transparent; color: var(--x-muted); }
+.ive-terminal-tab.is-active { border-top-color: var(--x-ink); background: var(--x-bg); color: var(--x-ink); }
+.ive-terminal-tab > [role="tab"] { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 10px; font-size: 12px; text-align: left; }
+.ive-terminal-tab > [role="tab"] span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ive-terminal-tab svg { flex-shrink: 0; }
+.ive-terminal-tab > [role="tab"]:focus-visible { outline: 1px solid var(--x-focus); outline-offset: -3px; }
+.ive-terminal-tab:hover { color: var(--x-ink); background: var(--x-hover); }
+.ive-terminal-tabs > button { margin-left: 5px; flex-shrink: 0; }

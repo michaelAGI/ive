@@ -31,12 +31,21 @@ function openShell(session) {
   const store = useStore.getState()
   store.addSession(session)
   if (store.tabScope === 'workspace' && session.workspace_id) store.setActiveWorkspace(session.workspace_id)
+  store.goSession(session.id)
   return session
+}
+
+function nextTerminalName() {
+  const names = new Set(Object.values(useStore.getState().sessions).filter((s) => !s.archived).map((s) => s.name))
+  if (!names.has(SHELL_LABEL)) return SHELL_LABEL
+  let number = 2
+  while (names.has(`${SHELL_LABEL} ${number}`)) number++
+  return `${SHELL_LABEL} ${number}`
 }
 
 /** New terminal in a project (workspace) folder. */
 export async function createTerminalSession(workspaceId, { name } = {}) {
-  const session = await api.createSession(workspaceId, { cli_type: SHELL_CLI, name: name || SHELL_LABEL })
+  const session = await api.createSession(workspaceId, { cli_type: SHELL_CLI, name: name || nextTerminalName() })
   if (!session?.id) throw new Error('The terminal could not be created.')
   return openShell(session)
 }
@@ -51,7 +60,7 @@ export async function startQuickTerminal({ text = '', workspaceId } = {}) {
     if (String(text || '').trim()) setTimeout(() => { typeIntoShellWhenReady(shell.id, text) }, 0)
     return shell
   }
-  const session = await api.quickSession({ cli_type: SHELL_CLI, name: SHELL_LABEL })
+  const session = await api.quickSession({ cli_type: SHELL_CLI, name: nextTerminalName() })
   if (!session?.id) throw new Error('The terminal could not be created.')
   const quick = { ...session, quick: session.quick !== false }
   const store = useStore.getState()
@@ -63,11 +72,24 @@ export async function startQuickTerminal({ text = '', workspaceId } = {}) {
   return quick
 }
 
-/** Palette "New terminal": in the active project, else the quick start folder. */
+/** New tab alongside the current session, in its project or the start folder. */
 export async function newTerminal() {
   const store = useStore.getState()
-  const workspaceId = store.activeWorkspaceId && store.workspaces.some((w) => w.id === store.activeWorkspaceId)
-    ? store.activeWorkspaceId
+  const candidate = (!store.showHome && store.sessions[store.activeSessionId]?.workspace_id) || store.activeWorkspaceId
+  const workspaceId = candidate && store.workspaces.some((w) => w.id === candidate)
+    ? candidate
     : null
   return workspaceId ? createTerminalSession(workspaceId) : startQuickTerminal()
+}
+
+// Share one pending request across buttons and shortcuts so a held key or
+// double click cannot leave unwanted shells behind a slow API response.
+let openingTerminal = null
+export function openNewTerminal() {
+  if (openingTerminal) return openingTerminal
+  openingTerminal = newTerminal().catch((error) => {
+    useStore.getState().addNotification({ type: 'error', message: error?.message || 'The terminal could not be opened.' })
+    return null
+  }).finally(() => { openingTerminal = null })
+  return openingTerminal
 }

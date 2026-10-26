@@ -13,7 +13,7 @@ import { formatKeyCombo, getTabSwitchCombo } from '../../lib/keybindings'
 
 // Shown first when nothing is typed: the everyday actions, so the palette is
 // a starting point and not only a long alphabet of tools.
-const SUGGESTED_IDS = ['board', 'new-session', 'review', 'toggle-terminal', 'command-palette']
+const SUGGESTED_IDS = ['new-terminal', 'new-session', 'board', 'review', 'command-palette']
 const SURFACE_TEXT = new Map(IA_SURFACES.map((s) => [s.id, `${s.description || ''} ${s.groupLabel || ''}`]))
 // Palette-only entries (handled here or by App), searchable like every action.
 const PALETTE_ACTIONS = [

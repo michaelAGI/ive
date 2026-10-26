@@ -34,7 +34,7 @@ export const KEYBINDING_DEFS = [
   { id: 'missionControl', label: 'Mission Control', section: 'Panels', defaultKey: { key: 'm', meta: true } },
   { id: 'guidelines', label: 'Guidelines', section: 'Panels', defaultKey: { key: 'g', meta: true } },
   { id: 'mcpServers', label: 'MCP Servers', section: 'Panels', defaultKey: { key: 'S', meta: true, shift: true } },
-  { id: 'agentTree', label: 'Agent Tree', section: 'Panels', defaultKey: { key: 't', meta: true } },
+  { id: 'agentTree', label: 'Agent Tree', section: 'Panels', defaultKey: { key: 'T', meta: true, shift: true } },
   { id: 'composer', label: 'Composer', section: 'Panels', defaultKey: { key: 'e', meta: true } },
   { id: 'sideChat', label: 'Chat with Claude', section: 'Panels', defaultKey: { key: 'J', meta: true, shift: true } },
   { id: 'scratchpad', label: 'Scratchpad', section: 'Panels', defaultKey: null },
@@ -51,7 +51,8 @@ export const KEYBINDING_DEFS = [
   { id: 'shortcuts', label: 'Keyboard Shortcuts', section: 'Panels', defaultKey: { key: '?', meta: true, shift: true } },
 
   // ── Sessions ──
-  { id: 'newSession', label: 'New Session (quick start)', section: 'Sessions', defaultKey: { key: 'n', meta: true } },
+  { id: 'newTerminal', label: 'New Terminal Tab', section: 'Sessions', defaultKey: { key: 't', meta: true } },
+  { id: 'newSession', label: 'New Session or Terminal', section: 'Sessions', defaultKey: { key: 'n', meta: true } },
   { id: 'newSessionSetup', label: 'Set Up Session (full dialog)', section: 'Sessions', defaultKey: { key: 'N', meta: true, shift: true } },
   { id: 'closeTab', label: 'Close Session', section: 'Sessions', defaultKey: { key: 'w', meta: true } },
   { id: 'stopSession', label: 'Stop Session', section: 'Sessions', defaultKey: { key: '.', meta: true } },
@@ -76,10 +77,10 @@ const STORAGE_KEY = 'cc-keybindings'
 
 // Mac browsers reserve these Command combinations before page handlers run,
 // so in a Mac browser their defaults use Control instead (⌃N quick start,
-// ⌃⇧N setup, ⌃W close tab, ⌃T agent tree, ⌃M mission control, ⌃R research,
+// ⌃⇧N setup, ⌃W close tab, ⌃T terminal, ⌃⇧T agent tree, ⌃M mission control, ⌃R research,
 // ⌃D board). The desktop app and other platforms keep ⌘ (contract: ⌘N).
 const BROWSER_CONTROL_BINDINGS = new Set([
-  'newSession', 'newSessionSetup', 'closeTab', 'agentTree',
+  'newTerminal', 'newSession', 'newSessionSetup', 'closeTab', 'agentTree',
   'missionControl', 'research', 'splitView',
 ])
 
@@ -124,7 +125,7 @@ export function isPtyControlKey(event) {
 }
 
 // Mac browser only: the Control letters IVE keeps even when the terminal has
-// focus (⌃N / ⌃⇧N quick start + setup, ⌃T agent tree, ⌃W close tab). An
+// focus (⌃N / ⌃⇧N session chooser + setup, ⌃T terminal, ⌃W close tab). An
 // explicit allowlist: ⌃R, ⌃D, ⌃M stay with the agent inside the terminal even
 // though research / board / mission control use them elsewhere. ⌃1-9 are
 // not PTY keys and are intercepted anyway.

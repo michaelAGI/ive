@@ -29,7 +29,7 @@ const BROWSER_KEPT = ['n', 'w', 't']
 
 test('Mac browser defaults avoid reserved Command shortcuts and show Control', () => {
   const bindings = getKeybindings()
-  const expected = { newSession: '⌃N', newSessionSetup: '⌃⇧N', closeTab: '⌃W', agentTree: '⌃T', missionControl: '⌃M', research: '⌃R', splitView: '⌃D' }
+  const expected = { newTerminal: '⌃T', newSession: '⌃N', newSessionSetup: '⌃⇧N', closeTab: '⌃W', agentTree: '⌃⇧T', missionControl: '⌃M', research: '⌃R', splitView: '⌃D' }
   for (const [id, label] of Object.entries(expected)) {
     assert.equal(bindings[id].ctrl, true, id)
     assert.ok(!bindings[id].meta, id)
@@ -44,6 +44,9 @@ test('desktop app and non-Mac keep ⌘ defaults (contract: ⌘N quick start)', (
   window.__TAURI_INTERNALS__ = {}
   try {
     assert.equal(formatKeyCombo(getKeybindings().newSession), '⌘N')
+    assert.equal(formatKeyCombo(getKeybindings().newTerminal), '⌘T')
+    assert.equal(formatKeyCombo(getKeybindings().agentTree), '⌘⇧T')
+    assert.ok(shouldTerminalIntercept(event('t', { metaKey: true }), getKeybindings()))
     assert.equal(getTabSwitchCombo().meta, true)
   } finally { delete window.__TAURI_INTERNALS__ }
   navigator.platform = 'Win32'

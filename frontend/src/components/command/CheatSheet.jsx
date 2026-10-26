@@ -6,6 +6,7 @@ import { isSurfaceAvailable } from '../../lib/extensionRegistry'
 // Everyday tasks first, each with the one click / key that does it. The full
 // shortcut list follows, read from the live keybindings so custom keys show.
 const EVERYDAY = [
+  { id: 'new-terminal', icon: SquareTerminal, label: 'New terminal tab', how: 'Open your shell directly in the current project', binding: 'newTerminal' },
   { id: 'start-task', icon: Sparkles, label: 'Start a guided task', how: 'Describe a goal, add context, approve the plan, then review the result', surface: 'pipeline-editor', keys: [] },
   { id: 'new-session', icon: Plus, label: 'New session', how: '“New” in the header, or + in the sidebar', binding: 'newSession' },
   { id: 'side-chat', icon: MessageCircle, label: 'Open Side chat', how: 'The chat bubble in the header. A separate conversation; add project context when needed', binding: 'sideChat' },

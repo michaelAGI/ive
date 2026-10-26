@@ -5,6 +5,20 @@ and under control. Run Claude Code, Codex and Gemini CLI sessions side by side,
 see what each one is doing, answer their questions and review their changes in
 one place. Everything runs on your own machine.
 
+### Terminals and sessions
+
+Open **New terminal** for a shell tab in your current project, or **New session**
+to choose between a terminal and a configured agent session. With no project,
+terminals start in your configured start folder. Open tabs stay in the tab bar;
+switching tabs preserves each running terminal and its output.
+
+- **Mac app:** `⌘T` opens a terminal tab; `⌘⇧T` opens the agent tree.
+- **Mac browser / localhost:** `⌃T` opens an IVE terminal tab (`⌘T` belongs to
+  the browser). The **+** button in IVE's tab bar works in both.
+- `⌘N` (app) or `⌃N` (Mac browser) opens the terminal/session chooser.
+
+Run the terminal-tab checks with `cd frontend && npm run build && npm run test:terminal-tabs`.
+
 IVE is in beta. Expect rough edges and please open an issue when something breaks.
 
 ## Install

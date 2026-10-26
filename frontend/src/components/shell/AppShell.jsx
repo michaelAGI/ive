@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import MobileDrawer from '../layout/MobileDrawer'
 import TerminalKeepAlive from './TerminalKeepAlive'
+import TerminalTabs from './TerminalTabs'
 
 // The frame every screen sits in. Desktop: [sidebar 240 px | main: header
 // 44 px › screen › footer 28 px (only when set)] plus the side chat next to
@@ -88,6 +89,7 @@ export default function AppShell({
         )}
         <main className="x-app-main flex-1 flex flex-col min-w-0 min-h-0">
           {isMobile ? mobileHeader : header}
+          {!isMobile && <TerminalTabs />}
           <div className="ive-main-body flex-1 flex flex-col min-h-0 min-w-0 relative">
             {children}
           </div>

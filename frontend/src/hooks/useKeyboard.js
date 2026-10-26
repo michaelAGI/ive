@@ -6,6 +6,7 @@ import { api } from '../lib/api'
 import { matchesKey, matchesAction, getTabSwitchCombo } from '../lib/keybindings'
 import { terminalControls } from '../lib/terminalWriters'
 import { openQuickStart, openSessionSetup } from '../lib/quickStart'
+import { openNewTerminal } from '../lib/shellSession'
 import { openFindInSession } from '../lib/findRouter'
 
 // Move keyboard focus to the first chrome button (tab bar / TopBar / QuickActions).
@@ -191,6 +192,12 @@ export default function useKeyboard({
         e.preventDefault()
 
         useStore.setState((s) => ({ sidebarVisible: !s.sidebarVisible }))
+        return
+      }
+
+      if (matchesAction(e, kb, 'newTerminal')) {
+        e.preventDefault()
+        if (!e.repeat && !document.querySelector('[role="dialog"][aria-modal="true"]')) openNewTerminal()
         return
       }
 
