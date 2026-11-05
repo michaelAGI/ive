@@ -1,8 +1,9 @@
 # Installing IVE from source
 
 On a Mac with Apple silicon, `bash install.sh` installs the signed IVE app from
-the latest release instead (see `get.sh`). Set `IVE_INSTALL=source` to build
-this checkout as described here.
+the latest release instead (see `get.sh`). Set `IVE_INSTALL=source` once to build
+this checkout as described here; the folder then stays a source build until
+`IVE_INSTALL=app bash install.sh`.
 
 This installation contains the IVE workbench, its Research/Discovery/Delivery/
 Secure features, and the optional Sandbox runtime. The package profile selects

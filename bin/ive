@@ -18,9 +18,31 @@ ARGS_FILE="$STATE_DIR/ive.args"
 LOG_FILE="$STATE_DIR/ive.log"
 LOCK_FILE="$STATE_DIR/backend.lock"
 SERVER="$IVE_DIR/backend/server.py"
+# Left by `IVE_INSTALL=source bash install.sh`: this folder runs from source.
+SOURCE_MARKER="$STATE_DIR/source-build"
+# The folder as it can be pasted into a shell, for the hints below.
+IVE_HERE="$(printf %q "$IVE_DIR")"
 LOG_LIMIT=10485760
 
 usage() {
+  if uses_mac_app; then
+    cat <<USAGE
+Usage: ive [command]
+
+On this Mac, IVE is the Mac app.
+
+  ive                 Open the Mac app, installing it first if it is missing
+  ive update          Update the Mac app to the latest release
+  ive status          Show whether an IVE built from this folder is running
+  ive stop            Stop an IVE built from this folder
+  ive uninstall       Remove this folder (the Mac app stays)
+  ive help            Show this help
+
+To run this folder from source instead, in a browser on localhost:
+  IVE_INSTALL=source bash $IVE_HERE/install.sh
+USAGE
+    return 0
+  fi
   cat <<USAGE
 Usage: ive [command] [options]
 
@@ -39,11 +61,22 @@ Options for starting: --port N, --host ADDRESS and the other start.sh options.
 
 IVE lives in $IVE_DIR
 USAGE
+  if [ -f "$SOURCE_MARKER" ]; then
+    echo ""
+    echo "This folder is a source build on request. To switch to the Mac app: IVE_INSTALL=app bash $IVE_HERE/install.sh"
+  fi
 }
 
 require_installed() {
   if [ ! -f "$STATE_DIR/instance.json" ]; then
-    echo "IVE is not installed yet. Run: bash $IVE_DIR/install.sh" >&2
+    if uses_mac_app; then
+      echo "This folder has no source build. On this Mac, IVE is the Mac app. Open it with: $IVE_HERE/bin/ive" >&2
+      echo "To build this folder from source: IVE_INSTALL=source bash $IVE_HERE/install.sh" >&2
+    elif [ "${IVE_INSTALL:-}" = source ]; then
+      echo "IVE is not installed yet. Run: IVE_INSTALL=source bash $IVE_HERE/install.sh" >&2
+    else
+      echo "IVE is not installed yet. Run: bash $IVE_HERE/install.sh" >&2
+    fi
     exit 1
   fi
 }
@@ -312,9 +345,17 @@ uninstall() {
     echo "ive uninstall: $IVE_DIR does not look like an IVE folder, nothing removed." >&2
     exit 1
   fi
+  # A folder that only installed the app has no state folder, so no hooks,
+  # data or server, and removing it needs nothing else, not even Python.
+  local app_only="" app=""
+  if uses_mac_app && [ ! -d "$STATE_DIR" ]; then app_only=1; fi
+  if [ "$(uname -s)" = Darwin ]; then app="$(installed_mac_app)"; fi
   local answer=""
   if [ "${1:-}" = "--yes" ]; then
     answer=y
+  elif [ -n "$app_only" ]; then
+    printf 'Remove the folder %s? The Mac app stays. [y/N] ' "$IVE_DIR"
+    read -r answer </dev/tty || true
   else
     printf 'Remove IVE from %s, including its local data? [y/N] ' "$IVE_DIR"
     read -r answer </dev/tty || true
@@ -324,18 +365,20 @@ uninstall() {
     *) echo "Nothing removed."; exit 0 ;;
   esac
 
-  stop
-  if [ -n "$(server_pids)" ]; then
-    echo "IVE is still running, so nothing was removed. Quit it and try again." >&2
-    exit 1
-  fi
-  source "$IVE_DIR/tools/python.sh"
-  local python
-  python="$(ive_python)" || exit 1
-  # Without the hooks gone, deleting the folder would break every agent call.
-  if ! "$python" -I "$IVE_DIR/tools/ive_team.py" --root "$IVE_DIR" remove-hooks; then
-    echo "Nothing was removed." >&2
-    exit 1
+  if [ -z "$app_only" ]; then
+    stop
+    if [ -n "$(server_pids)" ]; then
+      echo "IVE is still running, so nothing was removed. Quit it and try again." >&2
+      exit 1
+    fi
+    source "$IVE_DIR/tools/python.sh"
+    local python
+    python="$(ive_python)" || exit 1
+    # Without the hooks gone, deleting the folder would break every agent call.
+    if ! "$python" -I "$IVE_DIR/tools/ive_team.py" --root "$IVE_DIR" remove-hooks; then
+      echo "Nothing was removed." >&2
+      exit 1
+    fi
   fi
   local link
   for link in "$(command -v ive || true)" "${IVE_BIN_DIR:-$HOME/.local/bin}/ive"; do
@@ -344,18 +387,99 @@ uninstall() {
     fi
   done
   rm -r -f -- "$IVE_DIR"
-  echo "IVE is removed. Your projects and your coding CLIs were not touched."
+  echo "$IVE_DIR is removed. Your projects were not touched, and your coding CLIs stay installed."
+  if [ -n "$app" ]; then
+    echo "The Mac app stays in $app."
+    # A source server replaces the app's Safety Gate when it starts.
+    [ -n "$app_only" ] || echo "If it is open, quit and reopen it, which sets its hooks again."
+    echo "To remove it too, quit it, run"
+    echo "  \"$app/Contents/Resources/backend/ive-backend\" --remove-hooks"
+    echo "and drag it to the Trash."
+  fi
 }
+
+# True on a Mac that gets the app (see get.sh), unless this folder was built
+# from source on request. IVE_INSTALL decides over the marker.
+uses_mac_app() {
+  case "${IVE_INSTALL:-}" in
+    source) return 1 ;;
+    app) ;;
+    *) [ ! -f "$SOURCE_MARKER" ] || return 1 ;;
+  esac
+  [ "$(uname -s)" = Darwin ] && bash "$IVE_DIR/get.sh" --mac-app-check >/dev/null 2>&1
+}
+
+# Prints the path of the installed IVE app, or nothing.
+installed_mac_app() {
+  # The order get.sh installs in, so that update and start find the same copy.
+  local dirs=(/Applications "$HOME/Applications") dir
+  [ -w /Applications ] || dirs=("$HOME/Applications" /Applications)
+  [ -z "${IVE_APP_DIR:-}" ] || dirs=("$IVE_APP_DIR")
+  for dir in "${dirs[@]}"; do
+    if [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$dir/IVE.app/Contents/Info.plist" 2>/dev/null)" = com.ive.desktop ]; then
+      printf '%s\n' "$dir/IVE.app"
+      return 0
+    fi
+  done
+}
+
+# Says what is left of a source build in this folder when the app takes over.
+note_source_build() {
+  if [ -n "$(server_pids)" ]; then
+    echo "An IVE built from this folder is still running in the background. Stop it with: $IVE_HERE/bin/ive stop"
+  fi
+  if [ -f "$STATE_DIR/data.db" ]; then
+    echo "This folder's source build keeps its projects and history in $STATE_DIR, and the Mac app has separate data. To keep using the source build: IVE_INSTALL=source bash $IVE_HERE/install.sh"
+  fi
+}
+
+# Opens the app. Without one yet, get.sh installs it and opens it.
+open_mac_app() {
+  if [ $# -gt 0 ]; then
+    echo "The Mac app has no command or option '$1'. To run this folder from source: IVE_INSTALL=source bash $IVE_HERE/install.sh" >&2
+    exit 1
+  fi
+  note_source_build
+  local app
+  app="$(installed_mac_app)"
+  if [ -z "$app" ]; then
+    exec bash "$IVE_DIR/get.sh"
+  fi
+  echo "Opening $app"
+  open "$app"
+}
+
+start_ive() {
+  if uses_mac_app; then
+    open_mac_app "$@"
+  else
+    start "$@"
+  fi
+}
+
+case "${IVE_INSTALL:-}" in
+  ""|app|source) ;;
+  *) echo "ive: IVE_INSTALL must be 'app' or 'source', not '$IVE_INSTALL'." >&2; exit 1 ;;
+esac
 
 case "${1:-}" in
   help|-h|--help)
     usage
     ;;
   stop)
-    stop
+    if uses_mac_app && [ -z "$(server_pids)" ]; then
+      echo "On this Mac, IVE is the Mac app, and nothing from this folder is running. Quit the app with Cmd+Q."
+    else
+      stop
+    fi
     ;;
   status)
-    status
+    if uses_mac_app && [ -z "$(server_pids)" ]; then
+      echo "On this Mac, IVE is the Mac app, and nothing from this folder is running. Open the app with: $IVE_HERE/bin/ive"
+      exit 1
+    else
+      status
+    fi
     ;;
   logs)
     require_installed
@@ -368,6 +492,10 @@ case "${1:-}" in
     run_foreground "$@"
     ;;
   update)
+    if uses_mac_app; then
+      note_source_build
+      exec bash "$IVE_DIR/get.sh"
+    fi
     update
     ;;
   uninstall)
@@ -375,9 +503,9 @@ case "${1:-}" in
     ;;
   start)
     shift
-    start "$@"
+    start_ive "$@"
     ;;
   *)
-    start "$@"
+    start_ive "$@"
     ;;
 esac

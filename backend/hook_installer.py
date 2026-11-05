@@ -821,13 +821,65 @@ def codex_hooks_notice(report: dict | None) -> str | None:
     )
 
 
-def _uninstall_toml_hook_block(path: Path, owner: str) -> None:
+def _hook_of_another_install(command) -> bool:
+    """True if a hook command runs an existing script outside this installation.
+
+    A script that no longer exists can only produce errors, so whoever removes
+    hooks may take it out, for example after the folder was moved.
+    """
+    path = _hook_command_path(str(command or ""))
+    if path is None or not path.exists():
+        return False
+    try:
+        return not path.parent.samefile(HOOKS_DIR)
+    except OSError:
+        return True
+
+
+def _toml_commands(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "command" and isinstance(item, str):
+                yield item
+            else:
+                yield from _toml_commands(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _toml_commands(item)
+
+
+def _toml_block_of_another_install(text: str, owner: str) -> bool:
+    """True if an ``owner`` block runs scripts of another IVE.
+
+    One block holds the hooks of whichever IVE installed it last.
+    """
+    start_marker = _toml_hook_marker(owner)
+    end_marker = _toml_hook_marker(owner, end=True)
+    pos = 0
+    while (start := text.find(start_marker, pos)) >= 0:
+        end = text.find(end_marker, start)
+        inner = text[start + len(start_marker):] if end < 0 else text[start + len(start_marker):end]
+        try:
+            parsed = tomllib.loads(_split_state_tables(inner)[0])
+        except tomllib.TOMLDecodeError:
+            parsed = {}
+        if any(_hook_of_another_install(command) for command in _toml_commands(parsed)):
+            return True
+        if end < 0:
+            break
+        pos = end + len(end_marker)
+    return False
+
+
+def _uninstall_toml_hook_block(path: Path, owner: str, *, only_this_install: bool = False) -> None:
     if not path.exists():
         return
     try:
         existing = path.read_text()
     except OSError as exc:
         logger.warning("Not removing IVE %s hooks from %s: could not read it (%s)", owner, path, exc)
+        return
+    if only_this_install and _toml_block_of_another_install(existing, owner):
         return
     text = _remove_toml_hook_block(existing, owner)
     if text != existing:
@@ -1232,6 +1284,7 @@ def uninstall_hooks_for_profile(
     settings_path: Path | None = None,
     *,
     managed: bool = False,
+    only_this_install: bool = False,
 ):
     """Remove Commander hooks from a CLI's settings file."""
     _validate_hook_contract(profile)
@@ -1242,7 +1295,7 @@ def uninstall_hooks_for_profile(
         )
     path = settings_path or _settings_path_for(profile)
     if profile.hook_manifest_dialect == "toml_groups":
-        _uninstall_toml_hook_block(path, _CODEX_COMMANDER_HOOK_OWNER)
+        _uninstall_toml_hook_block(path, _CODEX_COMMANDER_HOOK_OWNER, only_this_install=only_this_install)
         logger.info("Hooks removed from %s (%s, TOML)", path, profile.id)
         return
     if _update_settings(path, lambda settings: _remove_hooks(settings, profile), create=False):
@@ -2180,14 +2233,17 @@ def attest_runtime_safety_gate(
     return {**evidence, "attested": True, "reason": "attested"}
 
 
-def _remove_safety_gate_from_settings(settings: dict) -> dict:
-    """Remove all Safety Gate hooks from a settings dict."""
+def _remove_safety_gate_from_settings(settings: dict, *, only_this_install: bool = False) -> dict:
+    """Remove Safety Gate hooks from a settings dict: all, or this installation's."""
+    def remove(hook: dict) -> bool:
+        return _is_safety_gate_hook(hook) and not (only_this_install and _hook_of_another_install(hook.get("command")))
+
     hooks = settings.get("hooks", {})
     for event in list(hooks.keys()):
         groups = hooks[event]
         cleaned = []
         for group in groups:
-            filtered = [h for h in group.get("hooks", []) if not _is_safety_gate_hook(h)]
+            filtered = [h for h in group.get("hooks", []) if not remove(h)]
             if filtered:
                 group["hooks"] = filtered
                 cleaned.append(group)
@@ -2238,12 +2294,19 @@ def install_safety_gate_hooks():
 
 
 
-def uninstall_safety_gate_hooks():
-    """Remove Safety Gate hooks from Claude Code, Codex, and Gemini/Antigravity."""
-    if _update_settings(CLAUDE_SETTINGS, _remove_safety_gate_from_settings, create=False):
+def uninstall_safety_gate_hooks(*, only_this_install: bool = False):
+    """Remove Safety Gate hooks from Claude Code, Codex, and Gemini/Antigravity.
+
+    With ``only_this_install``, the gate of another IVE stays, such as the Mac
+    app's while a source build next to it is removed.
+    """
+    def remove(settings: dict) -> dict:
+        return _remove_safety_gate_from_settings(settings, only_this_install=only_this_install)
+
+    if _update_settings(CLAUDE_SETTINGS, remove, create=False):
         logger.info("Safety Gate hooks removed from %s", CLAUDE_SETTINGS)
-    _uninstall_toml_hook_block(CODEX_SETTINGS, _CODEX_SAFETY_HOOK_OWNER)
-    if _update_settings(GEMINI_SETTINGS, _remove_safety_gate_from_settings, create=False):
+    _uninstall_toml_hook_block(CODEX_SETTINGS, _CODEX_SAFETY_HOOK_OWNER, only_this_install=only_this_install)
+    if _update_settings(GEMINI_SETTINGS, remove, create=False):
         logger.info("Safety Gate hooks removed from %s", GEMINI_SETTINGS)
 
 def check_safety_gate_installation() -> dict:
@@ -2311,7 +2374,7 @@ def install_all():
     return results
 
 
-def uninstall_all():
+def uninstall_all(*, only_this_install: bool = False):
     """Remove Commander hooks from IVE-managed CLI profiles."""
     results: dict[str, dict] = {}
     for profile in PROFILES.values():
@@ -2326,6 +2389,7 @@ def uninstall_all():
         uninstall_hooks_for_profile(
             profile,
             _settings_path_for(profile, runtime_home_for_cli(profile.id)),
+            only_this_install=only_this_install,
         )
         results[profile.id] = {"status": "removed"}
     return results
