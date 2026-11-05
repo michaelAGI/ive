@@ -17,6 +17,7 @@ try {
  await f.context.route('**/api/workspaces/w/git/status',r=>r.fulfill({json:{staged:[],unstaged:[{path:'login.ts',status:'M'}],untracked:[]}}))
  await p.goto('http://ive-guide.test/#session-s')
 
+ await p.getByRole('button',{name:'Session overview',exact:true}).click()
  const brief=p.locator('[data-session-brief]');await brief.getByRole('button',{name:'Reply ready',exact:true}).click()
  await brief.getByText('Project message sent',{exact:true}).waitFor()
  await brief.getByText('Run login tests',{exact:true}).waitFor()

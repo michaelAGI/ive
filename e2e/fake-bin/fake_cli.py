@@ -7,8 +7,9 @@ like a TUI for IVE: prompt, echo, resize repaint, and lifecycle hook events
 sent through the relay script IVE installed into the (fake) CLI settings.
 
 Commands typed into the prompt:
-  ask <text>   -> PermissionRequest + Notification hooks, approval dialog;
-                  then "1" approves (PostToolUse + Stop), "2" denies
+  ask <text>   -> PermissionRequest + Notification hooks, approval dialog
+                  shaped like Claude Code's; "1"/"2" approve (PostToolUse +
+                  Stop), "3" denies
   quit         -> exit 0
   lines <n>    -> print n numbered lines (scrollback)
   slow <text>  -> like anything, but thinks 8 s (time to interrupt)
@@ -209,13 +210,37 @@ def main():
     fire("start", source="resume" if RESUME_ID else "startup")
     prompt()
     st = {"line": "", "pending": None, "dialog_at": 0, "tool_use_id": "",
-          "busy": None, "history": [], "hist_i": None, "last_ctrl_c": 0.0}
+          "busy": None, "history": [], "hist_i": None, "last_ctrl_c": 0.0,
+          "sel": 1, "dialog_lines": 0}
     esc = {"buf": None}  # escape sequence being read (spans chunks)
 
     def redraw_line():
         w("\r\x1b[2K")
         prompt()
         w(st["line"])
+
+    def dialog_text(tool):
+        # Same shape as the real Claude Code dialog: selection marker, a
+        # persistent choice and the footer; arrows move the marker, Enter
+        # confirms it, digits pick directly.
+        first = tool.split()[0] if tool.split() else "shell"
+        project = os.path.basename(os.getcwd()) or "project"
+        options = ["Yes", f"Yes, and don't ask again for {first} commands in {project}", "No"]
+        marker = "\u276f"
+        rows = [f"{marker if st['sel'] == i + 1 else ' '} {i + 1}. {label}" for i, label in enumerate(options)]
+        return (f"Bash command\n\n  {tool}\n  Run the requested command\n\nDo you want to proceed?\n"
+                + "\n".join(rows) + "\n\nEsc to cancel \u00b7 Tab to amend\n")
+
+    def draw_dialog(tool):
+        text = dialog_text(tool)
+        st["dialog_lines"] = text.count("\n")
+        w(text)
+
+    def redraw_dialog():
+        up = st["dialog_lines"]
+        if up > 0:
+            w(f"\x1b[{up}A\r\x1b[J")
+        draw_dialog(st["pending"])
 
     def finish_turn(text):
         w(f"FAKE-REPLY: {text}\n")
@@ -239,6 +264,10 @@ def main():
         if name == "esc":
             if st["busy"]:
                 interrupt("esc")
+            return
+        if name in ("up", "down") and st["pending"]:
+            st["sel"] = max(1, min(3, st["sel"] + (1 if name == "down" else -1)))
+            redraw_dialog()
             return
         if name in ("up", "down"):
             hist = st["history"]
@@ -272,7 +301,10 @@ def main():
             up = LINES_WRITTEN[0] - st["dialog_at"]
             if up > 0:
                 w(f"\x1b[{up}A\r\x1b[J")
-            if text.startswith("1") or text.lower().startswith("y"):
+            choice = st["sel"] if not text else 1 if text.lower().startswith("y") else 3 if text.lower().startswith("n") else int(text[0]) if text[0] in "123" else 3
+            log(f"dialog choice {choice} (typed {text!r}, marker {st['sel']})")
+            st["sel"] = 1
+            if choice in (1, 2):
                 fire("post_tool", tool_name="Bash", tool_input={"command": tool}, tool_use_id=st["tool_use_id"],
                      tool_response={"stdout": "ok"})
                 w(f"Approved. Ran: {tool}\n")
@@ -300,8 +332,10 @@ def main():
                 fire("notification", message="Claude needs your permission to use Bash",
                      notification_type="permission_prompt")
             st["dialog_at"] = LINES_WRITTEN[0]
-            w(f"Bash command\n  {tool}\nDo you want to proceed?\n 1. Yes\n 2. No\nEsc to cancel\n")
+            st["sel"] = 1
+            draw_dialog(tool)
             st["pending"] = tool
+            return
         elif text:
             fire("prompt", prompt=text)
             w("* Thinking...\n")

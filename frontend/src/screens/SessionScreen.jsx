@@ -1,6 +1,6 @@
-import SessionBrief from '../components/session/SessionBrief'
 import { Terminal, Maximize2, Minimize2, X } from 'lucide-react'
 import useStore from '../state/store'
+import SessionBrief from '../components/session/SessionBrief'
 import ChatPanel from '../components/chat/ChatPanel'
 import SessionSidebar from '../components/session/SessionSidebar'
 import TerminalSlot from '../components/shell/TerminalSlot'
@@ -19,8 +19,9 @@ export default function SessionScreen({ sessionId, sidebarTab = null, sidebarFil
   const terminalExpanded = useStore((s) => s.terminalDrawer[sessionId] === 'full')
   const drawerHeight = useStore((s) => s.terminalDrawerHeight)
   const terminalKey = useStore((s) => s.keybindings?.toggleTerminal)
-  void onOpenPanel
-  void onOpenReview
+  // The session overview (status, latest reply, changed files, checks) is one
+  // header click away; by default the conversation starts under the header.
+  const briefOpen = useStore((s) => s.sessionBriefOpen)
   if (!sessionId || !session) return null
   const shell = isShellSession(session)
   const shellName = shell ? 'zsh' : (session.cli_type || 'claude')
@@ -36,13 +37,15 @@ export default function SessionScreen({ sessionId, sidebarTab = null, sidebarFil
         ) : (
           <>
             {!terminalExpanded && <>
-              <SessionBrief key={sessionId} sessionId={sessionId} onOpenReview={onOpenReview} onOpenPanel={onOpenPanel} />
+              {briefOpen && <SessionBrief key={sessionId} sessionId={sessionId} onOpenReview={onOpenReview} onOpenPanel={onOpenPanel} />}
               <ChatPanel
                 sessionId={sessionId}
                 inGrid={false}
                 onToggleTerminal={() => useStore.getState().toggleTerminalDrawer(sessionId)}
                 onOpenTerminal={() => useStore.getState().toggleTerminalDrawer(sessionId, true)}
                 isTerminalOpen={drawerOpen}
+                briefOpen={briefOpen}
+                onToggleBrief={() => useStore.getState().toggleSessionBrief()}
               />
             </>}
             {drawerOpen && (

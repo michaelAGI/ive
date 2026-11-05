@@ -9,7 +9,7 @@ import { changePermissionMode, applyPermissionModeNow } from '../../lib/permissi
 import ProviderLogo from '../ui/ProviderLogo'
 import ReplyPending from './ReplyPending'
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo } from 'react'
-import { Send, Sparkles, Terminal, Copy, Check, MessageSquare, AlertCircle, X, ArrowDown, Paperclip, UploadCloud, Clock, Shield, Hash, Activity, ChevronDown, ChevronLeft, ChevronRight, Square, Mic, MicOff, Trash2, FileText, Image as ImageIcon, Film, Music, FileQuestion, Code2, Archive, Loader2 } from 'lucide-react'
+import { Send, Sparkles, Terminal, Copy, Check, MessageSquare, AlertCircle, X, ArrowDown, Paperclip, UploadCloud, Clock, Shield, Hash, Activity, ChevronDown, ChevronLeft, ChevronRight, Square, Mic, MicOff, Plus, ArrowUp, Trash2, FileText, Image as ImageIcon, Film, Music, FileQuestion, Code2, Archive, Loader2 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { SLASH_COMMANDS } from '../../lib/slashCommands'
 import { applyMessageDelta, coalesce, cursorGeneration, prependOlderRows } from '../../lib/messageCursor'
@@ -28,6 +28,7 @@ import { addRecentAnnotations, loadRecentAnnotations, saveRecentAnnotations } fr
 import { createUsageOnceFilter } from '../../lib/usageOnce'
 import { getChatActivity } from '../../lib/chatActivity'
 import SessionPromptActions from '../session/SessionPromptActions'
+import SessionHeaderActions from './SessionHeaderActions'
 import { activityLabel, hasVisibleMessage } from '../../lib/conversationPresentation'
 import ChatFindBar from '../find/ChatFindBar'
 import ComposerQueue from './ComposerQueue'
@@ -574,7 +575,7 @@ function ProcessDisclosure({ title, subtitle, preview, children, tone = 'amber',
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left font-mono text-[11px] uppercase tracking-wide hover:bg-x-hover transition-colors duration-[80ms]"
+        className="ive-step-head flex w-full items-center gap-2 px-2.5 py-1.5 text-left font-sans text-[12px] hover:bg-x-hover transition-colors duration-[80ms]"
       >
         <ChevronDown size={11} className={`shrink-0 text-x-faint transition-transform ${open ? '' : '-rotate-90'}`} />
         <span className={`font-semibold ${titleClass}`}>{title}</span>
@@ -761,7 +762,7 @@ function ToolUseProcessBlock({ block, sessionId }) {
 
   return (
     <ProcessDisclosure
-      title={`Calling ${name}`}
+      title={toolTitle(name)}
       subtitle={subtitle}
       tone="cyan"
       preview={
@@ -1884,8 +1885,7 @@ const TerminalTranscriptRow = memo(function TerminalTranscriptRow({ msg, session
         {msg.content_truncated && msg.id && <TruncatedOutputNotice sessionId={sessionId} messageId={msg.id} />}
       </div>
       <div className="ive-conversation-message-actions">
-        <time>{time}</time>
-        <button type="button" onClick={handleCopy} aria-label={copied ? 'Message copied' : 'Copy message'} title="Copy message">
+        <button type="button" onClick={handleCopy} aria-label={copied ? 'Message copied' : 'Copy message'} title={time ? `Copy message · ${time}` : 'Copy message'}>
           {copied ? <Check size={13} /> : <Copy size={13} />}
         </button>
       </div>
@@ -2146,6 +2146,37 @@ function getLatestStepPreview(steps) {
   return null
 }
 
+// Step titles read like a log of what happened, not like API calls.
+function toolTitle(name) {
+  const n = String(name || '').toLowerCase()
+  if (/^(read|view|cat)$/.test(n) || /read_file/.test(n)) return 'Read file'
+  if (/^(edit|multiedit|str_replace|patch)/.test(n) || /edit_file|apply_patch/.test(n)) return 'Edited file'
+  if (/^(write|create)/.test(n) || /write_file|create_file/.test(n)) return 'Wrote file'
+  if (/^(bash|shell|exec|run_command|terminal)/.test(n)) return 'Ran command'
+  if (/^(grep|glob|search|find|ls)$/.test(n) || /search_files|list_dir/.test(n)) return 'Searched files'
+  if (/web_?fetch|^fetch$/.test(n)) return 'Fetched page'
+  if (/web_?search/.test(n)) return 'Searched the web'
+  if (/^(task|agent)$/.test(n) || /subagent/.test(n)) return 'Ran an agent'
+  if (/todo/.test(n)) return 'Updated to-dos'
+  return name ? `Used ${name}` : 'Used a tool'
+}
+
+// "claude-sonnet-4-5-20250929" → "Sonnet 4.5", like the chat apps name their models.
+function shortModelName(model, options = []) {
+  const id = String(model || '').trim()
+  if (!id) return 'Default'
+  const known = options.find((o) => o.value === id)
+  if (known?.short && known.short.length <= 24) return known.short
+  const claude = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d+))?/i)
+  if (claude) return `${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
+  if (/^(opus|sonnet|haiku)$/i.test(id)) return id[0].toUpperCase() + id.slice(1)
+  const gpt = id.match(/^(gpt|o)-?(\d+(?:\.\d+)?)(?:-(mini|nano|codex|pro))?/i)
+  if (gpt) return `${gpt[1].toUpperCase()}-${gpt[2]}${gpt[3] ? ` ${gpt[3][0].toUpperCase()}${gpt[3].slice(1)}` : ''}`
+  const gemini = id.match(/^gemini-(\d+(?:\.\d+)?)-?(pro|flash)?/i)
+  if (gemini) return `Gemini ${gemini[1]}${gemini[2] ? ` ${gemini[2][0].toUpperCase()}${gemini[2].slice(1)}` : ''}`
+  return id.length > 24 ? `${id.slice(0, 22)}…` : id
+}
+
 function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false }) {
   const toolUse = step.tool_use
   const toolResult = step.tool_result
@@ -2155,11 +2186,26 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
   const command = isObj ? (input.command || input.cmd || input.shell_command) : null
   const description = isObj ? (input.description || input.summary || input.reason) : null
   const path = isObj ? toolPathFromInput(input) : null
+  // Paths relative to the project read like the agent's own words.
+  const workspacePath = useStore((s) => s.workspaces.find((w) => w.id === s.sessions[sessionId]?.workspace_id)?.path || '')
+  const relative = (value) => {
+    const text = String(value || '')
+    return workspacePath && text.startsWith(`${workspacePath}/`) ? text.slice(workspacePath.length + 1) : text === workspacePath ? '.' : text
+  }
+  const shownPath = path ? relative(path) : ''
   const rawInputText = input == null ? '' : typeof input === 'string' ? input : JSON.stringify(input, null, 2)
   const mainText = command || rawInputText
   const lineMeta = textLineCount(mainText)
-  const subtitle = description || path || (lineMeta ? `${lineMeta} line${lineMeta === 1 ? '' : 's'}` : '')
+  const searchSummary = isObj && (input.pattern || input.query)
+    ? `${input.pattern || input.query}${input.path ? ` in ${relative(input.path)}` : ''}`
+    : ''
+  const subtitle = searchSummary || shownPath || (command ? firstLines(command, 1) : '') || description || (lineMeta ? `${lineMeta} line${lineMeta === 1 ? '' : 's'}` : '')
   const canPreviewFile = shouldPreviewToolFile(name, input, command)
+  const edit = isObj && (typeof input.old_string === 'string' || typeof input.new_string === 'string')
+    ? { before: input.old_string || '', after: input.new_string || '' }
+    : isObj && typeof input.content === 'string' && /^(write|create)/i.test(name)
+      ? { before: '', after: input.content }
+      : null
 
   const extraFields = isObj
     ? Object.entries(input)
@@ -2219,21 +2265,29 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
 
   return (
     <ProcessDisclosure
-      title={`Calling ${name}`}
+      title={toolTitle(name)}
       subtitle={subtitle}
       tone={tone}
       forceOpen={forceOpen}
       preview={
         canPreviewFile && sessionId
           ? <FileCallPreview sessionId={sessionId} path={path} compact />
-          : mainText
-            ? <CompactCodePreview text={firstLines(mainText, 2)} lang={command ? 'bash' : 'json'} />
-            : null
+          : command
+            ? <CompactCodePreview text={firstLines(command, 2)} lang="bash" />
+            : edit
+              ? <CompactCodePreview text={firstLines(edit.after || edit.before, 2)} lang={filePreviewLang(null, path)} />
+              : null
       }
     >
-      {description ? <div className="mb-1.5 font-mono text-[11px] text-x-ink-secondary">{description}</div> : null}
-      {path ? <div className="mb-1.5 font-mono text-[11px] text-x-faint">Path: <code className="text-x-accent">{path}</code></div> : null}
+      {description ? <div className="mb-1.5 font-sans text-[12px] text-x-ink-secondary">{description}</div> : null}
+      {path ? <div className="mb-1.5 font-sans text-[12px] text-x-faint">File: <code className="text-x-ink-secondary" title={path}>{shownPath}</code></div> : null}
       {canPreviewFile && sessionId ? <FileCallPreview sessionId={sessionId} path={path} /> : null}
+      {edit ? (
+        <div className="ive-step-diff mb-2">
+          {edit.before ? <pre data-diff="del"><code>{edit.before}</code></pre> : null}
+          {edit.after ? <pre data-diff="add"><code>{edit.after}</code></pre> : null}
+        </div>
+      ) : null}
       {command ? (
         <div className="mb-2">
           <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-x-faint">
@@ -2243,7 +2297,7 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
           <FullCodeBlock text={command} lang="bash" />
         </div>
       ) : null}
-      {rawInputText && !command ? (
+      {rawInputText && !command && !edit && !searchSummary ? (
         <div className="mb-2">
           <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-x-faint">
             <Code2 size={10} />
@@ -2338,7 +2392,7 @@ function ProcessFlowDisclosure({ steps, activeMessageId, sessionId, open, setOpe
       </button>
 
       {open ? (
-        <div className="border-t border-x-line-subtle p-3 space-y-3 bg-x-surface-2/30">
+        <div className="ive-activity-steps">
           {steps.map((step, idx) => {
             const stepKey = `${step.type}-${idx}`
             // A tool call with no result is "stale" if the flow has either
@@ -2675,7 +2729,7 @@ const TranscriptBody = memo(function TranscriptBody({
   )
 })
 
-export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal = onToggleTerminal, isTerminalOpen = false, inGrid = false, phone = false }) {
+export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal = onToggleTerminal, isTerminalOpen = false, inGrid = false, phone = false, briefOpen = false, onToggleBrief = null }) {
   // Phone (full screen, App.jsx): the composer sits in the flow at the bottom,
   // right above the iOS keyboard, so the transcript ends above it.
   const inFlowComposer = inGrid || phone
@@ -4380,7 +4434,24 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       <SessionContextNotice session={session} runtime={runtimeDetails} />
       {/* ⌘F: find in this chat (own component, see components/find). */}
       <ChatFindBar sessionId={sessionId} scrollRef={scrollContainerRef} focusComposer={focusChatComposer} />
-      {/* Session controls; status already appears in the sidebar and Board tile. */}
+      {/* Full session view: model, effort and agent mode live in the message
+          box; details, history, usage and the terminal toggle sit in the app
+          header. Tiles and the phone keep this compact strip. */}
+      {!inFlowComposer && (
+        <SessionHeaderActions
+          showProcessing={showProcessing}
+          onToggleProcessing={() => setShowProcessing((prev) => !prev)}
+          hasHistory={timelineItems.length > 0}
+          historyOpen={!isTimelineCollapsed}
+          onToggleHistory={() => setIsTimelineCollapsed((v) => !v)}
+          stats={conversationStats}
+          briefOpen={briefOpen}
+          onToggleBrief={onToggleBrief}
+          isTerminalOpen={isTerminalOpen}
+          onToggleTerminal={onToggleTerminal}
+        />
+      )}
+      {inFlowComposer && (
       <div className={`x-telemetry ive-chat-controls ${inGrid ? 'ive-chat-strip--tile px-2 gap-2' : 'px-4'} py-1.5 flex items-center justify-between text-xs select-none z-20`}>
         {/* Session metadata and selectors */}
         <div className="ive-strip-right flex items-center gap-3 font-mono text-[11px] text-x-ink-secondary shrink-0 whitespace-nowrap">
@@ -4477,6 +4548,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
           </>}
         </div>
       </div>
+      )}
 
       {/* Drag & Drop File Upload Overlay */}
       {isDragging && (
@@ -4859,7 +4931,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
           : 'absolute left-0 right-0 p-4 pointer-events-none select-none transition-all duration-300 ease-in-out z-20'}
         style={inFlowComposer ? undefined : { bottom: isTerminalOpen ? '320px' : '32px' }}
       >
-        <div className={`${inFlowComposer ? '' : 'max-w-5xl '}w-full mx-auto flex flex-col gap-2 pointer-events-auto`}>
+        <div className={`${inFlowComposer ? '' : 'ive-composer-dock '}w-full mx-auto flex flex-col gap-2 pointer-events-auto`}>
 
           {/* Floating Jump to Latest Button */}
           {!isPinnedRef.current && messages.length > 0 && (
@@ -5107,112 +5179,144 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
 
           <ComposerTokenChips sessionId={sessionId} />
 
-          {canAskAside && <div className="ive-aside-entry">
-            <button type="button" onClick={() => openAside()} title="Ask about this task without interrupting it. You can also type /btw followed by a question.">
-              <MessageSquare size={13} /> Ask on the side <kbd>/btw</kbd>
-            </button>
-          </div>}
-
-          {/* Prompt Entry Form (Glassmorphism Pill) */}
-          <form onSubmit={handleSend} className="x-composer ive-session-composer flex items-end gap-2 p-1.5 pl-3">
-            {/* Hidden File Input */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              multiple
-              className="hidden"
-            />
-
-            {/* Attachment Button */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={composerDisabled}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-x-muted hover:text-x-ink-secondary hover:bg-x-hover transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-              title="Attach images or text files (or paste / drag & drop). Type @ for project files and folders."
-            >
-              <Paperclip size={14} />
-            </button>
-
-            <ComposerTextarea
-              sessionId={sessionId}
-              textareaRef={textareaRef}
-              handlersRef={composerHandlersRef}
-              placeholder={composerPlaceholder}
-              disabled={composerDisabled}
-            />
-
-            {hasSpeechSupport && (
-              <button
-                type="button"
-                onClick={toggleListening}
+          {/* The message box, like a chat app: text on top; attach, dictate and
+              the side question on the left; model, effort and agent mode on the
+              right; one round send button. Stop sits next to it while the agent
+              works. Tiles and the phone get the compact variant. */}
+          <form onSubmit={handleSend} className={`x-composer ive-session-composer ive-composer${inFlowComposer ? ' ive-composer--compact' : ''}`} data-chat-composer="">
+            <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" />
+            <div className="ive-composer-field">
+              <ComposerTextarea
+                sessionId={sessionId}
+                textareaRef={textareaRef}
+                handlersRef={composerHandlersRef}
+                placeholder={composerPlaceholder}
                 disabled={composerDisabled}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg border transition-colors duration-[80ms] shrink-0 ${
-                  listening
-                    ? 'bg-x-accent/15 border-x-accent/35 text-x-accent'
-                    : 'bg-x-surface border-x-line text-x-muted hover:text-x-ink-secondary hover:bg-x-hover'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-                title={listening ? 'Stop dictation' : 'Dictate prompt'}
-              >
-                {listening ? <MicOff size={14} className="animate-pulse" /> : <Mic size={14} />}
-              </button>
-            )}
-
-            {isAgentBusy && (
-              <button
-                type="button"
-                onClick={handleCancelOutput}
-                className="h-8 px-2.5 rounded-lg border border-x-accent-ink/30 bg-x-accent-ink/15 text-x-accent-ink hover:bg-x-accent-ink/25 hover:border-x-accent-ink/45 transition-all shrink-0 flex items-center justify-center gap-1"
-                title={`Cancel output for ${cliType}`}
-              >
-                <Square size={13} />
-                <span className="hidden sm:inline text-[11px] font-semibold">Cancel</span>
-              </button>
-            )}
-
-            {isAgentBusy && canSendWhileBusy && (
-              <button
-                type="button"
-                onClick={(e) => handleSend(e, { delivery: 'wait_for_ready' })}
-                disabled={!hasInputText && pastedImages.length === 0 && !hasComposerAnnotations && chatContext.items.length === 0}
-                className="h-8 w-8 rounded-lg border border-x-accent-ink/30 bg-x-accent-ink/15 text-x-accent-ink hover:bg-x-accent-ink/25 hover:border-x-accent-ink/45 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 flex items-center justify-center"
-                title="Send when Antigravity is ready"
-              >
-                <Clock size={13} />
-              </button>
-            )}
-
-            {/* Terminal Drawer Trigger */}
-            {onToggleTerminal && (
-              <button
-                type="button"
-                onClick={onToggleTerminal}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg border transition-all ${
-                  isTerminalOpen
-                    ? 'bg-x-accent/10 border-x-accent/20 text-x-accent hover:bg-x-accent/20'
-                    : 'bg-x-surface border-x-line text-x-muted hover:text-x-ink-secondary hover:bg-x-hover'
-                }`}
-                title={inGrid ? 'Open this session’s terminal' : 'Toggle PTY Terminal Drawer'}
-              >
-                <Terminal size={14} />
-              </button>
-            )}
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={(!hasInputText && pastedImages.length === 0 && !hasComposerAnnotations && chatContext.items.length === 0) || composerDisabled || (composerUnavailable && !willQueue)}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-x-accent hover:bg-x-accent-ink text-x-on-accent disabled:opacity-40 disabled:hover:bg-x-accent transition-colors duration-[80ms] shadow-x-1 shrink-0"
-              aria-label={willQueue ? 'Add to queue' : undefined}
-              title={willQueue
-                ? `Add to queue, sends when ${agentLabel} is done (Enter)`
-                : composerUnavailable
-                ? (session ? 'Reconnecting to IVE, sending waits until it is back' : 'Loading session')
-                : isAgentBusy && canSendWhileBusy ? 'Steer Antigravity now (Enter)' : 'Submit command (Enter)'}
-            >
-              {willQueue ? <Clock size={14} /> : <Send size={14} />}
-            </button>
+              />
+            </div>
+            <div className="ive-composer-row">
+              <div className="ive-composer-tools">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={composerDisabled}
+                  className="ive-composer-icon"
+                  aria-label="Attach files"
+                  title="Attach images or text files (or paste / drag & drop). Type @ for project files and folders."
+                >
+                  <Plus size={18} />
+                </button>
+                {hasSpeechSupport && (
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    disabled={composerDisabled}
+                    className="ive-composer-icon"
+                    aria-pressed={listening}
+                    aria-label={listening ? 'Stop dictation' : 'Dictate'}
+                    title={listening ? 'Stop dictation' : 'Dictate prompt'}
+                  >
+                    {listening ? <MicOff size={16} className="animate-pulse" /> : <Mic size={16} />}
+                  </button>
+                )}
+                {canAskAside && (
+                  <button
+                    type="button"
+                    onClick={() => openAside()}
+                    className="ive-composer-icon"
+                    aria-label="Ask on the side /btw"
+                    title="Ask about this task without interrupting it. You can also type /btw followed by a question."
+                  >
+                    <MessageSquare size={16} />
+                  </button>
+                )}
+                {onToggleTerminal && inFlowComposer && (
+                  <button
+                    type="button"
+                    onClick={onToggleTerminal}
+                    className="ive-composer-icon"
+                    aria-pressed={isTerminalOpen}
+                    aria-label="Terminal"
+                    title={inGrid ? 'Open this session’s terminal' : 'Toggle PTY Terminal Drawer'}
+                  >
+                    <Terminal size={16} />
+                  </button>
+                )}
+              </div>
+              {!inFlowComposer && (
+                <div className="ive-composer-settings">
+                  <LaunchSettingPicker
+                    testId="chat-header-model"
+                    openRequest={modelPickerRequest}
+                    sessionId={sessionId}
+                    icon={<ProviderLogo provider={cliType} className="w-3.5 h-3.5 shrink-0" />}
+                    label="Model:"
+                    displayValue={shortModelName(modelInfo.model, modelOptions)}
+                    title={`${modelInfo.title} Pick a model to restart the session with it; the conversation continues.`}
+                    options={modelOptions}
+                    selected={session?.model || ''}
+                    apply={launchApply?.model}
+                    onSelect={(value) => handleUpdateLaunchField('model', value)}
+                    onApplyNow={handleApplyPermissionModeNow}
+                    width="w-56"
+                  />
+                  {effortPickerOptions.length > 0 && (
+                    <LaunchSettingPicker
+                      testId="chat-header-effort"
+                      sessionId={sessionId}
+                      icon={null}
+                      label="Effort:"
+                      displayValue={modelInfo.effort || 'default'}
+                      title="Reasoning effort. Picking a level restarts the session with --effort; the conversation continues."
+                      options={effortPickerOptions}
+                      selected={session?.effort || ''}
+                      apply={launchApply?.effort}
+                      onSelect={(value) => handleUpdateLaunchField('effort', value)}
+                      onApplyNow={handleApplyPermissionModeNow}
+                      width="w-72"
+                    />
+                  )}
+                  <PermissionModePicker sessionId={sessionId} />
+                </div>
+              )}
+              <div className="ive-composer-actions">
+                {isAgentBusy && (
+                  <button
+                    type="button"
+                    onClick={handleCancelOutput}
+                    className="ive-composer-stop"
+                    aria-label={`Stop ${agentLabel}`}
+                    title={`Cancel output for ${cliType}`}
+                  >
+                    <Square size={12} />
+                  </button>
+                )}
+                {isAgentBusy && canSendWhileBusy && (
+                  <button
+                    type="button"
+                    onClick={(e) => handleSend(e, { delivery: 'wait_for_ready' })}
+                    disabled={!hasInputText && pastedImages.length === 0 && !hasComposerAnnotations && chatContext.items.length === 0}
+                    className="ive-composer-stop"
+                    title="Send when Antigravity is ready"
+                  >
+                    <Clock size={13} />
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={(!hasInputText && pastedImages.length === 0 && !hasComposerAnnotations && chatContext.items.length === 0) || composerDisabled || (composerUnavailable && !willQueue)}
+                  className="ive-composer-send"
+                  aria-label={willQueue ? 'Add to queue' : 'Send message'}
+                  title={willQueue
+                    ? `Add to queue, sends when ${agentLabel} is done (Enter)`
+                    : composerUnavailable
+                    ? (session ? 'Reconnecting to IVE, sending waits until it is back' : 'Loading session')
+                    : isAgentBusy && canSendWhileBusy ? 'Steer Antigravity now (Enter)' : 'Send (Enter)'}
+                >
+                  {willQueue ? <Clock size={15} /> : <ArrowUp size={17} />}
+                </button>
+              </div>
+            </div>
           </form>
 
           {liveTerminalSessions.length > 0 && (

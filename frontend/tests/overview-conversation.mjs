@@ -117,7 +117,7 @@ Do you want to proceed?
 Esc to cancel · Tab to amend`)
  assert.equal(await hook.page.getByRole('button',{name:'Open terminal to review',exact:true}).count(),0)
  assert.equal(await hook.page.getByRole('button',{name:'Allow once',exact:true}).count(),1)
- assert.equal(await hook.page.getByRole('button',{name:"Yes, and don't ask again for ToolSearch commands in /test/project",exact:true}).count(),1)
+ assert.equal(await hook.page.getByRole('button',{name:"Always allow ToolSearch commands in /test/project",exact:true}).count(),1)
  assert.equal(await hook.page.locator('.ive-chat-question-notice').isVisible(),true)
  await hook.page.getByText('View exact request',{exact:true}).click()
  assert.match(await hook.page.locator('.ive-chat-request-details pre').innerText(),/missing API key/)
