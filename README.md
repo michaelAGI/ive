@@ -23,22 +23,35 @@ IVE is in beta. Expect rough edges and please open an issue when something break
 
 ## Install
 
-### Mac app
+### Mac (Apple silicon)
 
-For a Mac with Apple silicon (M1 or newer) and macOS 13.5 or newer:
-[download IVE for Mac](https://github.com/michael-ra/ive/releases/latest/download/IVE-macOS-arm64.dmg),
-open the DMG and drag IVE into Applications. The app is signed by AIFOREU GmbH
-and notarized by Apple. It runs its own local service in the background, so
-there is no terminal window and no browser tab. Its data lives in
-`~/Library/Application Support/com.ive.desktop`, and it listens on
+```bash
+curl -fsSL https://ive.dev/install.sh | bash
+```
+
+This downloads the IVE app from the latest release, checks its SHA-256, lets
+macOS verify the signature and notarization, puts the app into Applications
+and opens it. Run the same command again to update. You need a Mac with Apple
+silicon (M1 or newer), macOS 13.5 or newer and at least one coding CLI you are
+signed in to. Python, Node.js and Git are not needed. [Read the script](get.sh)
+before you run it.
+
+You can also [download IVE for Mac](https://github.com/michaelAGI/ive/releases/latest/download/IVE-macOS-arm64.dmg)
+yourself, open the DMG and drag IVE into Applications. The app is signed by
+AIFOREU GmbH and notarized by Apple. It runs its own local service in the
+background, so there is no terminal window and no browser tab. Its data lives
+in `~/Library/Application Support/com.ive.desktop`, and it listens on
 `127.0.0.1:5112` only. The SHA-256 of each DMG is on the
-[releases page](https://github.com/michael-ra/ive/releases).
+[releases page](https://github.com/michaelAGI/ive/releases).
 
 To uninstall the app, quit it, run
 `"/Applications/IVE.app/Contents/Resources/backend/ive-backend" --remove-hooks`
 in Terminal and drag IVE to the Trash.
 
-### From source (Linux, Intel Macs, developers)
+### Linux and Intel Macs (from source)
+
+There is no app for Linux and Intel Macs yet, so the same command builds IVE
+from source there:
 
 ```bash
 curl -fsSL https://ive.dev/install.sh | bash
@@ -60,12 +73,11 @@ yet: run `~/.local/bin/ive`, or add `export PATH="$HOME/.local/bin:$PATH"` to
 
 The installer puts IVE into `~/.ive`, installs its Python and npm dependencies
 there, builds the app and links the `ive` command into `~/.local/bin`. It does
-not use `sudo` and does not start anything. [Read the script](get.sh) before you
-run it.
+not use `sudo` and does not start anything.
 
-### Requirements
+### Requirements for the source build
 
-- macOS or Linux
+- Linux or macOS
 - Python 3.11 or newer
 - Node.js 22.12 or newer with npm
 - Git
@@ -74,14 +86,18 @@ run it.
 
 On macOS with Homebrew: `brew install python node git`.
 
-### Install without the script
+### Install from a clone
 
 ```bash
-git clone https://github.com/michael-ra/ive.git
+git clone https://github.com/michaelAGI/ive.git
 cd ive
 bash install.sh
-bin/ive
 ```
+
+On a Mac with Apple silicon, `install.sh` installs the app from the latest
+release, exactly like the one-line installer. Everywhere else it builds this
+checkout; start it with `bin/ive`. To build from source on an Apple silicon
+Mac, for example to work on IVE, run `IVE_INSTALL=source bash install.sh`.
 
 `bash install.sh --plan` and `bash start.sh --plan` print every step without
 running it. More options are in [INSTALL.md](INSTALL.md).
