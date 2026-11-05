@@ -231,15 +231,23 @@ def main():
         return (f"Bash command\n\n  {tool}\n  Run the requested command\n\nDo you want to proceed?\n"
                 + "\n".join(rows) + "\n\nEsc to cancel \u00b7 Tab to amend\n")
 
+    def dialog_rows(text):
+        # Terminal rows, not newlines: a long option line wraps.
+        cols = size()[0] or 80
+        return sum(max(1, -(-len(line) // cols)) for line in text.split("\n")[:-1])
+
     def draw_dialog(tool):
         text = dialog_text(tool)
-        st["dialog_lines"] = text.count("\n")
+        st["dialog_lines"] = dialog_rows(text)
         w(text)
 
     def redraw_dialog():
+        # Move back over the dialog, wipe it and draw it again in place; the
+        # erased rows must not count as written output a second time.
         up = st["dialog_lines"]
         if up > 0:
             w(f"\x1b[{up}A\r\x1b[J")
+            LINES_WRITTEN[0] -= up
         draw_dialog(st["pending"])
 
     def finish_turn(text):
@@ -404,9 +412,17 @@ def main():
                 resized.clear()
                 cols, rows = size()
                 log(f"resize {cols}x{rows}")
-                w(f"\n[resize {cols}x{rows}]\n")
-                prompt()
-                w(st["line"])
+                if st["pending"]:
+                    # Like Claude Code: the dialog is repainted on resize and
+                    # stays the only thing below the question.
+                    w("\x1b[2J\x1b[H")
+                    LINES_WRITTEN[0] = 0
+                    st["dialog_at"] = 0
+                    draw_dialog(st["pending"])
+                else:
+                    w(f"\n[resize {cols}x{rows}]\n")
+                    prompt()
+                    w(st["line"])
             if st["busy"] and time.time() >= st["busy"][0]:
                 text = st["busy"][1]
                 st["busy"] = None

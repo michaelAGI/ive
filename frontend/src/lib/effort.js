@@ -61,3 +61,22 @@ export function headerModelInfo(session, observed, profile, launched) {
   }
   return { model, effort, observed: Boolean(observed?.model), title: parts.join(' ') }
 }
+
+// "claude-sonnet-4-5-20250929" → "Sonnet 4.5", like the chat apps name their models.
+export function shortModelName(model, options = []) {
+  const id = String(model || '').trim()
+  if (!id || id === 'default') return 'Default'
+  const known = options.find((o) => o.value === id)
+  if (known?.short && known.short !== id && known.short.length <= 24) return known.short
+  const cap = (word) => word[0].toUpperCase() + word.slice(1)
+  const claude = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d)(?!\d))?/i)
+  if (claude) return `${cap(claude[1].toLowerCase())} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
+  if (/^(opus|sonnet|haiku|fable|mythos)$/i.test(id)) return cap(id.toLowerCase())
+  const o = id.match(/^o(\d)(?:-(mini|pro))?$/i)
+  if (o) return `o${o[1]}${o[2] ? ` ${cap(o[2])}` : ''}`
+  const gpt = id.match(/^gpt-?(\d+(?:\.\d+)?)(?:-(mini|nano|codex|pro))?/i)
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${cap(gpt[2])}` : ''}`
+  const gemini = id.match(/^gemini-(\d+(?:\.\d+)?)-?(pro|flash)?/i)
+  if (gemini) return `Gemini ${gemini[1]}${gemini[2] ? ` ${cap(gemini[2])}` : ''}`
+  return id.length > 24 ? `${id.slice(0, 22)}…` : id
+}

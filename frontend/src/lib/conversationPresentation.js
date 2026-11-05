@@ -18,10 +18,21 @@ function requestVerb(kind) {
 
 // `agent` names who is asking ("Claude", "Codex"); the chat card shows it as
 // "Claude wants to run a command" above the exact request.
+const RULE_RE = /^[─━╌┄│┆\s]+$/
+
 export function permissionPresentation(prompt, agent = 'The assistant') {
-  const lines = cleanLines(prompt?.excerpt)
-  const kind = lines.shift() || ''
-  const description = lines[0] || 'Review the requested action'
+  const raw = String(prompt?.excerpt || '').split('\n').map((line) => line.trim()).filter(Boolean)
+  const kind = raw.shift() || ''
+  // Claude Code prints the request itself (the command, the file, the tool)
+  // right under the heading. A hook dialog puts its note first and the
+  // request after a rule. Pick the request line either way; everything else
+  // is detail.
+  const ruleIndex = raw.findIndex((line) => RULE_RE.test(line))
+  const before = (ruleIndex >= 0 ? raw.slice(0, ruleIndex) : []).filter((line) => !RULE_RE.test(line))
+  const after = (ruleIndex >= 0 ? raw.slice(ruleIndex + 1) : raw).filter((line) => !RULE_RE.test(line))
+  const primary = after[0] || before[0] || ''
+  const detailLines = ruleIndex >= 0 ? [...before, ...after.slice(1)] : after.slice(1)
+  const description = primary || 'Review the requested action'
   const setupIssue = /missing API key|not configured|fail.closed/i.test(prompt?.excerpt || '')
   const verb = requestVerb(kind)
   return {
@@ -29,10 +40,8 @@ export function permissionPresentation(prompt, agent = 'The assistant') {
     summary: verb ? `${agent} wants to ${verb}` : kind ? `${agent} asks for: ${kind}` : `${agent} needs your permission`,
     kind,
     description,
-    // `description` is the first line under the heading (the command, the
-    // file, the tool); `detail` is the rest the terminal shows (the note,
-    // the diff, the tool input).
-    detail: lines.slice(1).join('\n'),
+    detail: detailLines.join('\n'),
+    detailLines,
     notice: setupIssue ? 'An additional IVE safety check needs setup. Changing the agent mode does not fix this check. Review the exact request before deciding.' : '',
     choices: (prompt?.choices || []).map((choice, index) => {
       const persistent = choice.label.match(PERSISTENT_RE)

@@ -1309,9 +1309,7 @@ pre {
   /* Session composer: the message gets its own full-width line and the
      attach / dictate / stop / terminal / send buttons sit in a row below it,
      instead of squeezing the text into a 40px column at 320px. */
-  form.x-composer:not(:has([data-home-composer])) { flex-wrap: wrap; }
-  form.x-composer:not(:has([data-home-composer])) > textarea { order: -1; flex: 1 0 100%; }
-  form.x-composer:not(:has([data-home-composer])) > button:first-of-type { margin-right: auto; }
+  /* The session message box (.ive-composer) already stacks its text above its buttons. */
 }
 
 /* Overview tile preview (Terminal.jsx): the whole Session-level terminal,
@@ -2001,7 +1999,7 @@ html[data-theme="dark"] .ive-composer { box-shadow: 0 2px 14px rgba(0, 0, 0, .35
 .ive-composer--compact { padding: 6px 6px 6px 12px; border-radius: 16px !important; }
 .ive-composer-field { display: flex; min-width: 0; }
 .ive-composer-field textarea { width: 100%; font-size: 15px !important; line-height: 1.55 !important; padding: 3px 0 !important; min-height: 26px !important; max-height: 220px !important; }
-.ive-composer--compact .ive-composer-field textarea { font-size: 13px !important; max-height: 132px !important; }
+@media (min-width: 768px) { .ive-composer--compact .ive-composer-field textarea { font-size: 13px !important; max-height: 132px !important; } }
 .ive-composer-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .ive-composer-tools { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .ive-composer-settings { display: flex; align-items: center; gap: 2px; margin-left: auto; min-width: 0; overflow: hidden; }
@@ -2044,6 +2042,7 @@ html[data-theme="dark"] .ive-composer { box-shadow: 0 2px 14px rgba(0, 0, 0, .35
 .ive-chat-question-request { margin: 12px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--x-surface-2); }
 .ive-chat-question-request .ive-chat-question-description { margin: 0; color: var(--x-ink); font: 500 13px/1.6 var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
 .ive-chat-question-detail { margin: 6px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--x-ink-secondary); font: 12.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ive-chat-question-detail > span { display: block; min-height: 1.2em; }
 .ive-chat-question-detail[data-long] { max-height: 240px; }
 .ive-chat-question-choices { gap: 8px; margin-top: 14px; }
 .ive-chat-question-choices button { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; padding: 7px 10px 7px 14px; border-radius: 10px; font-weight: 500; }
@@ -2056,6 +2055,23 @@ html[data-theme="dark"] .ive-composer { box-shadow: 0 2px 14px rgba(0, 0, 0, .35
 .ive-chat-question .ive-chat-reply-status { margin-top: 10px; }
 .ive-composer-settings [data-testid="chat-header-effort"] .ive-strip-label { display: inline; color: var(--x-faint); }
 .ive-step-diff { display: flex; flex-direction: column; gap: 4px; }
-.ive-step-diff pre { margin: 0; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
+.ive-step-diff pre { margin: 0; padding: 8px 10px; max-height: 18rem; overflow: auto; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
 .ive-step-diff pre[data-diff="del"] { background: var(--x-diff-del); }
 .ive-step-diff pre[data-diff="add"] { background: var(--x-diff-add); }
+
+/* Session header actions: labels from 1100px, the counter only when there is room. */
+.ive-session-header-actions { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.ive-session-header-actions .ive-header-btn { flex-shrink: 0; }
+@media (min-width: 1100px) { .ive-session-header-actions .ive-header-btn-label { display: inline; } }
+@media (max-width: 1180px) { .ive-header-usage { display: none; } }
+/* Phone: 16px in the box (iOS zoom guard), finger-sized choices on the card,
+   wider bubbles. These sit after the desktop rules on purpose. */
+@media (max-width: 767px) {
+  .ive-composer .ive-composer-field textarea { font-size: 16px !important; }
+  .ive-chat-question-choices button, .ive-chat-icon-button { min-height: 40px; }
+}
+@media (max-width: 640px) {
+  .ive-conversation-message.is-user { max-width: 92%; }
+  .ive-chat-question { padding: 14px; }
+}
+.ive-step-diff-change { display: flex; flex-direction: column; gap: 4px; }

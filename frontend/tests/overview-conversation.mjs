@@ -124,6 +124,13 @@ Esc to cancel · Tab to amend`)
  await hook.page.screenshot({path:`${out}toolsearch-${engine}.png`,fullPage:true})
  await hook.page.getByRole('button',{name:'Don’t allow',exact:true}).click()
  await hook.page.getByRole('heading',{name:'Reply sent',exact:true}).waitFor()
+ // Digits answer like in the terminal: only in the full session view, with the
+ // cursor in this session's empty message box or nowhere editable.
+ const keys=await fixture(two);await keys.page.goto('http://ive-guide.test/#session-s');await keys.page.locator('[data-session-view="s"] [data-session-prompt-actions]').waitFor();await keys.page.getByRole('button',{name:'Allow once',exact:true}).waitFor()
+ await keys.page.keyboard.press('1');await keys.page.getByRole('heading',{name:'Reply sent',exact:true}).waitFor();assert.equal(keys.inputs.length,1);assert.equal(keys.inputs[0].message,'1');count++;await keys.context.close()
+ const typed=await fixture(two);await typed.page.goto('http://ive-guide.test/#session-s');await typed.page.getByRole('button',{name:'Allow once',exact:true}).waitFor()
+ const draft=typed.page.locator('[data-session-view="s"] form.x-composer textarea');await draft.fill('note to self');await draft.press('1');await typed.page.waitForTimeout(500);assert.equal(typed.inputs.length,0,'a digit typed into a draft is text');assert.equal(await draft.inputValue(),'note to self1');count++;await typed.context.close()
+ const board=await fixture(two);await board.page.keyboard.press('1');await board.page.waitForTimeout(500);assert.equal(board.inputs.length,0,'Board tiles take no digit shortcuts');count++;await board.context.close()
  assert.equal(hook.inputs.length,1);assert.equal(hook.inputs[0].message,'3')
  assert.equal(hook.errors.length,0);count++;await hook.context.close()
  console.log(JSON.stringify({engine,passed:count}))

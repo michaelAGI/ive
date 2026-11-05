@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ShieldAlert, Loader2, RefreshCw, ArrowUp } from 'lucide-react'
 import useSessionPromptReply from '../../hooks/useSessionPromptReply'
 import useStore from '../../state/store'
@@ -9,11 +9,12 @@ const isEditable = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TE
 /** The agent's native permission dialog as a card in the conversation.
  *  Same choices as the terminal (1 / 2 / 3), answered against the exact
  *  screen the terminal shows; the digits work here too. */
-export default function SessionPromptActions({ sessionId, active, disabled = false, onOpenTerminal }) {
+export default function SessionPromptActions({ sessionId, active, disabled = false, onOpenTerminal, keyboard = false }) {
   const fieldId = useId()
   const [reply, setReply] = useState('')
   const [slowRequest, setSlowRequest] = useState(false)
   const cliType = useStore((s) => s.sessions[sessionId]?.cli_type || 'claude')
+  const isActiveSession = useStore((s) => s.activeSessionId === sessionId)
   const { snapshot: current, loading, error, sending, answered, unavailable: hookUnavailable, refresh, reply: send, clearError } = useSessionPromptReply(sessionId, { active })
   const waiting = active && !answered && (!current?.screen?.trim() || current?.incomplete)
   useEffect(() => {
@@ -29,20 +30,32 @@ export default function SessionPromptActions({ sessionId, active, disabled = fal
     if (unavailable) return
     if (await send(value, { manual })) setReply('')
   }
-  // 1 / 2 / 3 answer the request like in the terminal, unless the user is
-  // typing somewhere.
+  const sendReplyRef = useRef(sendReply)
+  sendReplyRef.current = sendReply
+  // 1 / 2 / 3 answer the request like in the terminal: only in the full view
+  // of the session the user is looking at (Board tiles mount several cards),
+  // never while typing, and never while a dialog, menu or palette is open.
   const choicesKey = presentation && !answered ? presentation.choices.map((c) => c.value).join('') : ''
   useEffect(() => {
-    if (!active || !choicesKey || unavailable) return undefined
+    if (!keyboard || !active || !isActiveSession || !choicesKey || unavailable) return undefined
     const onKey = (event) => {
-      if (event.metaKey || event.ctrlKey || event.altKey || isEditable(document.activeElement)) return
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return
       if (!choicesKey.includes(event.key)) return
+      const el = document.activeElement
+      if (isEditable(el)) {
+        // Like the terminal: with nothing typed yet, a digit answers the
+        // request even though this session's message box has the cursor.
+        const ownEmptyComposer = el.tagName === 'TEXTAREA' && !el.value.trim()
+          && el.closest(`[data-session-view="${sessionId}"] form.x-composer`)
+        if (!ownEmptyComposer) return
+      }
+      if (document.querySelector('[role="dialog"], [data-ive-popover], [data-command-palette]')) return
       event.preventDefault()
-      sendReply(event.key)
+      sendReplyRef.current(event.key)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, choicesKey, unavailable]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [keyboard, active, isActiveSession, choicesKey, unavailable, sessionId])
   if (!active) return null
   const retry = () => { clearError(); refresh() }
   if (waiting) return (
@@ -77,7 +90,7 @@ export default function SessionPromptActions({ sessionId, active, disabled = fal
       {presentation && !answered && (
         <div className="ive-chat-question-request">
           <p className="ive-chat-question-description">{presentation.description}</p>
-          {presentation.detail && <pre className="ive-chat-question-detail" data-long={detailLines > 14 ? '' : undefined}>{presentation.detail}</pre>}
+          {presentation.detailLines.length > 0 && <pre className="ive-chat-question-detail" data-long={detailLines > 14 ? '' : undefined}>{presentation.detailLines.map((line, index) => <span key={index}>{line}</span>)}</pre>}
         </div>
       )}
       {presentation && !answered && presentation.notice && <p className="ive-chat-question-notice">{presentation.notice}</p>}

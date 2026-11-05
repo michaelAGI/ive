@@ -9,7 +9,7 @@ import { changePermissionMode, applyPermissionModeNow } from '../../lib/permissi
 import ProviderLogo from '../ui/ProviderLogo'
 import ReplyPending from './ReplyPending'
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo } from 'react'
-import { Send, Sparkles, Terminal, Copy, Check, MessageSquare, AlertCircle, X, ArrowDown, Paperclip, UploadCloud, Clock, Shield, Hash, Activity, ChevronDown, ChevronLeft, ChevronRight, Square, Mic, MicOff, Plus, ArrowUp, Trash2, FileText, Image as ImageIcon, Film, Music, FileQuestion, Code2, Archive, Loader2 } from 'lucide-react'
+import { Sparkles, Terminal, Copy, Check, MessageSquare, AlertCircle, X, ArrowDown, UploadCloud, Clock, Shield, Hash, Activity, ChevronDown, ChevronLeft, ChevronRight, Square, Mic, MicOff, Plus, ArrowUp, Trash2, FileText, Image as ImageIcon, Film, Music, FileQuestion, Code2, Archive, Loader2 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { SLASH_COMMANDS } from '../../lib/slashCommands'
 import { applyMessageDelta, coalesce, cursorGeneration, prependOlderRows } from '../../lib/messageCursor'
@@ -19,7 +19,7 @@ import ImageAnnotator from './ImageAnnotator'
 import TokenChips from './TokenChips'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
 import { getPermissionModesForCli, getModelsForCli, getEffortOptionsForCli } from '../../lib/constants'
-import { headerModelInfo, effortDefaultValue } from '../../lib/effort'
+import { headerModelInfo, effortDefaultValue, shortModelName } from '../../lib/effort'
 import LaunchSettingPicker from './LaunchSettingPicker'
 import { getSessionStatusMeta, hasSessionStarted, getSessionDisplayStatus } from '../../lib/sessionStatus'
 import { formatElapsed, isSessionWaiting, isSessionWorking, isTerminalVisibleSession } from '../../lib/sessionRuntime'
@@ -2146,35 +2146,25 @@ function getLatestStepPreview(steps) {
   return null
 }
 
-// Step titles read like a log of what happened, not like API calls.
-function toolTitle(name) {
+// Step titles read like a log of what happened (or is happening), not like
+// API calls. Covers Claude, Codex and Gemini tool names.
+const TOOL_TITLES = [
+  [/^(read|view|cat)$|read_file|read_many_files/, 'Read file', 'Reading file'],
+  [/^(edit|multiedit|str_replace|patch|replace)$|edit_file|apply_patch|notebook_?edit/, 'Edited file', 'Editing file'],
+  [/^(write|create)$|write_file|create_file/, 'Wrote file', 'Writing file'],
+  [/^(bash|shell|exec|terminal)$|run_command|shell_command|run_shell_command|exec_command/, 'Ran command', 'Running command'],
+  [/^(grep|glob|search|find|ls)$|search_files|search_file_content|list_dir|list_directory/, 'Searched files', 'Searching files'],
+  [/web_?fetch|^fetch$/, 'Fetched page', 'Fetching page'],
+  [/web_?search|google_web_search/, 'Searched the web', 'Searching the web'],
+  [/^(task|agent)$|subagent/, 'Ran an agent', 'Running an agent'],
+  [/todo|update_plan/, 'Updated to-dos', 'Updating to-dos'],
+]
+function toolTitle(name, running = false) {
   const n = String(name || '').toLowerCase()
-  if (/^(read|view|cat)$/.test(n) || /read_file/.test(n)) return 'Read file'
-  if (/^(edit|multiedit|str_replace|patch)/.test(n) || /edit_file|apply_patch/.test(n)) return 'Edited file'
-  if (/^(write|create)/.test(n) || /write_file|create_file/.test(n)) return 'Wrote file'
-  if (/^(bash|shell|exec|run_command|terminal)/.test(n)) return 'Ran command'
-  if (/^(grep|glob|search|find|ls)$/.test(n) || /search_files|list_dir/.test(n)) return 'Searched files'
-  if (/web_?fetch|^fetch$/.test(n)) return 'Fetched page'
-  if (/web_?search/.test(n)) return 'Searched the web'
-  if (/^(task|agent)$/.test(n) || /subagent/.test(n)) return 'Ran an agent'
-  if (/todo/.test(n)) return 'Updated to-dos'
-  return name ? `Used ${name}` : 'Used a tool'
-}
-
-// "claude-sonnet-4-5-20250929" → "Sonnet 4.5", like the chat apps name their models.
-function shortModelName(model, options = []) {
-  const id = String(model || '').trim()
-  if (!id) return 'Default'
-  const known = options.find((o) => o.value === id)
-  if (known?.short && known.short.length <= 24) return known.short
-  const claude = id.match(/^claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d+))?/i)
-  if (claude) return `${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
-  if (/^(opus|sonnet|haiku)$/i.test(id)) return id[0].toUpperCase() + id.slice(1)
-  const gpt = id.match(/^(gpt|o)-?(\d+(?:\.\d+)?)(?:-(mini|nano|codex|pro))?/i)
-  if (gpt) return `${gpt[1].toUpperCase()}-${gpt[2]}${gpt[3] ? ` ${gpt[3][0].toUpperCase()}${gpt[3].slice(1)}` : ''}`
-  const gemini = id.match(/^gemini-(\d+(?:\.\d+)?)-?(pro|flash)?/i)
-  if (gemini) return `Gemini ${gemini[1]}${gemini[2] ? ` ${gemini[2][0].toUpperCase()}${gemini[2].slice(1)}` : ''}`
-  return id.length > 24 ? `${id.slice(0, 22)}…` : id
+  const hit = TOOL_TITLES.find(([re]) => re.test(n))
+  if (hit) return running ? hit[2] : hit[1]
+  if (!name) return running ? 'Using a tool' : 'Used a tool'
+  return running ? `Using ${name}` : `Used ${name}`
 }
 
 function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false }) {
@@ -2201,15 +2191,17 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
     : ''
   const subtitle = searchSummary || shownPath || (command ? firstLines(command, 1) : '') || description || (lineMeta ? `${lineMeta} line${lineMeta === 1 ? '' : 's'}` : '')
   const canPreviewFile = shouldPreviewToolFile(name, input, command)
-  const edit = isObj && (typeof input.old_string === 'string' || typeof input.new_string === 'string')
-    ? { before: input.old_string || '', after: input.new_string || '' }
-    : isObj && typeof input.content === 'string' && /^(write|create)/i.test(name)
-      ? { before: '', after: input.content }
-      : null
+  const edit = isObj && Array.isArray(input.edits) && input.edits.length
+    ? { changes: input.edits.map((change) => ({ before: String(change?.old_string ?? ''), after: String(change?.new_string ?? '') })) }
+    : isObj && (typeof input.old_string === 'string' || typeof input.new_string === 'string')
+      ? { changes: [{ before: input.old_string || '', after: input.new_string || '' }] }
+      : isObj && typeof input.content === 'string' && /^(write|create)/i.test(name)
+        ? { changes: [{ before: '', after: input.content }] }
+        : null
 
   const extraFields = isObj
     ? Object.entries(input)
-      .filter(([key]) => !['description', 'summary', 'reason', 'command', 'cmd', 'shell_command', 'file_path', 'path', 'file', 'filename'].includes(key))
+      .filter(([key]) => !['description', 'summary', 'reason', 'command', 'cmd', 'shell_command', 'file_path', 'path', 'file', 'filename', ...(edit ? ['old_string', 'new_string', 'content', 'edits'] : [])].includes(key))
       .slice(0, 6)
     : []
 
@@ -2265,7 +2257,7 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
 
   return (
     <ProcessDisclosure
-      title={toolTitle(name)}
+      title={toolTitle(name, !toolResult && !isStale)}
       subtitle={subtitle}
       tone={tone}
       forceOpen={forceOpen}
@@ -2275,8 +2267,10 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
           : command
             ? <CompactCodePreview text={firstLines(command, 2)} lang="bash" />
             : edit
-              ? <CompactCodePreview text={firstLines(edit.after || edit.before, 2)} lang={filePreviewLang(null, path)} />
-              : null
+              ? <CompactCodePreview text={firstLines(edit.changes[0].after || edit.changes[0].before, 2)} lang={filePreviewLang(null, path)} />
+              : mainText
+                ? <CompactCodePreview text={firstLines(mainText, 2)} lang={isObj ? 'json' : null} />
+                : null
       }
     >
       {description ? <div className="mb-1.5 font-sans text-[12px] text-x-ink-secondary">{description}</div> : null}
@@ -2284,8 +2278,12 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
       {canPreviewFile && sessionId ? <FileCallPreview sessionId={sessionId} path={path} /> : null}
       {edit ? (
         <div className="ive-step-diff mb-2">
-          {edit.before ? <pre data-diff="del"><code>{edit.before}</code></pre> : null}
-          {edit.after ? <pre data-diff="add"><code>{edit.after}</code></pre> : null}
+          {edit.changes.map((change, index) => (
+            <div key={index} className="ive-step-diff-change">
+              {change.before ? <pre data-diff="del"><code>{change.before}</code></pre> : null}
+              {change.after ? <pre data-diff="add"><code>{change.after}</code></pre> : null}
+            </div>
+          ))}
         </div>
       ) : null}
       {command ? (
@@ -2297,7 +2295,7 @@ function ToolExecutionBlock({ step, sessionId, forceOpen = null, isStale = false
           <FullCodeBlock text={command} lang="bash" />
         </div>
       ) : null}
-      {rawInputText && !command && !edit && !searchSummary ? (
+      {rawInputText && !command && !edit ? (
         <div className="mb-2">
           <div className="mb-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-x-faint">
             <Code2 size={10} />
@@ -2588,14 +2586,14 @@ const ProcessFlowTranscriptRow = memo(function ProcessFlowTranscriptRow({ group,
 // The draft stays in the store (persistence, restore after a failed send,
 // quick start prefill). Handlers come through a ref that ChatPanel refreshes
 // on every render, so this memoized field never needs new props for them.
-const ComposerTextarea = memo(function ComposerTextarea({ sessionId, textareaRef, handlersRef, placeholder, disabled }) {
+const ComposerTextarea = memo(function ComposerTextarea({ sessionId, textareaRef, handlersRef, placeholder, disabled, maxHeight = 132 }) {
   const value = useStore((s) => s.sessionInputs[sessionId] || '')
   useLayoutEffect(() => {
     const el = textareaRef.current
     if (!el) return
     el.style.height = '0px'
-    el.style.height = `${Math.min(Math.max(el.scrollHeight, 32), 132)}px`
-  }, [value, textareaRef])
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 32), maxHeight)}px`
+  }, [value, textareaRef, maxHeight])
   return (
     <textarea
       ref={textareaRef}
@@ -4790,7 +4788,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
                 </>
               )}
 
-              <SessionPromptActions sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} onOpenTerminal={onOpenTerminal} />
+              <SessionPromptActions sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} onOpenTerminal={onOpenTerminal} keyboard={!inFlowComposer} />
 
               {showReplyPending ? (
                 <ReplyPending provider={cliType} label={!wsConnected ? 'Reconnecting… Your reply is still pending.' : 'Waiting for a reply…'} />
@@ -5192,6 +5190,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
                 handlersRef={composerHandlersRef}
                 placeholder={composerPlaceholder}
                 disabled={composerDisabled}
+                maxHeight={inFlowComposer ? 132 : 220}
               />
             </div>
             <div className="ive-composer-row">
