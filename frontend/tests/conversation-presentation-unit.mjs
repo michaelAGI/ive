@@ -21,7 +21,15 @@ test('two-choice permission exposes native refusal, not persistent approval', as
   assert.deepEqual(promptChoices({prompt}).allowSession, null)
   assert.equal(promptChoices({prompt}).deny, '2')
   const display=permissionPresentation(prompt)
-  assert.equal(display.description, 'Find Orbit and traffic projects')
+  // The request line is the command; the hook's note and the safety line are detail.
+  assert.equal(display.description, "ls -d */ Projects/*/ | grep -i 'orbit|traffic'")
+  assert.deepEqual(display.detailLines, ['Find Orbit and traffic projects', "Safety check not configured: missing API key 'api_key_gemini_api' (fail-closed)"])
+  assert.equal(display.summary, 'The assistant wants to run a command')
+  assert.equal(permissionPresentation(prompt, 'Claude').summary, 'Claude wants to run a command')
+  const plain = permissionPresentation(parseSessionPermissionPrompt(`Bash command\nnpm test\nRun the tests\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again for npm commands in demo\n  3. No\nEsc to cancel`), 'Claude')
+  assert.equal(plain.description, 'npm test')
+  assert.deepEqual(plain.detailLines, ['Run the tests'])
+  assert.deepEqual(plain.choices.map(c=>c.label), ['Allow once', 'Always allow npm commands in demo', 'Don’t allow'])
   assert.match(display.notice, /safety check needs setup/i)
   assert.deepEqual(display.choices.map(c=>c.label), ['Allow once', 'Don’t allow'])
   let sent

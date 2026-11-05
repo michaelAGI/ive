@@ -5,6 +5,18 @@ and under control. Run Claude Code, Codex and Gemini CLI sessions side by side,
 see what each one is doing, answer their questions and review their changes in
 one place. Everything runs on your own machine.
 
+### Chat and Dev
+
+Choose **Chat** for a conversation with Claude or Codex: start from a message,
+return to saved chats, answer permission requests and review changes inside the
+app. **Dev** adds project navigation, terminal tabs and a grid for parallel
+sessions. Switching views keeps the current session and draft, and the sidebar
+can be hidden in either view.
+
+Review shows the original request and selected changes. **Explain this** and
+**Why another agent?** provide context before you decide whether to launch a
+reviewer. [Read about Chat and Dev](CHAT-DEV-INTEGRATION.md).
+
 ### Terminals and sessions
 
 Open **New terminal** for a shell tab in your current project, or **New session**

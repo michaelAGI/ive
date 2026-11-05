@@ -1,5 +1,6 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { getTerminalPortalNode, getTerminalSlot, registerTerminalSlot } from '../../lib/terminalSlots'
+import { terminalControls } from '../../lib/terminalWriters'
 import useStore from '../../state/store'
 import { TerminalContextNotice } from '../session/SessionContextNotice'
 
@@ -10,8 +11,33 @@ import { TerminalContextNotice } from '../session/SessionContextNotice'
 //   mode: 'tile' | 'drawer' | 'full'
 export default function TerminalSlot({ sessionId, mode = 'full', focusOnMount = false, className = '', style }) {
   const ref = useRef(null)
+  const [tileVisible, setTileVisible] = useState(false)
+  const active = useStore(state => state.activeSessionId === sessionId)
+  // A user-selected tile must accept the very next key, before the async
+  // intersection callback runs. Other offscreen tiles stay parked.
+  const visible = mode !== 'tile' || tileVisible || (focusOnMount && active)
+
+  // Offscreen tiles retain their session and terminal buffer in KeepAlive's
+  // parking area. Only near-viewport tiles adopt the expensive live renderer.
+  // Full views and drawers are immediate, including newly created sessions.
+  useLayoutEffect(() => {
+    if (mode !== 'tile') return undefined
+    const el = ref.current
+    if (!el) return undefined
+    if (typeof IntersectionObserver === 'undefined') {
+      setTileVisible(true)
+      return undefined
+    }
+    setTileVisible(false)
+    const observer = new IntersectionObserver(([entry]) => {
+      setTileVisible(entry.isIntersecting)
+    }, { root: el.closest('[data-terminal-grid]'), rootMargin: '160px', threshold: 0 })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [sessionId, mode])
 
   useLayoutEffect(() => {
+    if (!visible) return undefined
     const el = ref.current
     const node = getTerminalPortalNode(sessionId)
     if (!el || !node) return undefined
@@ -22,7 +48,8 @@ export default function TerminalSlot({ sessionId, mode = 'full', focusOnMount = 
     if (focusOnMount && useStore.getState().activeSessionId === sessionId) {
       window.dispatchEvent(new Event('cc-focus-terminal'))
     }
-    const frame = requestAnimationFrame(() => window.dispatchEvent(new Event('cc-terminal-refit')))
+    // One slot reveal must not schedule a refit for every open terminal.
+    const frame = requestAnimationFrame(() => terminalControls.get(sessionId)?.refit?.())
     return () => {
       cancelAnimationFrame(frame)
       unregister()
@@ -38,15 +65,16 @@ export default function TerminalSlot({ sessionId, mode = 'full', focusOnMount = 
         document.querySelector('[data-terminal-parked]')?.appendChild(node)
       })
     }
-  }, [sessionId, mode, focusOnMount])
+  }, [sessionId, mode, focusOnMount, visible])
 
   return (
     <>
-    {mode !== 'drawer' && <TerminalContextNotice key={sessionId} sessionId={sessionId} />}
+    {visible && mode !== 'drawer' && <TerminalContextNotice key={sessionId} sessionId={sessionId} />}
     <div
       ref={ref}
       data-terminal-slot={sessionId}
       data-terminal-mode={mode}
+      data-terminal-visible={visible ? 'true' : 'false'}
       className={`ive-terminal-slot${className ? ` ${className}` : ''}`}
       style={style}
     />

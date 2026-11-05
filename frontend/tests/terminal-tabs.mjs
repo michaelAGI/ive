@@ -35,7 +35,7 @@ try {
     const project = { id: 'project', name: 'Project', path: '/isolated/terminal-project', default_worktree: 0 }
     const f = await createTourFixture(wrappedBrowser, {
       workspaces: [project], settings: { product_tour_version: '2', owner_name: 'Terminal QA' },
-      storage: { 'ive.onboarding.v2.owner': 'complete', 'ive.operator-desk': { openTabs: [], showHome: true, activeWorkspaceId: null } },
+      storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.onboarding.v2.owner': 'complete', 'ive.operator-desk': { openTabs: [], showHome: true, activeWorkspaceId: null } },
     })
     try {
       const { page } = f
@@ -120,7 +120,7 @@ try {
 
     const empty = await createTourFixture(wrappedBrowser, {
       workspaces: [], settings: { product_tour_version: '2', owner_name: 'Terminal QA' },
-      storage: { 'ive.operator-desk': { openTabs: [], showHome: true } },
+      storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': { openTabs: [], showHome: true } },
     })
     try {
       await empty.page.locator('[data-sidebar-new-chat]').waitFor()

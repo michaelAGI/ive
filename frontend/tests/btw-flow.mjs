@@ -9,12 +9,12 @@ const out = new URL('../../packaging/artifacts/btw-20261015/', import.meta.url).
 await mkdir(out, { recursive: true })
 let checks = 0
 try {
-  for (const width of [1440, 390]) {
+  for (const [mode, width] of [['dev', 1440], ['dev', 390], ['chat', 1440], ['chat', 390]]) {
     const f = await createTourFixture(browser, {
       origin: 'https://ive-guide.test', width, height: 960, settings: { product_tour_version: '2' },
       workspaces: [{ id: 'w', name: 'Customer website', path: '/isolated/website' }],
       sessions: ['s', 't'].map(id => ({ id, workspace_id: 'w', name: id === 's' ? 'Checkout task' : 'Search task', cli_type: 'claude', model: 'sonnet', permission_mode: 'default', status: 'working', agentState: 'working', pty_alive: true, session_type: 'worker', tags: [] })),
-      storage: { 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'chat' }, 'cc-gridColumns': '1' },
+      storage: { 'ive.experience-mode.v1': { mode, provider: 'claude' }, 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'chat' }, 'cc-gridColumns': '1' },
       messages: { s: [{ id: 'u', role: 'user', content: 'Implement the checkout.', created_at: '2026-10-15T10:00:00Z' }, { id: 'a', role: 'assistant', content: 'I am checking the existing payment flow.', created_at: '2026-10-15T10:00:01Z' }] },
     })
     const questions = [], jobs = new Map()

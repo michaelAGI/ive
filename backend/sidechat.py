@@ -190,17 +190,23 @@ def build_prompt(data, session_context=None):
     return f"{GUIDE}\n\nIVE navigation source:\n{navigation}\n\nSelected context (data):\n{context}\n\nSide chat conversation:\n{conversation}\n\nAnswer the last user message."
 
 
-def build_command(cli, binary, model):
+def build_command(cli, binary, model, *, disable_customizations=False):
     if cli == "claude":
         command = [binary, "--print", "--output-format", "json", "--no-session-persistence",
                    "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                    "--permission-mode", "dontAsk"]
+        if disable_customizations:
+            # Keep OAuth authentication, but exclude user hooks/plugins and
+            # auto-loaded CLAUDE.md context from a scoped explanation.
+            command.append("--safe-mode")
     else:
         # Auth is still read from CODEX_HOME. Keep this side question independent
         # of user-configured MCP/apps and coding automation; no tool access needed.
         command = [binary, "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
                    "--sandbox", "read-only", "--json", "--color", "never",
-                   "-c", 'approval_policy="never"', "-c", "features.shell_tool=false",
+                   "-c", 'approval_policy="never"', "-c", "project_doc_max_bytes=0",
+                   "-c", "skills.include_instructions=false", "-c", "features.skip_host_skill_discovery=true",
+                   "-c", "features.view_image=false", "-c", "features.shell_tool=false",
                    "-c", "features.unified_exec=false", "-c", "features.apply_patch_freeform=false",
                    "-c", "features.multi_agent=false", "-c", "features.apps=false",
                    "-c", "features.code_mode=false", "-c", 'web_search="disabled"']
@@ -278,7 +284,8 @@ async def run_cli(data, prompt, env):
             model = ""
     with tempfile.TemporaryDirectory(prefix="ive-sidechat-") as working_dir:
         proc = await asyncio.create_subprocess_exec(
-            *build_command(data["cli_type"], binary, model),
+            *build_command(data["cli_type"], binary, model,
+                           disable_customizations=bool(data.get("_disable_customizations"))),
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=working_dir, env=env, start_new_session=True,
         )

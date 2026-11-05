@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, webkit } from 'playwright'
+import { shortModelName } from '../src/lib/effort.js'
 import { createServer } from 'vite'
 
 const cliFeatures = JSON.parse(await readFile(new URL('./fixtures/cli-profiles.json', import.meta.url), 'utf8'))
@@ -53,6 +54,7 @@ async function setup({ hash = '', theme = 'light' } = {}) {
     localStorage.setItem('cc-soundEnabled', '0')
     localStorage.setItem('ive-theme.v2', theme)
     localStorage.setItem('cc-terminalBoardMode', '0')
+    localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev', provider: 'claude' }))
   }, theme)
   await context.routeWebSocket('**/ws', (socket) => socket.onMessage((raw) => {
     sent.push(String(raw))
@@ -118,7 +120,8 @@ try {
   await menu.waitFor()
   check('clicking partial command opens model choices', await input.inputValue() === '')
   await menu.getByRole('button', { name: new RegExp(testedModel) }).first().click()
-  await page.waitForFunction(model => document.querySelector('[data-testid="chat-header-model-value"]')?.textContent.includes(model), testedModel)
+  // The chip shows the short name ("Sonnet 4.5"), the picker the full id.
+  await page.waitForFunction(label => document.querySelector('[data-testid="chat-header-model-value"]')?.textContent.includes(label), shortModelName(testedModel))
   check('selection uses existing live model API', updates.some(x => x.path === '/sessions/s2' && x.patch.model === testedModel && x.patch.apply_live === true))
   await page.keyboard.press('Escape')
   await fill('/model ')

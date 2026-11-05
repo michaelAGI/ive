@@ -11,7 +11,7 @@ try {
     settings: { product_tour_version: '2' },
     workspaces: [{ id: 'w', name: 'Example', path: '/isolated/example' }],
     sessions: ['s', 't'].map(id => ({ id, workspace_id: 'w', name: `Task ${id}`, cli_type: 'claude', model: 'sonnet', status: 'waiting', agentState: 'waiting', pty_alive: true, session_type: 'worker', tags: [], attention: { kind: 'permission', title: 'Permission needed' } })),
-    storage: { 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'chat' } },
+    storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'chat' } },
   })
   await f.context.route('**/api/sessions/*/output**', route => route.fulfill({ json: { screen: 'Do you want to proceed?\n❯ 1. Yes\n  2. No\nEsc to cancel', text: '' } }))
   const p = f.page
@@ -40,7 +40,7 @@ try {
   await checkEnter('s', p.getByRole('button', { name: 'Expand terminal', exact: true }))
   await checkEnter('s', p.getByRole('button', { name: 'Restore small terminal', exact: true }))
   await p.getByRole('button', { name: 'Hide terminal — show overview', exact: true }).click()
-  await checkEnter('s', p.getByTitle('Toggle PTY Terminal Drawer', { exact: true }))
+  await checkEnter('s', p.locator('.ive-header').getByRole('button', { name: /^Terminal(?: \(.+\))?$/ }))
   await p.evaluate(() => { location.hash = '#board' })
   await p.locator('[data-board-screen]').waitFor()
   await checkEnter('t', p.locator('[data-grid-cell-session="t"]').getByTitle('Switch to Terminal View', { exact: true }))

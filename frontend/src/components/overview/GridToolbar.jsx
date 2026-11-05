@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Globe, FolderOpen, LayoutGrid, Columns2, Rows2, Grid2x2, Sliders } from 'lucide-react'
+import { Globe, FolderOpen, LayoutGrid, Columns2, Rows2, Grid2x2, Sliders, SquareTerminal } from 'lucide-react'
 import useStore from '../../state/store'
 import useEscapeToClose from '../../hooks/useEscapeToClose'
 import { IconButton } from '../ui'
@@ -19,6 +19,7 @@ export default function GridToolbar() {
   const gridTemplates = useStore((s) => s.gridTemplates)
   const activeGridTemplateId = useStore((s) => s.activeGridTemplateId)
   const gridAdjustMode = useStore((s) => s.gridAdjustMode)
+  const terminalBoardMode = useStore((s) => s.terminalBoardMode)
   const [open, setOpen] = useState(false)
   useEscapeToClose(open, () => setOpen(false))
 
@@ -29,6 +30,11 @@ export default function GridToolbar() {
 
   return (
     <div className="ive-grid-toolbar" data-grid-toolbar="">
+      <button type="button" className="ive-header-btn" aria-label="Terminal grid" aria-pressed={terminalBoardMode}
+        title="Use terminals as the default tile view. Individual tile choices are kept."
+        onClick={() => useStore.getState().setTerminalBoardMode(!terminalBoardMode)}>
+        <SquareTerminal size={15} aria-hidden="true" /><span className="ive-header-btn-label">Terminals</span>
+      </button>
       <div className="ive-scope-toggle" role="group" aria-label="Session tab scope">
         <IconButton icon={Globe} label="Global Dashboard (All workspaces)" iconSize={15} data-chrome-button size="sm"
           onClick={() => setTabScope('project')} selected={tabScope === 'project'} aria-pressed={tabScope === 'project'} />

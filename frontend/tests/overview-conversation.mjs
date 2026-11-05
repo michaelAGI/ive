@@ -19,7 +19,7 @@ Do you want to proceed?
 Esc to cancel · Tab to amend`
 let count = 0
 async function fixture(screen = two, theme = 'light', width = 1440, expectLoading = false) {
- const f=await createTourFixture(browser,{width,height:960,theme,settings:{product_tour_version:'2'},workspaces:[{id:'w',name:'Orbit',path:'/isolated/orbit'}],sessions:[{id:'s',workspace_id:'w',name:'Orbit traffic software',cli_type:'claude',model:'sonnet',permission_mode:'auto',status:'waiting',agentState:'waiting',pty_alive:true,session_type:'worker',archived:0,tags:[],attention:{kind:'permission',title:'Permission needed'}}],storage:{'ive.operator-desk':{activeWorkspaceId:'w',activeSessionId:'s',openTabs:['s'],showHome:false,activeNavGroup:'work'},'ive.grid-session-views':{s:'chat'},'cc-gridColumns':'1'},messages:{s:[
+ const f=await createTourFixture(browser,{width,height:960,theme,settings:{product_tour_version:'2'},workspaces:[{id:'w',name:'Orbit',path:'/isolated/orbit'}],sessions:[{id:'s',workspace_id:'w',name:'Orbit traffic software',cli_type:'claude',model:'sonnet',permission_mode:'auto',status:'waiting',agentState:'waiting',pty_alive:true,session_type:'worker',archived:0,tags:[],attention:{kind:'permission',title:'Permission needed'}}],storage:{'ive.experience-mode.v1':{mode:'dev',provider:'claude'},'ive.operator-desk':{activeWorkspaceId:'w',activeSessionId:'s',openTabs:['s'],showHome:false,activeNavGroup:'work'},'ive.grid-session-views':{s:'chat'},'cc-gridColumns':'1'},messages:{s:[
  {id:'user',session_id:'s',role:'user',content:'Find the Orbit traffic project and help me continue working on it.',created_at:'2026-10-14T09:56:00Z'},
  {id:'empty',session_id:'s',role:'assistant',content:JSON.stringify([{type:'thinking',thinking:''}]),created_at:'2026-10-14T09:56:01Z'},
  {id:'reply',session_id:'s',role:'assistant',content:'I’ll find the project folder and check where you left off.',created_at:'2026-10-14T09:56:02Z'},
@@ -117,13 +117,20 @@ Do you want to proceed?
 Esc to cancel · Tab to amend`)
  assert.equal(await hook.page.getByRole('button',{name:'Open terminal to review',exact:true}).count(),0)
  assert.equal(await hook.page.getByRole('button',{name:'Allow once',exact:true}).count(),1)
- assert.equal(await hook.page.getByRole('button',{name:"Yes, and don't ask again for ToolSearch commands in /test/project",exact:true}).count(),1)
+ assert.equal(await hook.page.getByRole('button',{name:"Always allow ToolSearch commands in /test/project",exact:true}).count(),1)
  assert.equal(await hook.page.locator('.ive-chat-question-notice').isVisible(),true)
  await hook.page.getByText('View exact request',{exact:true}).click()
  assert.match(await hook.page.locator('.ive-chat-request-details pre').innerText(),/missing API key/)
  await hook.page.screenshot({path:`${out}toolsearch-${engine}.png`,fullPage:true})
  await hook.page.getByRole('button',{name:'Don’t allow',exact:true}).click()
  await hook.page.getByRole('heading',{name:'Reply sent',exact:true}).waitFor()
+ // Digits answer like in the terminal: only in the full session view, with the
+ // focus outside editable fields. A digit in an empty draft remains text.
+ const keys=await fixture(two);await keys.page.goto('http://ive-guide.test/#session-s');await keys.page.locator('[data-session-view="s"] [data-session-prompt-actions]').waitFor();await keys.page.getByRole('button',{name:'Allow once',exact:true}).waitFor()
+ await keys.page.locator('[data-session-view="s"] [data-session-prompt-actions]').getByRole('heading').click();await keys.page.keyboard.press('1');await keys.page.getByRole('heading',{name:'Reply sent',exact:true}).waitFor();assert.equal(keys.inputs.length,1);assert.equal(keys.inputs[0].message,'1');count++;await keys.context.close()
+ const typed=await fixture(two);await typed.page.goto('http://ive-guide.test/#session-s');await typed.page.getByRole('button',{name:'Allow once',exact:true}).waitFor()
+ const draft=typed.page.locator('[data-session-view="s"] form.x-composer textarea');await draft.fill('note to self');await draft.press('1');await typed.page.waitForTimeout(500);assert.equal(typed.inputs.length,0,'a digit typed into a draft is text');assert.equal(await draft.inputValue(),'note to self1');count++;await typed.context.close()
+ const board=await fixture(two);await board.page.keyboard.press('1');await board.page.waitForTimeout(500);assert.equal(board.inputs.length,0,'Board tiles take no digit shortcuts');count++;await board.context.close()
  assert.equal(hook.inputs.length,1);assert.equal(hook.inputs[0].message,'3')
  assert.equal(hook.errors.length,0);count++;await hook.context.close()
  console.log(JSON.stringify({engine,passed:count}))

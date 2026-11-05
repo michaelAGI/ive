@@ -14,6 +14,7 @@ import { beginReplyWait, hasNewReply } from '../lib/replyPending'
 const OVERVIEW_MODE_KEY = 'ive.overview-mode'
 const BOARD_FILTERS_KEY = 'ive.board-filters'
 const TERMINAL_DRAWER_KEY = 'ive.terminal-drawer'
+const SESSION_BRIEF_KEY = 'ive.session-brief.v1'
 const TERMINAL_DRAWER_DEFAULT_HEIGHT = 320
 const TERMINAL_DRAWER_MIN_HEIGHT = 160
 
@@ -171,6 +172,14 @@ const useStore = create((set, get) => ({
     writeJson(BOARD_FILTERS_KEY, next)
     set({ boardFilters: next })
   },
+  // Session overview (status, latest reply, changed files) above the chat;
+  // off by default so the conversation starts under the header.
+  sessionBriefOpen: !!readJson(SESSION_BRIEF_KEY, {}).open,
+  toggleSessionBrief: (force) => {
+    const next = typeof force === 'boolean' ? force : !get().sessionBriefOpen
+    writeJson(SESSION_BRIEF_KEY, { open: next })
+    set({ sessionBriefOpen: next })
+  },
   // Terminal per session: absent = chat, true = drawer, 'full' = expanded.
   terminalDrawer: readJson(TERMINAL_DRAWER_KEY, {}).drawer || {},
   terminalDrawerHeight: Math.max(TERMINAL_DRAWER_MIN_HEIGHT, Number(readJson(TERMINAL_DRAWER_KEY, {}).height) || TERMINAL_DRAWER_DEFAULT_HEIGHT),
@@ -289,7 +298,9 @@ const useStore = create((set, get) => ({
     // Tell all mounted terminals to re-measure
     window.dispatchEvent(new Event('cc-terminal-refit'))
   },
-  terminalBoardMode: localStorage.getItem('cc-terminalBoardMode') === '1',
+  // Dev's board starts with terminals; an explicit previous tile preference
+  // remains authoritative. Chat mode has its own focused conversation view.
+  terminalBoardMode: localStorage.getItem('cc-terminalBoardMode') !== '0',
   setTerminalBoardMode: (enabled) => {
     localStorage.setItem('cc-terminalBoardMode', enabled ? '1' : '0')
     set({ terminalBoardMode: enabled })

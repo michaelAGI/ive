@@ -1309,9 +1309,7 @@ pre {
   /* Session composer: the message gets its own full-width line and the
      attach / dictate / stop / terminal / send buttons sit in a row below it,
      instead of squeezing the text into a 40px column at 320px. */
-  form.x-composer:not(:has([data-home-composer])) { flex-wrap: wrap; }
-  form.x-composer:not(:has([data-home-composer])) > textarea { order: -1; flex: 1 0 100%; }
-  form.x-composer:not(:has([data-home-composer])) > button:first-of-type { margin-right: auto; }
+  /* The session message box (.ive-composer) already stacks its text above its buttons. */
 }
 
 /* Overview tile preview (Terminal.jsx): the whole Session-level terminal,
@@ -1963,3 +1961,120 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 @media (forced-colors: active) {
   :root, html[data-theme] { --x-focus: CanvasText; }
 }
+
+/* ── Session as a chat (ChatGPT / Claude layout on top of the terminal) ─────
+   The conversation starts right under the app header in one centred column,
+   messages carry no chrome, the message box holds model and agent mode, and
+   the agent's permission dialog is a card with the same 1 / 2 / 3 choices as
+   the terminal. Tiles and the phone keep their compact strip. */
+.ive-header[data-session-header] .ive-header-address { display: none; }
+.ive-header[data-session-header] .ive-header-slot--actions { flex: none; }
+.ive-header[data-session-header] .ive-crumb-parent { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ive-header > [data-new-terminal-button] { flex-shrink: 0; }
+.ive-session-header-actions { display: flex; align-items: center; gap: 2px; }
+.ive-header-usage { color: var(--x-muted); font-size: 12px; cursor: default; font-variant-numeric: tabular-nums; }
+.ive-header-usage:hover { background: transparent; color: var(--x-ink-secondary); }
+
+.ive-conversation-layout { max-width: 48rem; }
+.ive-conversation-transcript { padding: 12px 0 4px; }
+.ive-conversation-content { font-size: 15px; line-height: 1.7; }
+.ive-conversation-content pre { border-radius: 10px; }
+.ive-conversation-message { margin: 0 0 28px; }
+.ive-conversation-message.is-user { max-width: 78%; }
+.ive-conversation-message.is-user .ive-conversation-content { padding: 10px 18px; border-radius: 22px; background: var(--x-surface-2); }
+.ive-conversation-message.is-assistant { padding: 0; }
+.ive-conversation-message-actions { min-height: 20px; margin-top: 2px; }
+.ive-conversation-message.is-user .ive-conversation-message-actions { margin-top: 4px; padding-right: 2px; }
+.ive-conversation-message-actions time { display: none; }
+.ive-conversation-process { margin-bottom: 28px; }
+.ive-conversation-process > div > .mt-2 { margin-top: 4px; font-size: 15px; line-height: 1.7; }
+.ive-conversation-activity { margin: 0 0 10px; }
+.ive-conversation-activity-toggle { font-size: 13px; min-height: 28px; }
+.ive-activity-steps { margin: 2px 0 6px 6px; padding: 2px 0 2px 14px; border-left: 2px solid var(--x-line); display: flex; flex-direction: column; gap: 6px; }
+.ive-activity-steps .ive-step-head { font-family: var(--font-sans); font-size: 12.5px; text-transform: none; letter-spacing: 0; }
+.ive-activity-steps > div > div { border-color: var(--x-line-subtle); border-left-width: 1px !important; border-left-color: var(--x-line-subtle) !important; border-radius: 8px; }
+.ive-activity-steps pre, .ive-activity-steps code { font-size: 12px; }
+
+/* The message box. */
+.ive-composer { display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 8px 16px; border-radius: 22px !important; border: 1px solid var(--x-line-strong) !important; background: var(--x-bg) !important; box-shadow: 0 2px 14px rgba(14, 16, 20, .06), 0 0 0 1px transparent !important; backdrop-filter: none !important; }
+.ive-composer:focus-within { border-color: var(--x-ink-secondary) !important; box-shadow: 0 2px 14px rgba(14, 16, 20, .08) !important; }
+html[data-theme="dark"] .ive-composer { box-shadow: 0 2px 14px rgba(0, 0, 0, .35) !important; }
+.ive-composer--compact { padding: 6px 6px 6px 12px; border-radius: 16px !important; }
+.ive-composer-field { display: flex; min-width: 0; }
+.ive-composer-field textarea { width: 100%; font-size: 15px !important; line-height: 1.55 !important; padding: 3px 0 !important; min-height: 26px !important; max-height: 220px !important; }
+@media (min-width: 768px) { .ive-composer--compact .ive-composer-field textarea { font-size: 13px !important; max-height: 132px !important; } }
+.ive-composer-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.ive-composer-tools { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.ive-composer-settings { display: flex; align-items: center; gap: 2px; margin-left: auto; min-width: 0; overflow: hidden; }
+.ive-composer-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 6px; }
+.ive-composer--compact .ive-composer-actions { margin-left: auto; }
+.ive-composer-icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; color: var(--x-muted); transition: background-color .08s var(--x-ease), color .08s var(--x-ease); }
+.ive-composer-icon:hover:not(:disabled), .ive-composer-icon[aria-pressed="true"] { background: var(--x-hover); color: var(--x-ink); }
+.ive-composer-icon:disabled { opacity: .4; cursor: not-allowed; }
+.ive-composer-send { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; background: var(--x-ink); color: var(--x-bg); transition: opacity .08s var(--x-ease), transform .08s var(--x-ease); }
+.ive-composer-send:hover:not(:disabled) { opacity: .85; }
+.ive-composer-send:active:not(:disabled) { transform: scale(.96); }
+.ive-composer-send:disabled { opacity: .25; cursor: not-allowed; }
+.ive-composer-stop { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--x-line-strong); color: var(--x-ink); background: var(--x-bg); }
+.ive-composer-stop:hover:not(:disabled) { background: var(--x-hover); }
+.ive-composer-stop:disabled { opacity: .4; cursor: not-allowed; }
+/* Model, effort and agent mode as quiet chips inside the box. */
+.ive-composer-settings .ive-strip-launch > button { height: 30px; padding: 0 8px 0 7px; gap: 6px; border-color: transparent; background: transparent; border-radius: 999px; font-family: var(--font-sans); font-size: 12.5px; color: var(--x-ink-secondary); }
+.ive-composer-settings .ive-strip-launch > button:hover, .ive-composer-settings .ive-strip-launch > button[aria-expanded="true"] { background: var(--x-hover); border-color: transparent; color: var(--x-ink); }
+.ive-composer-settings .ive-strip-launch .ive-strip-label { display: none; }
+.ive-composer-settings .ive-strip-launch .font-semibold { font-weight: 500; }
+.ive-composer-settings .ive-strip-launch .font-mono { font-family: var(--font-sans); }
+.ive-composer:focus-visible, .ive-composer-icon:focus-visible, .ive-composer-send:focus-visible, .ive-composer-stop:focus-visible { outline: 1px solid var(--x-focus); outline-offset: 2px; }
+.ive-composer-dock { max-width: 48rem; }
+@media (max-width: 640px) {
+  .ive-composer { padding: 8px 8px 6px 12px; border-radius: 18px !important; }
+  .ive-composer-settings { display: none; }
+}
+@media (max-width: 767px) {
+  .ive-composer .ive-composer-icon, .ive-composer .ive-composer-send, .ive-composer .ive-composer-stop { width: 40px; height: 40px; min-width: 40px; min-height: 40px; }
+}
+
+/* Permission card: what the agent wants, then the same choices as the terminal. */
+.ive-chat-question { margin: 4px 0 28px; padding: 16px 18px 14px; border-radius: 16px; }
+.ive-chat-question-heading { align-items: flex-start; gap: 12px; }
+.ive-chat-question-heading > svg { margin-top: 2px; color: var(--x-warning); }
+.ive-chat-question[data-answered] .ive-chat-question-heading > svg { color: var(--x-good); }
+.ive-chat-question-titles { min-width: 0; flex: 1; }
+.ive-chat-question-titles h3 { font-size: 15px; }
+.ive-chat-question-summary { margin: 2px 0 0 !important; color: var(--x-muted); font-size: 13px; }
+.ive-chat-question-request { margin: 12px 0 0; padding: 12px 14px; border-radius: 10px; background: var(--x-surface-2); }
+.ive-chat-question-request .ive-chat-question-description { margin: 0; color: var(--x-ink); font: 500 13px/1.6 var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.ive-chat-question-detail { margin: 6px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--x-ink-secondary); font: 12.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ive-chat-question-detail > span { display: block; min-height: 1.2em; }
+.ive-chat-question-detail[data-long] { max-height: 240px; }
+.ive-chat-question-choices { gap: 8px; margin-top: 14px; }
+.ive-chat-question-choices button { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; padding: 7px 10px 7px 14px; border-radius: 10px; font-weight: 500; }
+.ive-chat-question-choices button kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); font: 11px var(--font-mono); opacity: .7; }
+.ive-chat-question-choices button[data-choice-kind="allow"] kbd { border-color: color-mix(in srgb, var(--x-bg) 40%, transparent); }
+.ive-chat-question-choices button[data-choice-kind="persistent"] { order: 3; flex-basis: 100%; padding-left: 8px; font-weight: 400; }
+.ive-chat-request-details { margin: 12px 0 0; }
+.ive-chat-request-details summary { color: var(--x-faint); }
+.ive-chat-request-details summary:hover { color: var(--x-ink-secondary); }
+.ive-chat-question .ive-chat-reply-status { margin-top: 10px; }
+.ive-composer-settings [data-testid="chat-header-effort"] .ive-strip-label { display: inline; color: var(--x-faint); }
+.ive-step-diff { display: flex; flex-direction: column; gap: 4px; }
+.ive-step-diff pre { margin: 0; padding: 8px 10px; max-height: 18rem; overflow: auto; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
+.ive-step-diff pre[data-diff="del"] { background: var(--x-diff-del); }
+.ive-step-diff pre[data-diff="add"] { background: var(--x-diff-add); }
+
+/* Session header actions: labels from 1100px, the counter only when there is room. */
+.ive-session-header-actions { flex-shrink: 1; min-width: 0; overflow: hidden; }
+.ive-session-header-actions .ive-header-btn { flex-shrink: 0; }
+@media (min-width: 1100px) { .ive-session-header-actions .ive-header-btn-label { display: inline; } }
+@media (max-width: 1180px) { .ive-header-usage { display: none; } }
+/* Phone: 16px in the box (iOS zoom guard), finger-sized choices on the card,
+   wider bubbles. These sit after the desktop rules on purpose. */
+@media (max-width: 767px) {
+  .ive-composer .ive-composer-field textarea { font-size: 16px !important; }
+  .ive-chat-question-choices button, .ive-chat-icon-button { min-height: 40px; }
+}
+@media (max-width: 640px) {
+  .ive-conversation-message.is-user { max-width: 92%; }
+  .ive-chat-question { padding: 14px; }
+}
+.ive-step-diff-change { display: flex; flex-direction: column; gap: 4px; }

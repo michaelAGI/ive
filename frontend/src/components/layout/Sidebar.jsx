@@ -512,49 +512,6 @@ export default function Sidebar({ filter = '' }) {
   }
 
 
-  // The one initial loader: workspaces, their sessions, tasks, templates,
-  // tab groups, prompts, cascades and the CLI profiles.
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
-    try {
-      const wsList = await api.getWorkspaces()
-      useStore.getState().setWorkspaces(wsList)
-      // Auto-set activeWorkspaceId if not yet set so that features like
-      // skill install have a valid workspace context from the start.
-      if (wsList.length > 0 && !useStore.getState().activeWorkspaceId) {
-        useStore.getState().setActiveWorkspace(wsList[0].id)
-      }
-      const sessResults = await Promise.all(
-        wsList.map((ws) => api.getSessions(ws.id).catch(() => []))
-      )
-      for (let i = 0; i < wsList.length; i++) {
-        useStore.getState().loadSessions(sessResults[i])
-        setExpanded((p) => ({ ...p, [wsList[i].id]: true }))
-      }
-      // Eagerly load tasks for all workspaces so the auto-oversight
-      // nudge gate (useWebSocket session_idle handler) can check whether
-      // an idle worker actually has an active task assigned.
-      const allTasks = await api.getTasks()
-      if (Array.isArray(allTasks)) useStore.getState().loadTasks(allTasks)
-      // Grid templates are tiny and used the moment the user opens the layout dropdown.
-      useStore.getState().loadGridTemplates()
-      // Tab groups for one-click tab set switching.
-      useStore.getState().loadTabGroups()
-      // Prompt cache backs @prompt:<name> token expansion + the chip preview.
-      useStore.getState().loadPrompts()
-      useStore.getState().loadCascades()
-      // CLI profiles drive model/mode/effort dropdowns from backend data.
-      api.getCliFeatures().then((data) => {
-        if (data?.profiles) useStore.getState().loadCliProfiles(data.profiles)
-      }).catch(() => {})
-    } catch (e) {
-      console.error('Failed to load data:', e)
-    }
-  }
-
   const handleDeleteSession = async (e, sessionId) => {
     e.stopPropagation()
     await deleteSessionWithConfirm(sessionId)

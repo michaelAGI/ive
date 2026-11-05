@@ -31,6 +31,15 @@
   outline-offset: 2px;
 }
 
+/* Once navigation is hidden, make its recovery action explicit rather than
+   leaving a small unexplained icon in the conversation header. */
+.ive-header .ive-sidebar-toggle[aria-expanded="false"] {
+  gap: 6px;
+  padding: 0 8px;
+  background: var(--x-surface);
+}
+.ive-header .ive-sidebar-toggle[aria-expanded="false"] > span { display: inline; }
+
 /* Keep the recovery control first and full-sized even in a crowded app bar. */
 @media (max-width: 1535px) {
   .ive-sidebar-toggle > span { display: none; }

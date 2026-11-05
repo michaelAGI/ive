@@ -60,7 +60,7 @@ function MenuItems({ items }) {
 }
 
 // Full menu of the project tree.
-export default function SessionContextMenu({ x, y, session, onClose, onOpenSummary }) {
+export default function SessionContextMenu({ x, y, session, onClose, onOpenSummary, conversation = false }) {
   const handleRename = () => { onClose(); requestSessionRename(session.id) }
   const handleCopyOutput = async () => {
     try {
@@ -77,7 +77,7 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
     onClose()
   }
   const handleStop = () => { useStore.getState().stopSession(session.id); onClose() }
-  const handleOpen = () => { useStore.getState().openSession(session.id); onClose() }
+  const handleOpen = () => { useStore.getState().goSession(session.id, { autoStart: !conversation }); onClose() }
   const handleExport = () => { window.open(`/api/sessions/${session.id}/export`, '_blank'); onClose() }
   const handleDelete = async () => { onClose(); await deleteSessionWithConfirm(session.id) }
   const handleArchive = async () => {
@@ -86,7 +86,7 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
     try {
       await api.updateSession(session.id, { archived: 0 })
       useStore.getState().setSessionArchived(session.id, 0)
-      useStore.getState().openSession(session.id)
+      useStore.getState().openSession(session.id, { autoStart: !conversation })
     } catch (err) {
       useStore.getState().addNotification({ type: 'warning', message: `Could not restore "${session.name}": ${err?.message || 'unknown error'}` })
     }
@@ -108,15 +108,15 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
   const items = [
     { icon: ExternalLink, label: 'Open', action: handleOpen },
     { icon: Pencil, label: 'Rename', action: handleRename },
-    { icon: CopyPlus, label: 'Clone', action: handleClone },
-    { icon: Sparkles, label: 'Learn from this', action: handleLearn },
+    ...(!conversation ? [{ icon: CopyPlus, label: 'Clone', action: handleClone },
+    { icon: Sparkles, label: 'Learn from this', action: handleLearn }] : []),
     null,
-    { icon: ClipboardCopy, label: 'Copy output', action: handleCopyOutput },
+    ...(!conversation ? [{ icon: ClipboardCopy, label: 'Copy output', action: handleCopyOutput }] : []),
     { icon: Copy, label: 'Copy last message', action: handleCopyMessages },
     { icon: Download, label: 'Export', action: handleExport },
     null,
     ...(onOpenSummary ? [{ icon: FileText, label: 'Summary', action: handleOpenSummary }] : []),
-    { icon: session.archived ? ArchiveRestore : Archive, label: session.archived ? 'Restore session' : 'Close session', action: handleArchive },
+    { icon: session.archived ? ArchiveRestore : Archive, label: session.archived ? (conversation ? 'Restore chat' : 'Restore session') : conversation ? 'Archive chat' : 'Close session', action: handleArchive },
     null,
     ...(isRunning ? [{ icon: Square, label: 'Stop', action: handleStop }] : []),
     { icon: Trash2, label: 'Delete', action: handleDelete, danger: true },

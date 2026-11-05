@@ -3,6 +3,7 @@ import { offerUndo } from './undoAction'
 // The backend starts the agent in the quick start root (default ~/Projekte);
 // the agent finds the project itself and the session can be attached later.
 import useStore from '../state/store'
+import useExperienceMode from '../state/experienceMode'
 import { api } from './api'
 import { getCliTypes, getDefaultModel, getModelsForCli } from './constants'
 import { sendTerminalCommand } from './terminal'
@@ -110,6 +111,13 @@ export function currentProjectId(store = useStore.getState()) {
  * left out, the current project is used.
  */
 export function openQuickStart(options) {
+  if (useExperienceMode.getState().mode === 'chat') {
+    if (options && Object.prototype.hasOwnProperty.call(options, 'workspaceId')) useExperienceMode.getState().setWorkspaceId(options.workspaceId)
+    useStore.setState({ quickStartOpen: false, newSessionWorkspaceId: null })
+    useStore.getState().goHome()
+    requestAnimationFrame(() => window.dispatchEvent(new Event('ive-focus-new-chat')))
+    return
+  }
   const target = options && Object.prototype.hasOwnProperty.call(options, 'workspaceId')
     ? (options.workspaceId || null)
     : currentProjectId()
@@ -256,9 +264,11 @@ let directStart = null
  * Home composer Enter: a conversation in the shown project (or the start
  * folder) with the last used agent. One start at a time.
  */
-export function startDirectSession({ text, workspaceId }) {
+export function startDirectSession({ text, workspaceId, cliType }) {
   if (directStart) return directStart
-  const { cli, model } = lastAgentChoice()
+  const last = lastAgentChoice()
+  const cli = cliType || last.cli
+  const model = cli === last.cli ? last.model : getDefaultModel(cli)
   directStart = startQuickSession({ text, cliType: cli, model, workspaceId })
     .finally(() => { directStart = null })
   return directStart
