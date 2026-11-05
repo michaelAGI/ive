@@ -324,7 +324,7 @@ export default function CommandPalette({ onClose, onAction, initialQuery = '' })
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[14vh] bg-x-scrim backdrop-blur-[4px]" onClick={onClose}>
+    <div data-command-palette="" className="fixed inset-0 z-50 flex items-start justify-center pt-[14vh] bg-x-scrim backdrop-blur-[4px]" onClick={onClose}>
       <div
         className="w-[520px] x-panel shadow-x-3 overflow-hidden scale-in"
         onClick={(e) => e.stopPropagation()}

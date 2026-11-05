@@ -19,6 +19,10 @@ export default function TerminalTabs() {
   const tabs = ids.map((id) => sessions[id]).filter((s) => s && !s.archived)
   useEffect(() => { activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) }, [activeId, ids])
   if (!tabs.length) return null
+  // One open chat is the common case: the conversation starts right under the
+  // header, like a chat app. The bar appears for terminals and once a second
+  // tab is open (the sidebar and Command-1..9 still switch sessions).
+  if (tabs.length < 2 && !tabs.some(isShellSession)) return null
   return (
     <div className="ive-terminal-tabs" data-terminal-tabs>
       <div className="ive-terminal-tabs-list" role="tablist" aria-label="Open terminals and sessions">
