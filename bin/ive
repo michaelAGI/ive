@@ -299,7 +299,7 @@ update() {
   fi
   [ -z "$was_running" ] || stop
 
-  if ! git -C "$IVE_DIR" merge --ff-only --quiet '@{u}' || ! bash "$IVE_DIR/install.sh"; then
+  if ! git -C "$IVE_DIR" merge --ff-only --quiet '@{u}' || ! IVE_INSTALL=source bash "$IVE_DIR/install.sh"; then
     [ -z "$was_running" ] || echo "Update failed. IVE is stopped; start it again with: ive" >&2
     exit 1
   fi
