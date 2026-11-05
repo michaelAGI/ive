@@ -36,6 +36,8 @@ main() {
     Darwin|Linux) ;;
     *) fail "IVE runs on macOS and Linux." ;;
   esac
+  # sysctl and spctl live in /usr/sbin, which cron or a bare PATH leaves out.
+  if [ "$(uname -s)" = Darwin ]; then PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; fi
 
   # install.sh asks whether this machine gets the app.
   if [ "${1:-}" = --mac-app-check ]; then
@@ -179,14 +181,17 @@ finish_mac_app() {
   fi
   say ""
   say "IVE $version is installed in $(dirname "$app")."
-  say "Run this command again to update it. To remove IVE, quit it, run"
+  say "To update, run the installer again. To remove IVE, quit it, run"
   say "  \"$app/Contents/Resources/backend/ive-backend\" --remove-hooks"
   say "and drag IVE to the Trash."
   local source_dir="${IVE_DIR:-$HOME/.ive}"
   if [ -d "$source_dir/.git" ] && [ -f "$source_dir/bin/ive" ]; then
     say ""
-    say "Your earlier terminal install in $source_dir is not needed anymore."
-    say "Remove it with:  $source_dir/bin/ive uninstall"
+    say "Your earlier terminal install in $source_dir is separate from the app and keeps its own projects."
+    if [ -f "$source_dir/.ive-team-state/source-build" ] || ! grep -q uses_mac_app "$source_dir/bin/ive"; then
+      say "Until you remove it, its 'ive' command starts it in a browser."
+    fi
+    say "To remove it, run this and then reopen the app, which sets its hooks again:  $(printf %q "$source_dir")/bin/ive uninstall"
   fi
 }
 

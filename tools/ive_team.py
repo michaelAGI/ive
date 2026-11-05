@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -243,11 +244,18 @@ def selected_environment(root: Path, inherited: Mapping[str, str]) -> dict[str, 
     return env
 
 
+def _source_install_command(root: Path) -> str:
+    return f"IVE_INSTALL=source bash {shlex.quote(str(root))}/install.sh"
+
+
 def validate_state(root: Path, *, require_initialized: bool = False) -> Path:
     state = _inside(root, PROFILE["state_directory"])
     if not state.exists():
         if require_initialized:
-            raise ProfileError("Run install.sh first to initialize this installation's fresh state")
+            raise ProfileError(
+                f"This folder has no build yet. Run bash {shlex.quote(str(root))}/install.sh first. "
+                "On a Mac with Apple silicon that installs the Mac app; IVE_INSTALL=source builds this folder instead."
+            )
         return state
     if not state.is_dir():
         raise ProfileError("The installation state path is not a directory")
@@ -274,13 +282,13 @@ def initialize_state(root: Path) -> Path:
 
 def validate_frontend(root: Path) -> None:
     if not _inside(root, "frontend/dist/index.html").is_file():
-        raise ProfileError("Frontend is not built; run install.sh")
+        raise ProfileError(f"Frontend is not built; run {_source_install_command(root)}")
     selection = local_configuration(root)
     expected = {**BUILD_PROFILE, "extensions": selection["extensions"]}
     if selection["fingerprints"]:
         expected["product_fingerprints"] = selection["fingerprints"]
     if _read_json(_inside(root, "frontend/dist/ive-build-profile.json")) != expected:
-        raise ProfileError("Frontend/backend profile mismatch; rebuild using install.sh")
+        raise ProfileError(f"Frontend/backend profile mismatch; rebuild using {_source_install_command(root)}")
 
 
 def validate_node_version(value: str) -> None:
@@ -310,7 +318,8 @@ def run_plan(root: Path, server_args: Sequence[str]) -> dict[str, object]:
 
 REMOVE_HOOKS = (
     "import hook_installer as h; "
-    "h.uninstall_all(); h.uninstall_safety_gate_hooks(); h.uninstall_own_avcp_hooks(); "
+    "h.uninstall_all(only_this_install=True); h.uninstall_safety_gate_hooks(only_this_install=True); "
+    "h.uninstall_own_avcp_hooks(); "
     "import avcp_installer as a; a.uninstall_avcp(only_this_install=True)"
 )
 
@@ -327,7 +336,7 @@ def remove_hooks(root: Path, env: Mapping[str, str]) -> None:
     python = str(executable) if os.access(executable, os.X_OK) else sys.executable
     if subprocess.run([python, "-s", "-c", REMOVE_HOOKS], cwd=root / "backend", env=env).returncode:
         raise ProfileError("Could not remove IVE's hooks (see above); nothing was deleted")
-    print("Removed IVE hooks from the Claude Code, Codex and Gemini CLI settings.")
+    print("Removed this folder's IVE hooks from the Claude Code, Codex and Gemini CLI settings.")
 
 
 def _redacted(step: Mapping[str, object]) -> dict[str, object]:
@@ -383,12 +392,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             for step in steps:
                 subprocess.run(step["argv"], cwd=step["cwd"], env=env, check=True)
             validate_frontend(root)
-            print(f"Installed. Nothing was started. Run {root}/bin/ive to start IVE in the background, or bash {root}/start.sh to run it in this terminal.")
+            if os.environ.get("IVE_MARK_SOURCE_BUILD") == "1":
+                # bin/ive and install.sh keep this folder on source from now on.
+                _inside(root, f"{PROFILE['state_directory']}/source-build").touch()
+            here = shlex.quote(str(root))
+            print(f"Installed. Nothing was started. Run {here}/bin/ive to start IVE in the background, or bash {here}/start.sh to run it in this terminal.")
             return 0
         validate_frontend(root)
         executable = root / ".venv/bin/python"
         if not executable.is_file():
-            raise ProfileError("Installation Python is missing; run install.sh")
+            raise ProfileError(f"Installation Python is missing; run {_source_install_command(root)}")
         step = steps[0]
         os.chdir(step["cwd"])
         os.execve(executable, step["argv"], env)

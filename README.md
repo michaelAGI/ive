@@ -95,14 +95,27 @@ bash install.sh
 ```
 
 On a Mac with Apple silicon, `install.sh` installs the app from the latest
-release, exactly like the one-line installer. Everywhere else it builds this
-checkout; start it with `bin/ive`. To build from source on an Apple silicon
-Mac, for example to work on IVE, run `IVE_INSTALL=source bash install.sh`.
+release, exactly like the one-line installer, and opens it. `bin/ive` opens the
+app too. Everywhere else `install.sh` builds this checkout; start it with
+`bin/ive`. To build from source on an Apple silicon Mac, for example to work on
+IVE, run `IVE_INSTALL=source bash install.sh`; `bin/ive` then runs that build
+in your browser, and `install.sh` rebuilds it. `IVE_INSTALL=app bash install.sh`
+switches the folder back to the app.
+
+A folder that was built from source before the app installer existed keeps its
+own projects and history, separate from the app. Running its `ive update` keeps
+it a source build. After a manual `git pull`, `bash install.sh`, `bin/ive` and
+`bin/ive update` use the app and tell you about the build they leave behind.
 
 `bash install.sh --plan` and `bash start.sh --plan` print every step without
 running it. More options are in [INSTALL.md](INSTALL.md).
 
 ## Everyday commands
+
+These are for the source build on Linux, Intel Macs and with
+`IVE_INSTALL=source`. On a Mac with Apple silicon, IVE is the Mac app, and there
+is no `ive` command on your `PATH`. In a clone, `bin/ive` opens the app,
+`bin/ive update` updates it and `bin/ive uninstall` removes only the folder.
 
 ```bash
 ive                 # start IVE in the background and open it in the browser
@@ -120,10 +133,13 @@ ive uninstall       # stop IVE, remove its hooks, the app folder and the ive com
 
 ## What IVE changes on your machine
 
-- **Its own folder.** Code, dependencies, database and settings live in `~/.ive`
-  (data in `~/.ive/.ive-team-state`). Nothing is shared with other apps.
-- **A local server.** IVE listens on `127.0.0.1:5111` only. Phone access and
-  other network options are off until you turn them on.
+- **Its own folder.** The Mac app keeps its data in
+  `~/Library/Application Support/com.ive.desktop`. A source build keeps code,
+  dependencies, database and settings in its folder, `~/.ive` with the one-line
+  installer (data in `.ive-team-state` there). Nothing is shared with other apps.
+- **A local server.** The Mac app listens on `127.0.0.1:5112` only, a source
+  build on `127.0.0.1:5111` only. Phone access and other network options are off
+  until you turn them on.
 - **Hooks in your coding CLIs.** While it runs, IVE adds hooks to
   `~/.claude/settings.json`, `~/.codex/config.toml` and `~/.gemini/settings.json`
   for the CLIs you have installed. They let IVE follow what each agent does and
@@ -139,8 +155,9 @@ ive uninstall       # stop IVE, remove its hooks, the app folder and the ive com
 
 ## Telemetry
 
-Off by default. If you want to help with anonymous usage numbers, start IVE
-with `IVE_TELEMETRY=on ive` (run `ive stop` first if it is already running). It then sends a hashed install ID, the IVE version,
+Off by default. If you want to help with anonymous usage numbers, start a source
+build with `IVE_TELEMETRY=on ive` (run `ive stop` first if it is already running),
+or the quit Mac app with `IVE_TELEMETRY=on /Applications/IVE.app/Contents/MacOS/ive`. It then sends a hashed install ID, the IVE version,
 your platform, the number of sessions, uptime and, after a crash, the first
 500 characters of the error message to PostHog. No code and no prompts.
 [backend/telemetry.py](backend/telemetry.py) shows exactly what is sent.
