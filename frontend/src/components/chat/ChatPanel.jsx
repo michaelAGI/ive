@@ -2803,6 +2803,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const composerHandlersRef = useRef(null)
   const lastMessageHashRef = useRef('')
   const isPinnedRef = useRef(true)
+  const handleFindNavigate = useCallback(() => { isPinnedRef.current = false }, [])
   const pendingOptimisticMessagesRef = useRef([])
   const optimisticBusyStartedAtRef = useRef(null)
 
@@ -4431,7 +4432,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       {(inGrid || phone) && <SessionBrief key={sessionId} sessionId={sessionId} onOpenReview={()=>{useStore.getState().goSession(sessionId);window.dispatchEvent(new CustomEvent('open-panel',{detail:'review'}))}} onOpenPanel={panel=>window.dispatchEvent(new CustomEvent('open-panel',{detail:panel}))} />}
       <SessionContextNotice session={session} runtime={runtimeDetails} />
       {/* ⌘F: find in this chat (own component, see components/find). */}
-      <ChatFindBar sessionId={sessionId} scrollRef={scrollContainerRef} focusComposer={focusChatComposer} />
+      <ChatFindBar sessionId={sessionId} scrollRef={scrollContainerRef} focusComposer={focusChatComposer} onBeforeNavigate={handleFindNavigate} />
       {/* Full session view: model, effort and agent mode live in the message
           box; details, history, usage and the terminal toggle sit in the app
           header. Tiles and the phone keep this compact strip. */}

@@ -98,7 +98,7 @@ export default function SessionPromptActions({ sessionId, active, disabled = fal
       {presentation && !answered && <div className="ive-chat-question-choices">
         {presentation.choices.map((choice) => <button key={choice.value} type="button" data-choice-kind={choice.kind} onClick={() => sendReply(choice.value)} disabled={unavailable}>
           {choice.label}
-          <kbd aria-hidden="true">{choice.value}</kbd>
+          <kbd aria-hidden="true" title={keyboard ? "Keyboard shortcut outside text fields" : "Choice number"}>{choice.value}</kbd>
         </button>)}
       </div>}
       {current?.screen && !answered && <details className="ive-chat-request-details">

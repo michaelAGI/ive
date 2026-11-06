@@ -54,6 +54,7 @@ async function setup({ hash = '', theme = 'light' } = {}) {
     localStorage.setItem('cc-soundEnabled', '0')
     localStorage.setItem('ive-theme.v2', theme)
     localStorage.setItem('cc-terminalBoardMode', '0')
+    localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev', provider: 'claude' }))
   }, theme)
   await context.routeWebSocket('**/ws', (socket) => socket.onMessage((raw) => {
     sent.push(String(raw))

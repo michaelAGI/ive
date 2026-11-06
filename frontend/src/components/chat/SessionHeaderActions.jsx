@@ -2,6 +2,7 @@ import { Activity, Clock, Hash, Info, Terminal } from 'lucide-react'
 import HeaderPortal from '../shell/HeaderPortal'
 import useStore from '../../state/store'
 import { formatKeyCombo } from '../../lib/keybindings'
+import useExperienceMode from '../../state/experienceMode'
 import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
 
@@ -22,6 +23,7 @@ export default function SessionHeaderActions({
   isTerminalOpen, onToggleTerminal,
 }) {
   const t = useT()
+  const mode = useExperienceMode(s => s.mode)
   const terminalKey = useStore((s) => s.keybindings?.toggleTerminal)
   const turns = stats ? (stats.turns === 1 ? t('header.turn') : t('header.turns', { n: stats.turns })) : ''
   const usage = stats ? t(stats.estimated ? 'header.usageEstimated' : 'header.usage', { tokens: compact(stats.tokens), turns }) : ''
@@ -29,7 +31,7 @@ export default function SessionHeaderActions({
   return (
     <HeaderPortal slot="actions">
       <div className="ive-session-header-actions" data-session-header-actions="">
-        {stats && stats.tokens > 0 && (
+        {mode === 'dev' && stats && stats.tokens > 0 && (
           <span className="ive-header-btn ive-header-usage" title={usage} data-session-usage="">
             <Hash size={14} aria-hidden="true" />
             <span className="ive-header-btn-label">{stats.estimated ? '~' : ''}{compact(stats.tokens)} · {turns}</span>
@@ -55,7 +57,7 @@ export default function SessionHeaderActions({
             <span className="ive-header-btn-label">{t('header.history')}</span>
           </button>
         )}
-        {onToggleTerminal && (
+        {mode === 'dev' && onToggleTerminal && (
           <button type="button" data-chrome-button className="ive-header-btn" aria-pressed={isTerminalOpen} onClick={onToggleTerminal}
             title={t('header.terminalToggle')} aria-label={`${t('header.terminal')} (${combo})`}>
             <Terminal size={15} aria-hidden="true" />

@@ -15,7 +15,7 @@ import SessionContextActions from '../session/SessionContextActions'
 // switch, Stop while working, menu) and, in terminal view, a key bar right
 // above the iOS keyboard for the keys it does not have.
 
-export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu }) {
+export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu, chatOnly = false }) {
   const session = useStore((s) => s.sessions[sessionId])
   const sessionStarted = useStore((s) => s.sessionStarted)
   const connected = useStore((s) => s.connected)
@@ -55,7 +55,7 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu }) 
           <span className="text-x-faint">· {shell ? 'Mac-Shell' : getCliLabel(session?.cli_type || 'claude')}</span>
         </span>
       </div>
-      {!shell && <div className="ive-phone-view-switch" role="group" aria-label="View">
+      {!shell && !chatOnly && <div className="ive-phone-view-switch" role="group" aria-label="View">
         <button type="button" aria-pressed={view === 'chat'} aria-label="Chat view" onClick={() => onView('chat')}>
           <MessageSquare size={17} aria-hidden="true" />
         </button>
@@ -63,7 +63,7 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu }) 
           <Terminal size={17} aria-hidden="true" />
         </button>
       </div>}
-      {!shell && <SessionContextActions sessionId={sessionId} readOnly={!!session?.read_only} phone />}
+      {!shell && !chatOnly && <SessionContextActions sessionId={sessionId} readOnly={!!session?.read_only} phone />}
       <button type="button" className="ive-mobile-header-button" onClick={() => setControls(true)} aria-label="Session steuern" aria-expanded={controls}>
         <SlidersHorizontal size={20} aria-hidden="true" />
       </button>

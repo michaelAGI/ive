@@ -298,7 +298,9 @@ const useStore = create((set, get) => ({
     // Tell all mounted terminals to re-measure
     window.dispatchEvent(new Event('cc-terminal-refit'))
   },
-  terminalBoardMode: localStorage.getItem('cc-terminalBoardMode') === '1',
+  // Dev's board starts with terminals; an explicit previous tile preference
+  // remains authoritative. Chat mode has its own focused conversation view.
+  terminalBoardMode: localStorage.getItem('cc-terminalBoardMode') !== '0',
   setTerminalBoardMode: (enabled) => {
     localStorage.setItem('cc-terminalBoardMode', enabled ? '1' : '0')
     set({ terminalBoardMode: enabled })

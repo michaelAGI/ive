@@ -15,13 +15,13 @@ try {
       settings: { product_tour_version: '2' },
       workspaces: [{ id: 'w', name: 'Website', path: '/isolated/website' }],
       sessions: ['s', 't'].map(id => ({ id, workspace_id: 'w', name: `Task ${id}`, cli_type: 'claude', model: 'sonnet', status: 'idle', pty_alive: true, session_type: 'worker', tags: [] })),
-      storage: { 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' } },
+      storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' } },
     })
     const p = f.page
     await p.goto('https://ive-guide.test/#session-s')
     const input = p.locator('.ive-session-composer textarea')
     await input.fill('Keep this unsent task draft')
-    await p.getByTitle('Toggle PTY Terminal Drawer', { exact: true }).click()
+    await p.locator('.ive-header').getByRole('button', { name: /^Terminal(?: \(.+\))?$/ }).click()
     const surface = p.locator('[data-terminal-session="s"] .xterm-screen')
     await surface.waitFor()
     for (let i = 0; i < 100 && f.data.pty.filter(item => item.action === 'start_pty').length < 2; i++) await delay(50)
@@ -42,12 +42,12 @@ try {
     await p.getByRole('button', { name: 'Hide terminal — show overview', exact: true }).click()
     assert.equal(await p.locator('[data-session-terminal-drawer]').count(), 0)
     assert.equal(await input.inputValue(), 'Keep this unsent task draft')
-    await p.getByTitle('Toggle PTY Terminal Drawer', { exact: true }).click()
+    await p.locator('.ive-header').getByRole('button', { name: /^Terminal(?: \(.+\))?$/ }).click()
     await p.getByRole('button', { name: 'Expand terminal', exact: true }).click()
     await p.getByRole('button', { name: 'Hide terminal — show overview', exact: true }).click()
     assert.equal(await input.inputValue(), 'Keep this unsent task draft', 'Close from full restores draft')
     assert(!f.data.pty.slice(before).some(item => /input|stop|start|resume/.test(item.action || '')), JSON.stringify(f.data.pty.slice(before)))
-    await p.getByTitle('Toggle PTY Terminal Drawer', { exact: true }).click()
+    await p.locator('.ive-header').getByRole('button', { name: /^Terminal(?: \(.+\))?$/ }).click()
     await p.getByRole('button', { name: 'Expand terminal', exact: true }).click()
     await p.reload()
     await p.locator('[data-session-terminal-drawer="full"]').waitFor()

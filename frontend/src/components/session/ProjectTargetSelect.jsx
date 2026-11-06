@@ -9,7 +9,7 @@ const FIND_PROJECT = '__find-project'
  * the quick start prompt and the Home composer so both read the same.
  * value: workspace id or null. onChange(id | null).
  */
-export default function ProjectTargetSelect({ value, onChange, onFindProject, className = '', id, label = 'Project' }) {
+export default function ProjectTargetSelect({ value, onChange, onFindProject, className = '', id, label = 'Project', emptyLabel = 'No project (start folder)' }) {
   const workspaces = useStore((s) => s.workspaces)
   const quickStart = useStore((s) => s.quickStart)
   const projects = projectWorkspaces(workspaces, quickStart)
@@ -30,7 +30,7 @@ export default function ProjectTargetSelect({ value, onChange, onFindProject, cl
       {projects.map((ws) => (
         <option key={ws.id} value={ws.id}>{ws.name || String(ws.path || '').split('/').pop() || ws.id}</option>
       ))}
-      <option value="">No project (start folder)</option>
+      <option value="">{emptyLabel}</option>
       {onFindProject && <option value={FIND_PROJECT}>Find another project…</option>}
     </select>
   )

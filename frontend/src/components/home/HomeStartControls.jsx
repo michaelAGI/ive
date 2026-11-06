@@ -30,11 +30,11 @@ function useWhere(target) {
 /** Enter in the Home composer: start a session with the text as first message. */
 export function useHomeStart() {
   const [busy, setBusy] = useState(false)
-  const start = useCallback(async ({ text, workspaceId }) => {
+  const start = useCallback(async ({ text, workspaceId, cliType }) => {
     if (!String(text || '').trim()) return false
     setBusy(true)
     try {
-      await startDirectSession({ text, workspaceId })
+      await startDirectSession({ text, workspaceId, cliType })
       return true
     } catch (err) {
       useStore.getState().addNotification?.({ type: 'error', message: err?.message || 'The session could not be started.' })

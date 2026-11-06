@@ -1968,6 +1968,9 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
    the agent's permission dialog is a card with the same 1 / 2 / 3 choices as
    the terminal. Tiles and the phone keep their compact strip. */
 .ive-header[data-session-header] .ive-header-address { display: none; }
+.ive-header[data-session-header] .ive-header-slot--actions { flex: none; }
+.ive-header[data-session-header] .ive-crumb-parent { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ive-header > [data-new-terminal-button] { flex-shrink: 0; }
 .ive-session-header-actions { display: flex; align-items: center; gap: 2px; }
 .ive-header-usage { color: var(--x-muted); font-size: 12px; cursor: default; font-variant-numeric: tabular-nums; }
 .ive-header-usage:hover { background: transparent; color: var(--x-ink-secondary); }

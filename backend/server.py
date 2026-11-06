@@ -32822,6 +32822,8 @@ def create_app() -> web.Application:
 
     from sidechat import register_sidechat_routes
     register_sidechat_routes(app, context_reader=_sidechat_session_context)
+    from review_explanation import register_review_explanation_routes
+    register_review_explanation_routes(app)
 
     # Secure (offensive self-test) agent endpoints — provision/exec/scope/findings/teardown/kill.
     # Secure has not been source-extracted yet. Preserve integrated development
