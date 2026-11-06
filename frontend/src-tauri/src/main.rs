@@ -13,6 +13,7 @@ use std::{
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
+mod updates;
 
 #[derive(Default)]
 struct Backend(Mutex<Option<Child>>, AtomicBool);
@@ -188,9 +189,12 @@ fn spawn_backend(app: &tauri::AppHandle, data_dir: &Path, port: u16, nonce: &str
 
 fn main() {
     let failure: Failure = Default::default();
-    let app = tauri::Builder::default().manage(Backend::default())
+    let app = tauri::Builder::default().manage(Backend::default()).manage(updates::Updates::default())
         .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![needs_you_notify, set_badge_count, focus_main_window, window_is_focused])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![needs_you_notify, set_badge_count, focus_main_window, window_is_focused,
+            updates::desktop_update_status, updates::desktop_update_check, updates::desktop_update_automatic,
+            updates::desktop_update_download, updates::desktop_update_install, updates::desktop_update_restart])
         .setup(move |app| {
             let port = std::env::var("IVE_DESKTOP_PORT").ok().and_then(|s| s.parse::<u16>().ok()).filter(|p| *p > 1024).unwrap_or(5112);
             let data_dir = std::env::var_os("IVE_DESKTOP_DATA_DIR").map(PathBuf::from)
@@ -198,6 +202,7 @@ fn main() {
             fs::create_dir_all(&data_dir)?;
             let window_receipt = data_dir.join("desktop-window.json");
             let origin = format!("http://127.0.0.1:{port}");
+            updates::configure(app.handle(), &data_dir, origin.clone())?;
             let own_origin = origin.clone();
             let current_failure = failure.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("desktop-startup.html".into()))
@@ -230,6 +235,13 @@ fn main() {
             let _ = ctrlc::set_handler(move || signal_handle.exit(0));
             let failure = failure.clone();
             thread::spawn(move || {
+                // Never replace a bundle while another instance owns its service.
+                let update_probe = match TcpListener::bind(("127.0.0.1", port)) {
+                    Ok(probe) => probe,
+                    Err(_) => { show_failure(&window, &failure, format!("Local port {port} is already in use. Quit the other IVE app and open IVE again.")); return; }
+                };
+                if updates::install_on_launch(&handle) { return; }
+                drop(update_probe);
                 let nonce = format!("{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
                 let log = match spawn_backend(&handle, &data_dir, port, &nonce) {
                     Ok(path) => path,

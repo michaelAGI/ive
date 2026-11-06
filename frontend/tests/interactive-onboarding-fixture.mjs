@@ -450,6 +450,7 @@ export async function createTourFixture(browser, options = {}) {
     unexpected.push(call)
     return options.strictReads ? reject(`Unimplemented fixture read: ${path}`, 501) : reply([])
   })
+  if (options.initScript) await context.addInitScript(options.initScript, options.initArgs)
   const page = await context.newPage()
   page.setDefaultTimeout(options.timeout || 12000)
   page.on('pageerror', (error) => errors.push(error.message))

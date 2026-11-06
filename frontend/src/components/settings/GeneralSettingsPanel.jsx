@@ -1,4 +1,5 @@
 import HelpDetails from '../ui/HelpDetails'
+import { DesktopUpdateSettings } from './DesktopUpdates'
 import { useState, useEffect } from 'react'
 import { RefreshCw, Loader2, Columns, Rows, Grid2x2, Type, Sparkles, Terminal, CircleHelp, Bell } from 'lucide-react'
 import { api } from '../../lib/api'
@@ -149,6 +150,7 @@ export default function GeneralSettingsPanel() {
   return (
     <div className="h-full overflow-y-auto">
         <div className="p-5 space-y-5">
+          <DesktopUpdateSettings />
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-x-line pb-5">
             <div><h3 className="text-sm font-semibold text-x-ink">IVE kennenlernen</h3></div>

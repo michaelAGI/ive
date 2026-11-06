@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-window-is-focused"
+description = "Enables the window_is_focused command without any pre-configured scope."
+commands.allow = ["window_is_focused"]
+
+[[permission]]
+identifier = "deny-window-is-focused"
+description = "Denies the window_is_focused command without any pre-configured scope."
+commands.deny = ["window_is_focused"]

@@ -12,7 +12,7 @@ import { sessionStateOf } from '../../lib/sessionVocabulary'
 import { getSessionDisplayStatus } from '../../lib/sessionStatus'
 import { isHelperSession } from '../../lib/visibleSessions'
 import { sessionNeedsAttention } from '../../lib/sessionAttention'
-import { shouldFocusGridTerminal } from '../../lib/gridFocus'
+import { GRID_FOCUS_IGNORE_SELECTOR, shouldFocusGridTerminal } from '../../lib/gridFocus'
 
 // The tile wall (Grid mode of the Board): every open session as a tile with
 // its chat or terminal, in a built-in layout or a custom template. Opening a
@@ -134,7 +134,7 @@ export default function SessionGrid() {
 
   const renderHeader = (id, s) => (
     <div {...sessionChipMenu.chipProps(id)} className="ive-session-heading">
-      <span onDoubleClick={() => openSession(id)} className="ive-session-title truncate flex-1" title="Double-click to open">{s?.name}</span>
+      <span className="ive-session-title truncate flex-1" title="Double-click to open">{s?.name}</span>
       <CellStatus session={s} sessionStarted={sessionStarted} />
       <SessionMenuButton id={id} name={s?.name} />
       <button type="button" className="ive-terminal-expand" aria-label={`Open ${s?.name || 'session'}`} title="Open" onClick={() => openSession(id)}>
@@ -173,6 +173,15 @@ export default function SessionGrid() {
   )
 
   const tileEvents = (id) => ({
+    onDoubleClick: (e) => {
+      if (e.defaultPrevented || e.button !== 0) return
+      // The tile opens from its conversation or heading. Inputs, menus and
+      // request controls keep their own interaction, including word selection.
+      if (e.target?.closest?.(`${GRID_FOCUS_IGNORE_SELECTOR}, form, summary, [role="button"], [role="link"], [role="menu"], [role="listbox"], [data-session-prompt-actions]`)) return
+      e.preventDefault()
+      e.stopPropagation()
+      openSession(id)
+    },
     onMouseDownCapture: (e) => {
       if (!shouldFocusGridTerminal(e)) return
       useStore.getState().setActiveSession(id)

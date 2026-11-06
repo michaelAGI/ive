@@ -90,6 +90,7 @@ import CascadeBar from './components/chat/CascadeBar'
 import CascadeVariableDialog from './components/prompts/CascadeVariableDialog'
 import NotificationToast, { ToastBoundary } from './components/layout/NotificationToast'
 import NeedsYouPopover from './components/layout/NeedsYouPopover'
+import DesktopUpdates from './components/settings/DesktopUpdates'
 import PanelBoundary from './components/PanelBoundary'
 import { canRestoreTerminalFocus } from './lib/gridFocus'
 import { openFindInSession } from './lib/findRouter'
@@ -1733,6 +1734,7 @@ export default function App() {
           <SessionRenameDialog />
           <ToastBoundary><NotificationToast sideChatOpen={showSideChat} /></ToastBoundary>
           <ToastBoundary><NeedsYouPopover sideChatOpen={showSideChat} /></ToastBoundary>
+          <DesktopUpdates />
         </>
       )}
     >

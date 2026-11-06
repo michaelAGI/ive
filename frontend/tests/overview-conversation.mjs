@@ -150,8 +150,7 @@ try {
  assert.equal(await recovery.page.getByRole('alert').count(),0)
  assert.equal(recovery.inputs.length,0)
  count++;await recovery.context.close()
- // An unrecognised question keeps one explicit, guarded line of text.
- const manual=await fixture('What should this project be called?\n>');await manual.page.getByLabel('Your reply',{exact:true}).fill('Orbit');await manual.page.getByRole('button',{name:'Send reply',exact:true}).click();await sent(manual.page).waitFor();assert.equal(manual.inputs[0].message,'Orbit');assert.equal(manual.inputs[0].prompt_reply,true);count++;await manual.context.close()
+ // Free-text questions use the ordinary composer (session-chat-interactions.mjs).
  const hook=await fixture(`ToolSearch
 ──────────────────────────────
 │ Hook PreToolUse:ToolSearch requires confirmation for this tool:

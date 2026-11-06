@@ -1,5 +1,5 @@
 import { useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
-import { MessageCircle, ShieldAlert, Loader2, RefreshCw, ArrowUp } from 'lucide-react'
+import { MessageCircle, ShieldAlert, Loader2, RefreshCw } from 'lucide-react'
 import useStore from '../../state/store'
 import useSessionPromptReply from '../../hooks/useSessionPromptReply'
 import PromptMenu from './PromptMenu'
@@ -17,21 +17,20 @@ const isEditable = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TE
 // Every reply goes through the guarded endpoint against the exact dialog on
 // screen. The imperative handle lets the composer route Enter and y/n/1-9
 // shortcuts through the same reply.
-const QUIET_AFTER_SEND_MS = 10000
-
 export default function SessionPromptActions({ ref, sessionId, active, disabled = false, variant = 'card', hint = '', keyboard = false }) {
   const fieldId = useId()
   const rootRef = useRef(null)
-  const [reply, setReply] = useState('')
   const [slowRequest, setSlowRequest] = useState(false)
-  const [quiet, setQuiet] = useState(false)
   const cliType = useStore((s) => s.sessions[sessionId]?.cli_type || 'claude')
   const isActiveSession = useStore((s) => s.activeSessionId === sessionId)
-  const { snapshot: current, menu, viewState, loading, error, sending, answered, answeredChoice, justSent, sentAt, unavailable: hookUnavailable, refresh, reply: send, clearError } = useSessionPromptReply(sessionId, { active })
+  const attention = useStore((s) => s.sessions[sessionId]?.attention)
+  const expectsDialog = attention?.kind === 'permission' || attention?.kind === 'configuration'
+    || !!attention?.menu || !!attention?.options?.length
+  const { snapshot: current, menu, viewState, loading, error, sending, answered, answeredChoice, justSent, unavailable: hookUnavailable, refresh, reply: send, clearError } = useSessionPromptReply(sessionId, { active })
   const band = variant === 'band'
   const showMenu = !!menu && !(answered && !justSent)
   const needsTerminal = !menu && ((!!viewState && viewState !== 'ready') || !!current?.incomplete)
-  const waiting = active && !menu && !answered && (!current?.screen?.trim() || current?.incomplete)
+  const waiting = active && !menu && !answered && (current?.incomplete || (expectsDialog && !current?.screen?.trim()))
   const unavailable = disabled || hookUnavailable
   const agent = cliType === 'codex' ? 'Codex' : cliType === 'gemini' ? 'Gemini' : cliType === 'antigravity' ? 'Antigravity' : 'Claude'
   // A Claude Code permission dialog in the full session view is the card;
@@ -47,13 +46,6 @@ export default function SessionPromptActions({ ref, sessionId, active, disabled 
     const timer = setTimeout(() => setSlowRequest(true), 8000)
     return () => clearTimeout(timer)
   }, [waiting, band, sessionId])
-  // After an answer the screen moves on; no manual form while the agent takes over.
-  useEffect(() => {
-    if (!sentAt) { setQuiet(false); return undefined }
-    setQuiet(true)
-    const timer = setTimeout(() => setQuiet(false), QUIET_AFTER_SEND_MS)
-    return () => clearTimeout(timer)
-  }, [sentAt])
   const bandVisible = band && active && (showMenu || needsTerminal)
   useEffect(() => {
     if (!band) return undefined
@@ -198,36 +190,12 @@ export default function SessionPromptActions({ ref, sessionId, active, disabled 
       <p role="status" className="ive-chat-reply-status">Sent, continuing…</p>
     </section>
   )
-  if (!current?.screen || answered || quiet) return null
-  // An unrecognised question: the exact screen plus one explicit, guarded line of text.
-  const question = current.screen.split('\n').map((line) => line.trim()).filter((line) => /[?？]$/.test(line)).at(-1)
-  const sendReply = async (event) => {
-    event.preventDefault()
-    if (unavailable) return
-    if (await send(reply, { manual: true })) setReply('')
-  }
-  return (
-    <section ref={rootRef} data-session-prompt-actions aria-labelledby={`${fieldId}-title`} className={`ive-chat-question${tile}`} aria-busy={loading || sending}>
-      <div className="ive-chat-question-heading">
-        <MessageCircle size={17} aria-hidden="true" />
-        <h3 id={`${fieldId}-title`}>Your answer is needed</h3>
-      </div>
-      <p>{question || 'The assistant is waiting for your reply. Review the request details below.'}</p>
-      <details className="ive-chat-request-details">
-        <summary>View request details</summary>
-        <pre>{current.screen}</pre>
-        <button type="button" onClick={openTerminal} className="ive-chat-text-button">Open terminal to review</button>
-      </details>
-      <form className="ive-chat-question-reply" onSubmit={sendReply}>
-        <label htmlFor={`${fieldId}-reply`}>Your reply</label>
-        <div>
-          <input id={`${fieldId}-reply`} value={reply} placeholder="Write your answer…" maxLength={2000} onChange={(event) => setReply(event.target.value)} disabled={unavailable} />
-          <button type="submit" disabled={unavailable || !reply.trim()} aria-label="Send reply"><ArrowUp size={17} /></button>
-        </div>
-      </form>
-      {hint && <p role="alert" className="ive-chat-question-error">{hint}</p>}
-      {error && <p role="alert" className="ive-chat-question-error">{error}</p>}
-      {(sending || justSent) && <p role="status" className="ive-chat-reply-status">{sending && <Loader2 size={14} className="animate-spin" />}{sending ? 'Sending…' : 'Sent, continuing…'}</p>}
+  if (needsTerminal && !answered) return (
+    <section ref={rootRef} data-session-prompt-actions className="ive-chat-request-loading">
+      <button type="button" onClick={openTerminal} className="ive-chat-text-button">Open terminal to review</button>
     </section>
   )
+  // Waiting is also a normal conversation state. Only a recognised CLI
+  // dialog needs controls here; free-text questions use the chat composer.
+  return null
 }

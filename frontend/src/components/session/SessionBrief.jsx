@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, RefreshCw, ArrowUpRight, FileDiff, Play, MessageCircle } from 'lucide-react'
 import useStore from '../../state/store'
 import { api } from '../../lib/api'
@@ -7,6 +7,7 @@ import { getSessionDisplayStatus } from '../../lib/sessionStatus'
 import { focusPromptMenu } from '../../lib/promptFocus'
 const EMPTY = []
 export default function SessionBrief({ sessionId, onOpenReview, onOpenPanel }) {
+  const rootRef = useRef(null)
   const session = useStore(s => s.sessions[sessionId])
   const messages = useStore(s => s.messages[sessionId] || EMPTY)
   const started = useStore(s => s.sessionStarted)
@@ -34,8 +35,15 @@ export default function SessionBrief({ sessionId, onOpenReview, onOpenPanel }) {
   const files = [...new Set([...(data?.git?.staged || []),...(data?.git?.unstaged || []),...(data?.git?.untracked || [])].map(f=>typeof f==='string'?f:f.path).filter(Boolean))]
   const touched = Array.isArray(data?.digest?.files_touched) ? data.digest.files_touched.map(f=>typeof f==='string'?f:f.path || f.file).filter(Boolean):[]
   const jump = id => window.dispatchEvent(new CustomEvent('ive-reveal-message',{detail:{sessionId,messageId:id}}))
-  const answer = () => { if (focusPromptMenu(sessionId)) return; const el=document.querySelector(`[data-session-view="${sessionId}"] [data-session-prompt-actions]`);el?.scrollIntoView({block:'nearest'});el?.querySelector('input:not(:disabled),button:not(:disabled)')?.focus() }
-  return <section className="ive-session-brief" aria-label="Session overview" data-session-brief>
+  const answer = () => {
+    if (focusPromptMenu(sessionId)) return
+    const view = rootRef.current?.closest('[data-grid-cell-session], [data-session-view]')
+    const target = view?.querySelector('[data-session-prompt-actions] button:not(:disabled)')
+      || view?.querySelector('.ive-session-composer textarea:not(:disabled)')
+    target?.scrollIntoView({ block: 'nearest' })
+    target?.focus()
+  }
+  return <section ref={rootRef} className="ive-session-brief" aria-label="Session overview" data-session-brief>
     <div className="ive-session-brief-line">
       <button type="button" className="ive-brief-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>
         <span className={`ive-brief-dot is-${status.state}`} /><strong>{label}</strong><ChevronDown size={14} style={{transform:open?'rotate(180deg)':undefined}} />

@@ -12,6 +12,16 @@
     ]
   },
   "permissions": [
+    "allow-needs-you-notify",
+    "allow-set-badge-count",
+    "allow-focus-main-window",
+    "allow-window-is-focused",
+    "allow-desktop-update-status",
+    "allow-desktop-update-check",
+    "allow-desktop-update-automatic",
+    "allow-desktop-update-download",
+    "allow-desktop-update-install",
+    "allow-desktop-update-restart",
     "core:default",
     "notification:default",
     "core:window:allow-set-badge-count",
