@@ -700,6 +700,22 @@ async def mark_interrupted(session_id: str, source: str = "interrupt") -> bool:
     return True
 
 
+async def mark_turn_ended_from_screen(session_id: str) -> bool:
+    """End a working turn that produced no Stop hook: Codex with that handler
+    switched off shows its empty input line again, and the server observed
+    it quiet for a moment. Counts as a finished turn and broadcasts idle."""
+    s = _hook_sessions.get(session_id)
+    if not s or s.get("state") != "working":
+        return False
+    s["state"] = "idle"
+    s["tool_stack"].clear()
+    s["turns_completed"] = int(s.get("turns_completed") or 0) + 1
+    s["last_event_at"] = time.time()
+    await _broadcast({"type": "prompt_state", "session_id": session_id, "state": "idle"})
+    await _broadcast({"type": "session_state", "session_id": session_id, "state": "idle", "source": "screen"})
+    return True
+
+
 async def mark_answered(session_id: str) -> bool:
     """The CLI's question was answered (an Overview reply, or in the terminal):
     a 'prompting' session is now processing that answer. No hook fires between

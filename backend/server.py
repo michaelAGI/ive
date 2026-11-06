@@ -3410,6 +3410,62 @@ async def _confirm_claude_interrupt_after_input(session_id: str) -> None:
             return
 
 
+# Codex runs IVE's Stop hook only when that handler is switched on in Codex;
+# without it the hook state stays "working" after every turn, the composer
+# keeps queueing and queued messages never send. The screen settles the turn
+# instead: an empty input line, no running-turn footer, quiet for a moment.
+_CODEX_TURN_END_QUIET_S = 1.5
+_codex_turn_end_tasks: dict[str, "_asyncio.Task"] = {}
+
+
+def _codex_screen_shows_turn_end(text: str) -> bool:
+    """Codex is back at an empty input line with no turn running on screen."""
+    lower = (text or "").lower()
+    if "esc to interrupt" in lower[-4000:]:
+        return False
+    return _looks_ready_for_input("codex", text)
+
+
+def _cancel_codex_turn_end_check(session_id: str) -> None:
+    task = _codex_turn_end_tasks.pop(session_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+def _schedule_codex_turn_end_check(session_id: str) -> None:
+    _cancel_codex_turn_end_check(session_id)
+    try:
+        from hooks import get_session_logical_status
+        if get_session_logical_status(session_id, True, "idle") != "running":
+            return
+    except Exception:
+        return
+    _codex_turn_end_tasks[session_id] = _asyncio.ensure_future(_codex_turn_end_check(session_id))
+
+
+async def _codex_turn_end_check(session_id: str) -> None:
+    try:
+        await _asyncio.sleep(_CODEX_TURN_END_QUIET_S)
+        if not pty_mgr.is_alive(session_id):
+            return
+        from session_attention import get_attention
+        if get_attention(session_id):
+            return
+        screen = capture_proc.get_screen(session_id) or capture_proc.get_buffer(session_id, 80)
+        if not _codex_screen_shows_turn_end(screen):
+            return
+        from hooks import mark_turn_ended_from_screen
+        if await mark_turn_ended_from_screen(session_id):
+            logger.info("Codex session %s: turn ended on screen (no Stop hook)", session_id[:8])
+    except _asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.debug("Codex turn-end check skipped for %s: %s", session_id[:8], exc)
+    finally:
+        if _codex_turn_end_tasks.get(session_id) is _asyncio.current_task():
+            _codex_turn_end_tasks.pop(session_id, None)
+
+
 async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
     if not pty_mgr.is_alive(session_id):
         return
@@ -3428,6 +3484,8 @@ async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
                 await mark_answered(session_id)
         if cli_type == "claude":
             await _maybe_mark_claude_interrupted(session_id, screen, "interrupt_output")
+        if cli_type == "codex":
+            _schedule_codex_turn_end_check(session_id)
     if cli_type != "antigravity":
         return
 
@@ -3665,6 +3723,9 @@ def _check_startup_selection_prompts(session_id: str, data: bytes) -> bool:
         return False
 
     _startup_prompt_handled[session_id] = _time.monotonic()
+    # The prompt is gone once dismissed. A stale copy in the rolling buffer
+    # must not send Escape into a live turn 30 s later.
+    _startup_prompt_recent[session_id] = ""
 
     async def _dismiss_codex_update():
         await _asyncio.sleep(0.5)
@@ -4035,6 +4096,7 @@ async def handle_pty_exit(session_id: str, code: int):
     _trust_handled.pop(session_id, None)
     _startup_prompt_handled.pop(session_id, None)
     _startup_prompt_recent.pop(session_id, None)
+    _cancel_codex_turn_end_check(session_id)
     _input_bufs.pop(session_id, None)
     _session_turns.pop(session_id, None)
     _input_esc.pop(session_id, None)
