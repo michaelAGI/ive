@@ -51,6 +51,7 @@ class TestQueueDeliveryTests(unittest.IsolatedAsyncioTestCase):
             _autostart_session_pty=AsyncMock(), _recheck_test_queue_after_timeout=AsyncMock(),
             _broadcast_test_queue_entry=AsyncMock(), _continue_after_test_queue_terminal=AsyncMock(),
             _resolve_caller=AsyncMock(return_value=None), broadcast=AsyncMock(),
+            _enrich_task_rows=AsyncMock(side_effect=lambda db, rows: rows),
             _publish_test_queue_entry=AsyncMock(), bus=SimpleNamespace(emit=AsyncMock()),
             CommanderEvent=CommanderEvent, extension_host=SimpleNamespace(available=lambda _:False),
             _maybe_trigger_seam_check=AsyncMock(), _maybe_rollup_parent=AsyncMock(),

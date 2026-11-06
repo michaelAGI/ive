@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.310
+           Haiku 5.5 · Claude Max
+ ▘▘   ▝▝   /…/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1
+
+
+❯ Run the shell command echo hello-ive > hello.txt with the Bash tool. Do not explain.
+
+  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ Create a file notes.txt containing hi with the Write tool.
+
+⏺ Write(notes.txt)
+  ⎿  Wrote 1 line to notes.txt
+      1 hi
+
+⏺ I created notes.txt with the Write tool, containing hi, at /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f
+  875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1/notes.txt.
+
+✻ Brewed for 4s · done 13:44
+
+❯ Edit notes.txt so it says hello, with the Edit tool.
+
+  Read 1 file
+
+⏺ Update(notes.txt)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ notes.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1 -hi
+ 1 +hello
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to notes.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

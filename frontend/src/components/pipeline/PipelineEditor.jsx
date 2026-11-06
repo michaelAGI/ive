@@ -952,7 +952,7 @@ export default function PipelineEditor({ onClose }) {
               {/* Show auto-injected task vars as info when task-derived vars are used */}
               {pipelineVars.all.some((v) => TASK_AUTO_VARS.has(v)) && (
                 <div className="mb-3 px-2 py-1.5 bg-x-surface-2 rounded-md border border-x-line">
-                  <span className="text-xs font-medium text-x-ink-secondary block mb-1">Auto-filled from task (when triggered by Feature Board):</span>
+                  <span className="text-xs font-medium text-x-ink-secondary block mb-1">Auto-filled from task (when triggered from Tasks):</span>
                   <div className="flex flex-wrap gap-1">
                     {pipelineVars.all.filter((v) => TASK_AUTO_VARS.has(v)).map((v) => (
                       <span key={v} className="text-[11px] px-1.5 py-0.5 bg-x-tint text-x-accent rounded-md border border-x-accent/25">

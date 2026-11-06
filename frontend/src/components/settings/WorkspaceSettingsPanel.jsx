@@ -472,7 +472,7 @@ export default function WorkspaceSettingsPanel({ initialWorkspaceId, activeSecti
                               <p className="text-[11px] text-x-ink-secondary leading-relaxed">
                                 <span className="text-x-good font-medium">Works:</span>{' '}
                                 Hook-based state tracking (idle/working/prompting), tool &amp; subagent tracking,
-                                broadcasting, task board, memory sync, session management
+                                broadcasting, Tasks (⌘B), memory sync, session management
                               </p>
                               <p className="text-[11px] text-x-ink-secondary leading-relaxed mt-1">
                                 <span className="text-x-accent-ink font-medium">Unavailable:</span>{' '}
@@ -678,8 +678,8 @@ export default function WorkspaceSettingsPanel({ initialWorkspaceId, activeSecti
                         ) : null}
                       </Field>
 
-                      {/* Feature Board Documentation */}
-                      <div className="text-xs font-medium text-x-ink-secondary mt-2 mb-1.5">Feature Board Documentation</div>
+                      {/* Task documentation (Tasks board, ⌘B) */}
+                      <div className="text-xs font-medium text-x-ink-secondary mt-2 mb-1.5">Task documentation</div>
 
                       <Field label="Mode" hint="How finished work lands on the board">
                         <div className="grid grid-cols-3 gap-1">

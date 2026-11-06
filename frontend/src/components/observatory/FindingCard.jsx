@@ -247,7 +247,7 @@ export default function FindingCard({ finding, onPromote, onStatusChange, onDrag
             <button
               onClick={(e) => { e.stopPropagation(); onPromote?.(finding) }}
               className="flex items-center gap-0.5 px-1.5 py-0.5 text-[11px] font-medium text-x-accent bg-x-accent/10 border border-x-accent/20 rounded-md hover:bg-x-accent/20 transition-colors duration-[80ms]"
-              title="Promote to Feature Board"
+              title="Promote to Tasks"
             >
               <Plus size={8} />
               Promote

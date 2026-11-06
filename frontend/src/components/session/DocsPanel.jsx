@@ -41,7 +41,7 @@ const screenshotPrompt = (origin) => `Screenshot all major UI features. For each
 
 1. Navigate to ${origin}
 2. screenshot_page for the main view
-3. Open each panel (Command Palette, Feature Board, Sidebar, etc.) and screenshot_page each
+3. Open each panel (Command Palette, Tasks board, Sidebar, etc.) and screenshot_page each
 4. Use screenshot_element for specific UI components worth highlighting
 5. Record record_gif for any multi-step workflows
 

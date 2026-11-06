@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getBroadcastRecipients } from '../src/lib/broadcastScope.js'
+import { broadcastFailedMessage, broadcastSkippedMessage, getBroadcastRecipients } from '../src/lib/broadcastScope.js'
+
+test('a broadcast names how many sessions it left out because a question was open', () => {
+  assert.equal(broadcastSkippedMessage(1), 'Skipped 1 session with an open question. Answer it there first.')
+  assert.equal(broadcastSkippedMessage(3), 'Skipped 3 sessions with an open question. Answer it there first.')
+  assert.equal(broadcastFailedMessage(1), 'Broadcast not delivered to 1 session. Check each session before retrying.')
+  assert.equal(broadcastFailedMessage(2), 'Broadcast not delivered to 2 sessions. Check each session before retrying.')
+})
 
 const sessions = { a: { workspace_id: 'first' }, b: { workspace_id: 'second' }, c: { workspace_id: 'first' } }
 test('narrowing from global to one project excludes hidden selected sessions immediately', () => {

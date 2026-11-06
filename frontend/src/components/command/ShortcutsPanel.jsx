@@ -26,7 +26,7 @@ const STATIC_SECTIONS = [
   { section: 'Sessions', items: [
     { keys: '\u21E7\u21B5', action: 'Force message (interrupt + send)' },
   ]},
-  { section: 'Feature Board', items: [
+  { section: 'Tasks', items: [
     { keys: '\u2190 \u2192', action: 'Move between columns' },
     { keys: '\u2191 \u2193', action: 'Move between cards' },
     { keys: '\u21B5', action: 'Open focused task' },
@@ -74,7 +74,7 @@ const STATIC_SECTIONS = [
 
 // Order in which sections appear. Configurable sections first, then static-only.
 const SECTION_ORDER = [
-  'Navigation', 'Panels', 'Sessions', 'Feature Board', 'Task Modal',
+  'Navigation', 'Panels', 'Sessions', 'Tasks', 'Task Modal',
   'Grid View', 'Chrome Focus', 'Find Bar', 'Screenshot Annotator', 'In Any Panel', 'In Terminal',
 ]
 

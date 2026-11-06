@@ -487,7 +487,7 @@ def tool_escalate_worker(args: dict) -> str:
 def tool_list_tasks(args: dict) -> str:
     ws_id = args.get("workspace_id", WORKSPACE_ID)
     status = args.get("status_filter", "all")
-    path = f"/tasks?workspace={ws_id}"
+    path = f"/tasks?workspace={ws_id}&brief=1"
     if status != "all":
         path += f"&status={status}"
     result = api_call("GET", path)

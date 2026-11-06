@@ -7,4 +7,18 @@
   <string>IVE uses the camera only for a recording you start.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>IVE connects your local workspace to devices and services you choose.</string>
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>IVE lets you know when an agent is waiting for your answer.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>IVE opens a pop-out terminal in iTerm or Terminal.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>IVE reads the project folders you connect and shows their files.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>IVE reads the project folders you connect and shows their files.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>IVE reads the project folders you connect and shows their files.</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>IVE reads project folders on external drives you connect.</string>
+  <key>NSFileProviderDomainUsageDescription</key>
+  <string>IVE reads project folders stored in iCloud Drive.</string>
 </dict></plist>

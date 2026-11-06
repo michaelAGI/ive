@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { FileText, X, Send, Save, CheckCircle, RefreshCw, Edit3, Eye, MessageSquare, Trash2 } from 'lucide-react'
 import useStore from '../../state/store'
-import { sendPlanChoice, sendPlanFeedback } from '../../lib/terminal'
+import { answerPlanChoice, sendPlanFeedbackGuarded } from '../../lib/planAnswer'
+import { normalizeMenu } from '../../lib/promptMenu'
 import { api } from '../../lib/api'
 import { uuid } from '../../lib/uuid'
 import { getSessionStatusMeta, hasSessionStarted } from '../../lib/sessionStatus'
@@ -41,6 +42,12 @@ export default function PlanViewer({ onClose }) {
   const [blueprintLoading, setBlueprintLoading] = useState(false)
   const [blueprintActionLoading, setBlueprintActionLoading] = useState(false)
   const sessionId = blueprintMode ? null : (viewingSessionId || plan?.sessionId || activeSessionId)
+  // The approve buttons show only while the live dialog is a plan approval
+  // (planWaiting), and carry its own option words; the old wording is the fallback.
+  const planMenu = normalizeMenu(sessionId ? sessions[sessionId]?.attention?.menu : null)
+  const planLabels = planMenu?.kind === 'plan' ? planMenu.options.map((option) => option.label) : []
+  const approveLabel = planLabels[0] || 'Approve & Auto-accept'
+  const reviewLabel = planLabels[1] || 'Approve & Review Edits'
   const filePath = viewingPlanPath || (blueprintMode
     ? (plan?.blueprintPath || blueprintGoal?.blueprint_path || null)
     : planFilePaths[sessionId]) || null
@@ -209,7 +216,7 @@ export default function PlanViewer({ onClose }) {
     if (!sessionId) return
     const msg = feedbackText.trim()
     if (!msg) return
-    sendPlanFeedback(sessionId, msg)
+    sendPlanFeedbackGuarded(sessionId, msg)
     setFeedbackText('')
   }
 
@@ -223,10 +230,10 @@ export default function PlanViewer({ onClose }) {
     }
   }
 
-  // Approve → select option 1 (auto-accept edits)
+  // Approve → the plan approval's first option (auto-accept edits), guarded against the live dialog
   const handleApprove = () => {
     if (!sessionId) return
-    sendPlanChoice(sessionId, 1)
+    answerPlanChoice(sessionId, 1)
     resumePlanningTask()
     onClose()
   }
@@ -235,7 +242,7 @@ export default function PlanViewer({ onClose }) {
   const handleSendEdited = async () => {
     if (!sessionId) return
     if (hasChanges && filePath) await handleSave()
-    sendPlanFeedback(sessionId, 'I\'ve edited the plan file directly. Please re-read it and proceed with the updated plan.')
+    sendPlanFeedbackGuarded(sessionId, 'I\'ve edited the plan file directly. Please re-read it and proceed with the updated plan.')
   }
 
   // Send all inline comments as structured feedback via option 3
@@ -255,7 +262,7 @@ export default function PlanViewer({ onClose }) {
     comments.forEach((c, i) => {
       parts.push(`${i + 1}. Re: "${c.selectedText}" → ${c.comment}`)
     })
-    sendPlanFeedback(sessionId, parts.join('\n'))
+    sendPlanFeedbackGuarded(sessionId, parts.join('\n'))
     setComments([])
   }
 
@@ -933,23 +940,23 @@ export default function PlanViewer({ onClose }) {
 
         {/* Footer actions */}
         <div className="flex items-center gap-1 px-5 py-3 border-t border-x-line bg-x-surface/30 shrink-0">
-          {!blueprintMode && sessionId && (plan?.items?.length > 0 || planWaiting[sessionId]) && (
+          {!blueprintMode && sessionId && planWaiting[sessionId] && (
             <>
               <button
                 onClick={handleApprove}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-mono bg-x-good/20 hover:bg-x-good/30 text-x-good border border-x-good/30 rounded transition-colors"
-                title="Select option 1: auto-accept edits"
+                title={`Select option 1: ${approveLabel}`}
               >
                 <CheckCircle size={12} />
-                Approve &amp; Auto-accept
+                {approveLabel}
               </button>
               <button
-                onClick={() => { sendPlanChoice(sessionId, 2); resumePlanningTask(); onClose() }}
+                onClick={() => { answerPlanChoice(sessionId, 2); resumePlanningTask(); onClose() }}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-mono bg-transparent hover:bg-x-hover text-x-ink-secondary border border-x-line hover:border-x-line-strong rounded transition-colors"
-                title="Select option 2: manually approve each edit"
+                title={`Select option 2: ${reviewLabel}`}
               >
                 <CheckCircle size={12} />
-                Approve &amp; Review Edits
+                {reviewLabel}
               </button>
             </>
           )}

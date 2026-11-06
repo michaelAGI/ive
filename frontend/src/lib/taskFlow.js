@@ -29,8 +29,11 @@ export function hasPassingVerification(run) {
   // Match task_review.py exactly; display formatting is more permissive.
   return verify?.status === 'completed' && String(verify.output_summary || '').startsWith('__pipeline_result:pass:')
 }
+// Any card in review can be accepted; the verification report is evidence,
+// not a gate. Only a run that is still working or paused keeps the decision
+// open. Callers pass reviewed_run_id only when a run exists.
 export function canAcceptTaskResult(task, run) {
-  return task?.status === 'review' && run?.status === 'completed' && hasPassingVerification(run)
+  return task?.status === 'review' && !['running', 'paused'].includes(run?.status)
 }
 export function taskNextStep(task, run) {
   if (task.status === 'done' && !['running', 'paused'].includes(run?.status)) return { label: 'Accepted', detail: 'This task is complete.', step: 5, tone: 'good' }
@@ -47,11 +50,11 @@ export function taskNextStep(task, run) {
     if (stages.some((id) => ['verify', 'verify_gate'].includes(id))) return { label: 'Checking the result', detail: 'The testing agent is checking the implementation against your criteria.', step: 3 }
     return { label: stages.includes('fix') ? 'Fixing issues' : 'Working', detail: 'Follow the stage reports or open the agent session for live output.', step: 2 }
   }
-  if (task.status === 'review') return canAcceptTaskResult(task, run)
+  if (task.status === 'review') return run?.status === 'completed' && hasPassingVerification(run)
     ? { label: 'Review the result', detail: 'Read the changes and test evidence, then accept the result or request another pass.', step: 4 }
-    : { label: 'Review in the task board', detail: 'This result has no completed run with a passing verification report. Use the full task board to inspect the work and choose its status manually.', step: 4, boardReview: true }
+    : { label: 'Review the result', detail: 'No passing verification report for this result. Open the review to read what the agent changed, then accept it or send it back.', step: 4, boardReview: true }
   if (task.status === 'blocked') return { label: 'Needs attention', detail: 'Open the task details to resolve the blocker.', step: 2, tone: 'danger' }
-  if (!run && ['planning', 'in_progress', 'testing', 'documenting'].includes(task.status)) return { label: 'Work in progress', detail: 'This task uses a direct session. Follow its work in the task board or assigned session.', step: task.status === 'testing' ? 3 : 2 }
+  if (!run && ['planning', 'in_progress', 'testing', 'documenting'].includes(task.status)) return { label: 'Work in progress', detail: 'This task uses a direct session. Follow its work in Tasks (⌘B) or the assigned session.', step: task.status === 'testing' ? 3 : 2 }
   if (run?.status === 'completed') return { label: 'Run completed', detail: 'Inspect the reports and task status in the full task details.', step: 4 }
   return { label: 'Ready to plan', detail: 'Prepare a plan and review it before implementation starts.', step: 0 }
 }

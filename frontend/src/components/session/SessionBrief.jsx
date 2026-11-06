@@ -4,6 +4,7 @@ import useStore from '../../state/store'
 import { api } from '../../lib/api'
 import { briefEvidence, plainExcerpt, relativeActivity } from '../../lib/sessionBrief'
 import { getSessionDisplayStatus } from '../../lib/sessionStatus'
+import { focusPromptMenu } from '../../lib/promptFocus'
 const EMPTY = []
 export default function SessionBrief({ sessionId, onOpenReview, onOpenPanel }) {
   const session = useStore(s => s.sessions[sessionId])
@@ -33,19 +34,19 @@ export default function SessionBrief({ sessionId, onOpenReview, onOpenPanel }) {
   const files = [...new Set([...(data?.git?.staged || []),...(data?.git?.unstaged || []),...(data?.git?.untracked || [])].map(f=>typeof f==='string'?f:f.path).filter(Boolean))]
   const touched = Array.isArray(data?.digest?.files_touched) ? data.digest.files_touched.map(f=>typeof f==='string'?f:f.path || f.file).filter(Boolean):[]
   const jump = id => window.dispatchEvent(new CustomEvent('ive-reveal-message',{detail:{sessionId,messageId:id}}))
-  const answer = () => { const el=document.querySelector(`[data-session-view="${sessionId}"] [data-session-prompt-actions]`);el?.scrollIntoView({block:'nearest'});el?.querySelector('button:not(:disabled),input:not(:disabled)')?.focus() }
+  const answer = () => { if (focusPromptMenu(sessionId)) return; const el=document.querySelector(`[data-session-view="${sessionId}"] [data-session-prompt-actions]`);el?.scrollIntoView({block:'nearest'});el?.querySelector('input:not(:disabled),button:not(:disabled)')?.focus() }
   return <section className="ive-session-brief" aria-label="Session overview" data-session-brief>
     <div className="ive-session-brief-line">
       <button type="button" className="ive-brief-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>
         <span className={`ive-brief-dot is-${status.state}`} /><strong>{label}</strong><ChevronDown size={14} style={{transform:open?'rotate(180deg)':undefined}} />
       </button>
       <span className="ive-brief-last" title={latest}>{latest || 'Describe what you want to work on below.'}</span>
-      {status.state==='waiting' && <button className="ive-brief-link" onClick={answer}>Review request <ArrowUpRight size={13}/></button>}
+      {status.state==='waiting' && <button className="ive-brief-link" onClick={answer}>Answer <ArrowUpRight size={13}/></button>}
     </div>
     {open && <div className="ive-brief-body">
       <div className="ive-brief-columns">
         <div><h3>Where things stand</h3><p>{latest || 'No assistant reply yet.'}</p>
-          <p className="ive-brief-muted">{status.state==='waiting'?'Review the assistant’s question below to continue.':status.state==='running'||pending?'You can write your next message while the assistant works.':status.state==='failed'?'Review the error in the conversation before trying again.':status.state==='stopped'?'The conversation is saved. Use the session controls to resume.':evidence.latest?'Review the reply, then continue with a follow-up.':'Describe your task below to start this session.'}</p>
+          <p className="ive-brief-muted">{status.state==='waiting'?'Answer the assistant’s question below to continue.':status.state==='running'||pending?'You can write your next message while the assistant works.':status.state==='failed'?'Review the error in the conversation before trying again.':status.state==='stopped'?'The conversation is saved. Use the session controls to resume.':evidence.latest?'Review the reply, then continue with a follow-up.':'Describe your task below to start this session.'}</p>
           {evidence.latest && <button className="ive-brief-link" onClick={()=>jump(evidence.latest.id)}>Read latest reply <ArrowUpRight size={13}/></button>}
         </div>
         <div><h3>Changes & results</h3><p className="ive-brief-muted">{loading?'Loading project changes…':data?.error || (data?.git?.is_git_repo === false ? 'This folder is not a Git repository. Change tracking is unavailable.' : `${files.length} uncommitted project ${files.length===1?'file':'files'}. Includes work from other sessions.`)}</p>

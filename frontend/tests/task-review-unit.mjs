@@ -10,25 +10,28 @@ const task = { status: 'review' }
 const run = (verify, status = 'completed') => ({ status, stage_history: { implement: { status: 'completed' }, ...(verify ? { verify } : {}) } })
 const passed = { status: 'completed', output_summary: '__pipeline_result:pass:Four tests passed.' }
 
-test('an implementation-only result points to manual board review, not acceptance', () => {
+test('an implementation-only result can be accepted and points to the review view', () => {
   const current = taskNextStep(task, run())
-  assert.equal(canAcceptTaskResult(task, run()), false)
+  assert.equal(canAcceptTaskResult(task, run()), true)
   assert.equal(current.boardReview, true)
-  assert.match(current.detail, /choose its status manually/)
+  assert.equal(current.label, 'Review the result')
+  assert.match(current.detail, /Open the review/)
+  assert.doesNotMatch(current.detail, /choose its status manually/)
 })
 
-test('a direct-session result without a pipeline has the same board review path', () => {
-  assert.equal(canAcceptTaskResult(task, null), false)
+test('a direct-session result without a pipeline can be accepted through the same review path', () => {
+  assert.equal(canAcceptTaskResult(task, null), true)
   assert.equal(taskNextStep(task, null).boardReview, true)
 })
 
-test('a completed passing verification enables guided result acceptance', () => {
+test('a completed passing verification is shown as verified evidence', () => {
   assert.equal(canAcceptTaskResult(task, run(passed)), true)
+  assert.equal(hasPassingVerification(run(passed)), true)
   assert.equal(taskNextStep(task, run(passed)).label, 'Review the result')
   assert.equal(taskNextStep(task, run(passed)).boardReview, undefined)
 })
 
-test('failed, unfinished and unstructured verification reports do not enable acceptance', () => {
+test('failed, unfinished and unstructured verification reports are not verified but stay reviewable', () => {
   for (const verify of [
     { ...passed, status: 'running' },
     { ...passed, output_summary: '__pipeline_result:fail:Test failed.' },
@@ -36,23 +39,32 @@ test('failed, unfinished and unstructured verification reports do not enable acc
     { ...passed, output_summary: null },
   ]) {
     assert.equal(hasPassingVerification(run(verify)), false)
-    assert.equal(canAcceptTaskResult(task, run(verify)), false)
+    assert.equal(canAcceptTaskResult(task, run(verify)), true)
     assert.equal(taskNextStep(task, run(verify)).boardReview, true)
   }
 })
 
-test('verification acceptance matches the exact backend marker, without trimming', () => {
+test('the verified marker matches the exact backend format, without trimming', () => {
   for (const output_summary of [' __pipeline_result:pass:Report', '\n__pipeline_result:pass:Report', '__pipeline_result:PASS:Report']) {
-    assert.equal(canAcceptTaskResult(task, run({ ...passed, output_summary })), false)
+    assert.equal(hasPassingVerification(run({ ...passed, output_summary })), false)
   }
-  assert.equal(canAcceptTaskResult(task, run({ ...passed, output_summary: '__pipeline_result:pass:\nReport' })), true)
+  assert.equal(hasPassingVerification(run({ ...passed, output_summary: '__pipeline_result:pass:\nReport' })), true)
 })
 
-test('an active, cancelled or failed run cannot be accepted based on an older passing stage', () => {
-  for (const status of ['running', 'paused', 'cancelled', 'failed']) {
-    const currentRun = run(passed, status)
-    assert.equal(canAcceptTaskResult(task, currentRun), false)
-    assert.equal(taskNextStep(task, currentRun).boardReview, undefined)
+test('an active or paused run keeps acceptance closed; finished runs do not', () => {
+  for (const status of ['running', 'paused']) {
+    assert.equal(canAcceptTaskResult(task, run(passed, status)), false)
+    assert.equal(taskNextStep(task, run(passed, status)).boardReview, undefined)
+  }
+  for (const status of ['cancelled', 'failed']) {
+    assert.equal(canAcceptTaskResult(task, run(passed, status)), true)
+    assert.equal(taskNextStep(task, run(passed, status)).label, 'Needs attention')
+  }
+})
+
+test('only cards in review can be accepted', () => {
+  for (const status of ['backlog', 'todo', 'in_progress', 'testing', 'blocked', 'done']) {
+    assert.equal(canAcceptTaskResult({ status }, run(passed)), false)
   }
 })
 

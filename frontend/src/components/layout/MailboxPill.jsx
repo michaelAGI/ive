@@ -33,7 +33,7 @@ export default function MailboxPill({
       if (workspaceId && s.workspace_id !== workspaceId) return false
       // A closed plain terminal is not an agent waiting for review.
       if (s.cli_type === 'shell') return false
-      return (s.status === 'exited' && !dismissedInbox[s.id]) || planWaiting[s.id]
+      return (s.status === 'exited' && !dismissedInbox[s.id]) || planWaiting[s.id] || !!s.attention
     })
     .sort((a, b) => (b.last_active_at || '').localeCompare(a.last_active_at || ''))
 
@@ -94,7 +94,7 @@ export default function MailboxPill({
             Mailbox · {items.length}
           </div>
           {items.map((s) => {
-            const waiting = planWaiting[s.id]
+            const waiting = planWaiting[s.id] || !!s.attention
             return (
               <button
                 key={s.id}

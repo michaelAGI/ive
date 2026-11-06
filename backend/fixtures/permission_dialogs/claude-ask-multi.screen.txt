@@ -1,0 +1,40 @@
+
+
+⏺ I changed notes.txt from hi to hello with the Edit tool. The file is at /private/tmp/claude-501/-Users-maximilianschwa
+  rz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1/notes.txt.
+
+✻ Brewed for 5s · done 13:45
+
+❯ Fetch https://example.com with WebFetch and tell me its title.
+
+⏺ Fetch(https://example.com)
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Brewed for 3s · done 13:45
+
+❯ Use the AskUserQuestion tool to ask me exactly one question "Which colour?" with the options Red, Green and Blue,
+  then wait for my answer.
+
+⏺ User declined to answer questions
+  ⎿  · Which colour? (Red / Green / Blue)
+
+✻ Baked for 1s · done 13:45
+
+❯ Use the AskUserQuestion tool once with two questions in the same call: "Which colour?" with options Red, Green, Blue
+  (single choice) and "Which sizes?" with options S, M, L (multiSelect true). Then wait for my answers.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Colour  ☐ Sizes  ✔ Submit  →
+
+Which colour?
+
+❯ 1. Red
+     Choose red
+  2. Green
+     Choose green
+  3. Blue
+     Choose blue
+  4. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

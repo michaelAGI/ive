@@ -120,6 +120,20 @@ class QuickStartTests(unittest.IsolatedAsyncioTestCase):
         )
         return server
 
+    async def test_new_workspaces_write_the_board_doc_default_explicitly(self):
+        # A pre-existing DB keeps the old baked-in column default ('review');
+        # both quick-start inserts must therefore name the column themselves.
+        with patch.object(quick_start, "DEFAULT_NEW_COLUMN", "todo"):
+            quick = await quick_start.ensure_workspace(self.db)
+            project = self.root / "shop"
+            project.mkdir()
+            created, is_new = await quick_start.find_or_create_workspace(self.db, str(project))
+        self.assertTrue(is_new)
+        for ws_id in (quick["id"], created["id"]):
+            row = await (await self.db.execute(
+                "SELECT board_doc_new_column FROM workspaces WHERE id = ?", (ws_id,))).fetchone()
+            self.assertEqual(row["board_doc_new_column"], "todo", ws_id)
+
     async def visible_session(self, session_id, request):
         row = await (await self.db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))).fetchone()
         return dict(row) if row else None

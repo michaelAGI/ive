@@ -1,6 +1,9 @@
 // Attention is independent of the selected tab: a selected terminal can be
 // collapsed, behind Home, or in another workspace.
 
+import { parseSessionPermissionPrompt } from './sessionPrompt.js'
+import { menuFromPrompt } from './promptMenu.js'
+
 // Mirror of backend/session_attention.py `details()`: the fields a question
 // card needs without reading the terminal screen (options, actions, the
 // trimmed tool input and when the agent asked).
@@ -26,7 +29,9 @@ export function attentionDetails(data = {}, source = 'hook') {
   const message = String(data.reason || data.message || data.question || operation).slice(0, 1200)
   const compact = `${message} ${context}`.replace(/\s+/g, '').toLowerCase()
   const configuration = compact.includes('safetygate') && /missingapi[_ ]?key|notconfigured|classifierunavailable/.test(compact)
-  const permission = configuration || !!data.tool_name || /permission|confirmation|proceed|approve/i.test(message)
+  const menu = data.menu && typeof data.menu === 'object' && !Array.isArray(data.menu) ? data.menu : null
+  // A recognised dialog decides: AskUserQuestion asks, everything else approves.
+  const permission = configuration || (menu ? menu.kind !== 'question' : !!data.tool_name || /permission|confirmation|proceed|approve/i.test(message))
   return {
     kind: configuration ? 'configuration' : permission ? 'permission' : 'question',
     title: configuration ? 'Safety check needs setup' : permission ? 'Permission needed' : 'Your answer is needed',
@@ -36,6 +41,8 @@ export function attentionDetails(data = {}, source = 'hook') {
     actions: Array.isArray(data.actions) ? data.actions : [],
     notification_type: data.notification_type || '',
     tool_input: trimToolInput(data.tool_input),
+    // The recognised dialog (kind, question, options, identity) when the server sent one.
+    menu,
     // Unix seconds, like the backend. Terminal detection runs on every poll
     // and must stay byte-identical, so it carries no timestamp of its own.
     asked_at: typeof data.asked_at === 'number' ? data.asked_at : null,
@@ -45,6 +52,13 @@ export function attentionDetails(data = {}, source = 'hook') {
 const askedNow = (data) => (typeof data.asked_at === 'number' ? data : { ...data, asked_at: Date.now() / 1000 })
 
 export function detectTerminalAttention(text = '') {
+  // A recognised dialog (Claude permission, plan approval, AskUserQuestion,
+  // Codex approval) is attention on its own, also on servers without `menu`.
+  const prompt = parseSessionPermissionPrompt(String(text))
+  if (prompt) {
+    const menu = menuFromPrompt(prompt)
+    return attentionDetails({ message: prompt.question, tool_name: prompt.kind === 'question' ? '' : 'command', context: String(text).slice(-5000), menu }, 'terminal')
+  }
   // Legacy backends expose stripped scrollback. Require the approval footer
   // at the *end*, so answered prompts further up cannot become live again.
   const tail = String(text).slice(-8000)

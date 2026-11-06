@@ -1,7 +1,8 @@
 import useStore from '../state/store'
-import { clearPromptBuffer } from './outputParser'
 import { api } from './api'
 import { expandPromptTokens } from './tokens'
+import { QUESTION_OPEN_HINT, fetchPromptSnapshot, isQuestionOpenError } from './promptAnswer'
+import { broadcastFailedMessage, broadcastSkippedMessage } from './broadcastScope'
 
 /**
  * Detect @ralph in a command and start a RALPH pipeline run.
@@ -392,7 +393,7 @@ const DISCONNECTED_HOLD_MS = 60000
  * the queue, its optimistic bubble goes, the text goes back into the
  * composer of the session it was typed in, and the user gets a notice.
  */
-function failQueuedItems(sessionId, items, reason) {
+function failQueuedItems(sessionId, items, reason, code = '') {
   const list = (items || []).filter(Boolean)
   if (!list.length) return
   const store = useStore.getState()
@@ -422,8 +423,10 @@ function failQueuedItems(sessionId, items, reason) {
   }
   if (commands.includes(useStore.getState().lastSentPrompts?.[sessionId])) store.setLastSentPrompt?.(sessionId, '')
   try {
-    window.dispatchEvent(new CustomEvent('cc-terminal-send-failed', { detail: { sessionId, commands, reason } }))
+    window.dispatchEvent(new CustomEvent('cc-terminal-send-failed', { detail: { sessionId, commands, reason, code } }))
   } catch { /* non-browser test env */ }
+  // A question is open: the composer shows the menu and the hint in place.
+  if (code === 'question_open') return
   store.addNotification?.({
     type: 'warning',
     sessionId,
@@ -544,7 +547,7 @@ async function _drainCommandQueue(sessionId) {
             break
           }
           const blocker = err?.body?.startup_blocker
-          failQueuedItems(sessionId, [item], blocker?.label || err?.message || 'the agent did not take the input')
+          failQueuedItems(sessionId, [item], blocker?.label || err?.message || 'the agent did not take the input', err?.body?.code || '')
           continue
         }
         await new Promise((r) => setTimeout(r, COMMAND_SPACING_MS))
@@ -679,133 +682,48 @@ export function typeInTerminal(sessionId, text) {
   sendRaw(sessionId, text)
 }
 
-// Arrow keys for Ink's SelectInput
-const ARROW_DOWN = '\x1b[B'
-
 /**
- * Send keys sequentially with a delay to prevent pseudoterminals/Ink dropping back-to-back keys.
+ * Type text (no Enter) unless the CLI shows a dialog: a path's digits would
+ * select and confirm an option. Raw keys skip the endpoint's guard, so the
+ * check happens here: the pushed attention first, then the live screen.
  */
-function sendKeysSequentially(sessionId, keys, delay = 80) {
-  return new Promise((resolve) => {
-    let index = 0
-    function sendNext() {
-      if (index < keys.length) {
-        sendRaw(sessionId, keys[index])
-        index++
-        setTimeout(sendNext, delay)
-      } else {
-        resolve()
-      }
-    }
-    sendNext()
-  })
-}
-
-/**
- * Send a choice to the plan prompt (1=auto-accept, 2=manual, 3=give feedback).
- * Uses arrow keys since Ink's SelectInput navigates with arrows, not numbers.
- * Option 1 is pre-selected (cursor starts there).
- */
-export async function sendPlanChoice(sessionId, choice) {
-  if (!getWs() || !sessionId) return
-  // Navigate: option 1 = 0 downs, option 2 = 1 down, option 3 = 2 downs
-  const downs = Math.max(0, choice - 1)
-  const keys = []
-  for (let i = 0; i < downs; i++) {
-    keys.push(ARROW_DOWN)
+export async function typeInTerminalUnlessQuestion(sessionId, text) {
+  const store = useStore.getState()
+  let open = !!store.sessions[sessionId]?.attention
+  if (!open && usesManagedInputEndpoint(sessionId)) {
+    const snapshot = await fetchPromptSnapshot(sessionId).catch(() => null)
+    open = !!(snapshot?.menu || snapshot?.incomplete)
   }
-  keys.push('\r')
-
-  await sendKeysSequentially(sessionId, keys, 80)
-  clearPromptBuffer(sessionId)
-  useStore.getState().setSessionPlanWaiting(sessionId, false)
+  if (open) {
+    store.addNotification?.({ sessionId, type: 'warning', message: QUESTION_OPEN_HINT })
+    return false
+  }
+  sendRaw(sessionId, text)
+  return true
 }
 
 /**
- * Send feedback through option 3 of the plan prompt.
- * Navigates to option 3 (2 arrow downs + Enter), waits for the text input, then types feedback.
+ * Broadcast a command to multiple terminal sessions through the acknowledged
+ * input endpoint, one request per session: it clears the input line, types
+ * and submits like the composer, and answers 409 question_open for a session
+ * whose CLI shows a dialog. Those are skipped and counted in one notice; the
+ * text never lands in an open question.
  */
-export async function sendPlanFeedback(sessionId, feedback) {
-  if (!getWs() || !sessionId) return
-  // Step 1: Navigate to option 3 (2 arrow downs) and select (Enter)
-  await sendKeysSequentially(sessionId, [ARROW_DOWN, ARROW_DOWN, '\r'], 80)
-
-  // Step 2: Wait for Claude to show the text input, then type feedback.
-  // Submit \r in a separate frame so Ink's paste detection on long
-  // feedback bodies doesn't swallow the trailing CR.
-  setTimeout(() => {
-    sendRaw(sessionId, feedback)
-    setTimeout(() => sendRaw(sessionId, '\r'), 300)
-  }, 600)
-
-  clearPromptBuffer(sessionId)
-  useStore.getState().setSessionPlanWaiting(sessionId, false)
-}
-
-/**
- * Broadcast a command to multiple terminal sessions.
- */
-export function broadcastCommand(sessionIds, command) {
-  const ws = getWs()
-  if (!ws) return
-
+export async function broadcastCommand(sessionIds, command) {
   // Strip @global — it's a broadcast-scope directive, not a PTY command
   let processed = command.replace(/@global\s*/gi, '').trim()
   // @ralph in broadcast doesn't make sense — strip it but don't start pipeline
   processed = processed.replace(/@ralph\s*/gi, '')
   processed = processPromptTag(processed)
   processed = processTicketTag(processed)
+  const ids = [...new Set(sessionIds || [])]
+  if (!processed || !ids.length) return { sent: 0, skipped: 0, failed: 0 }
 
-  // Clear input for each session using CLI-appropriate sequence.
-  // Claude uses Escape+DEL; Gemini uses Ctrl-U (Escape can interfere
-  // with Gemini's TUI and cause premature exit).
-  const claudeIds = sessionIds.filter((id) => !isGeminiSession(id))
-  const geminiIds = sessionIds.filter((id) => isGeminiSession(id))
-  if (claudeIds.length) {
-    ws.send(JSON.stringify({
-      action: 'broadcast',
-      session_ids: claudeIds,
-      data: '\x1b' + '\x7f'.repeat(50),
-    }))
-  }
-  if (geminiIds.length) {
-    ws.send(JSON.stringify({
-      action: 'broadcast',
-      session_ids: geminiIds,
-      data: '\x15',
-    }))
-  }
-
-  setTimeout(() => {
-    const ws2 = getWs()
-    if (!ws2) return
-    const isMulti = processed.includes('\n')
-    // Always split text and \r into separate frames — combining them lets
-    // Claude's Ink paste detection swallow the trailing CR on bursts above
-    // ~80 chars. Gemini needs newlines collapsed because its TUI treats \n
-    // as Enter (submits partial lines).
-    if (claudeIds.length) {
-      ws2.send(JSON.stringify({
-        action: 'broadcast',
-        session_ids: claudeIds,
-        data: processed,
-      }))
-    }
-    if (geminiIds.length) {
-      ws2.send(JSON.stringify({
-        action: 'broadcast',
-        session_ids: geminiIds,
-        data: isMulti ? processed.replace(/\r?\n/g, ' ') : processed,
-      }))
-    }
-    setTimeout(() => {
-      const ws3 = getWs()
-      if (!ws3) return
-      ws3.send(JSON.stringify({
-        action: 'broadcast',
-        session_ids: sessionIds,
-        data: '\r',
-      }))
-    }, 400)
-  }, 300)
+  const results = await Promise.allSettled(ids.map((id) => sendManagedInput(id, processed, 0)))
+  const skipped = results.filter((result) => result.status === 'rejected' && isQuestionOpenError(result.reason)).length
+  const failed = results.filter((result) => result.status === 'rejected' && !isQuestionOpenError(result.reason)).length
+  const notify = useStore.getState().addNotification
+  if (skipped) notify?.({ type: 'warning', message: broadcastSkippedMessage(skipped) })
+  if (failed) notify?.({ type: 'error', message: broadcastFailedMessage(failed) })
+  return { sent: ids.length - skipped - failed, skipped, failed }
 }

@@ -1,0 +1,40 @@
+
+
+⏺ Write(notes.txt)
+  ⎿  Wrote 1 line to notes.txt
+      1 hi
+
+⏺ I created notes.txt with the Write tool, containing hi, at /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f
+  875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1/notes.txt.
+
+✻ Brewed for 4s · done 13:44
+
+❯ Edit notes.txt so it says hello, with the Edit tool.
+
+  Read 1 file
+
+⏺ Update(notes.txt)
+  ⎿  Added 1 line, removed 1 line
+      1 -hi
+      1 +hello
+
+⏺ I changed notes.txt from hi to hello with the Edit tool. The file is at /private/tmp/claude-501/-Users-maximilianschwa
+  rz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1/notes.txt.
+
+✻ Brewed for 5s · done 13:45
+
+❯ Fetch https://example.com with WebFetch and tell me its title.
+
+⏺ Fetch(https://example.com)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Fetch
+ Claude wants to fetch content from example.com
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ url: https://example.com/
+ prompt: What is the title of this page? Reply with the title only.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to allow Claude to fetch this content?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for example.com
+   3. No, and tell Claude what to do differently (esc)

@@ -17,7 +17,7 @@ import markDark from '../../assets/ive-mark-dark.svg'
 import useExperienceMode from '../../state/experienceMode'
 import ChatHistory from './ChatHistory'
 
-// The sidebar: brand, filter, Work (Home · Board · Review · Knowledge), the
+// The sidebar: brand, filter, Work (Home · Overview · Changes · Knowledge), the
 // project tree, Set up (Settings · Connectors · Phone), and the foot. Helper
 // sessions (Commander, Brainstormer) never appear here.
 function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {

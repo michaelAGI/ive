@@ -1,5 +1,6 @@
-// Presentation only: the unchanged live screen remains the authority for replies.
-const cleanLines = (text) => String(text || '').split('\n').map((line) => line.trim()).filter((line) => line && !/^[─━╌┄│┆\s]+$/.test(line))
+// Tone and colour only: the menu shows the CLI's own words (PromptMenu.jsx)
+// and the unchanged live dialog remains the authority for replies.
+const SETUP_ISSUE = /missing API key|not configured|fail.closed/i
 
 const PERSISTENT_RE = /^Yes, and don(?:'|’)t ask again for (.+)$/i
 
@@ -20,8 +21,33 @@ function requestVerb(kind) {
 // "Claude wants to run a command" above the exact request.
 const RULE_RE = /^[─━╌┄│┆\s]+$/
 
+// The shared excerpt (backend and browser parser) drops the dialog's rule
+// lines, yet the rule is what separates a Bash dialog's description from its
+// command. Put the rules back from the live screen, as one marker line each.
+export function excerptWithRules(excerpt, screen) {
+  if (!excerpt || !screen) return excerpt || ''
+  const want = String(excerpt).split('\n').map((line) => line.trim()).filter(Boolean)
+  const out = []
+  let next = 0
+  let started = false
+  let pendingRule = false
+  for (const row of String(screen).split('\n').map((line) => line.trim())) {
+    if (next >= want.length) break
+    if (!row) continue
+    if (RULE_RE.test(row)) { if (started) pendingRule = true; continue }
+    if (row === want[next]) {
+      if (pendingRule) out.push('────')
+      pendingRule = false
+      out.push(row)
+      next++
+      started = true
+    }
+  }
+  return next === want.length ? out.join('\n') : String(excerpt)
+}
+
 export function permissionPresentation(prompt, agent = 'The assistant') {
-  const raw = String(prompt?.excerpt || '').split('\n').map((line) => line.trim()).filter(Boolean)
+  const raw = String(prompt?.excerpt || '').split('\n').map((line) => line.trim()).filter((line) => line && !/^Tip: /.test(line))
   const kind = raw.shift() || ''
   // Claude Code prints the request itself (the command, the file, the tool)
   // right under the heading. A hook dialog puts its note first and the
@@ -53,6 +79,20 @@ export function permissionPresentation(prompt, agent = 'The assistant') {
       }
     }),
   }
+}
+
+/** A one-line notice when the request is really an IVE safety-check setup problem. */
+export function promptNotice(menu) {
+  if (!menu || !SETUP_ISSUE.test(menu.excerpt || '')) return ''
+  return 'An additional IVE safety check needs setup. Changing the agent mode does not fix this check. Review the exact request before deciding.'
+}
+
+/** 'allow' | 'deny' | 'persistent' | 'neutral' for colouring an option line. */
+export function choiceTone(option, index, menu) {
+  const label = String(option?.label || '')
+  if (/^no\b/i.test(label)) return 'deny'
+  if (/^yes\b/i.test(label)) return index === 0 ? 'allow' : 'persistent'
+  return menu?.kind === 'question' ? 'neutral' : index === 0 ? 'allow' : 'neutral'
 }
 
 export function activityLabel(steps, running) {

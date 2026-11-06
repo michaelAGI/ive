@@ -85,7 +85,7 @@ export const GUIDE_STEPS = [
       ['Kriterien abgleichen', 'Lies die Test- und Prüfberichte. Kontrolliere, was tatsächlich getestet wurde und ob deine Anforderungen erfüllt sind.'],
       ['Nachbessern lassen', 'Beschreibe fehlende Punkte im Feedback. „Create follow-up for review“ legt eine Folgeaufgabe mit eigenem Plan an.'],
     ],
-    hint: 'Offene Aufgaben findest du auf der Startseite wieder. Das „Feature Board“ bietet eine zusätzliche Übersicht.',
+    hint: 'Offene Aufgaben findest du auf der Startseite wieder. Unter „Tasks“ (⌘B) siehst du alle Karten, auch die, die auf deine Entscheidung warten.',
   },
   {
     id: 'tools', label: 'Alle Bereiche', eyebrow: 'Deine Orientierung in IVE',
@@ -111,7 +111,7 @@ export const GUIDE_STEPS = [
 // the same functions in plain German without advertising absent extensions.
 export const TOOL_EXPLANATIONS = {
   sessions: 'Öffne oder starte einen Arbeitsdialog mit einem KI-Werkzeug.',
-  'feature-board': 'Sieh geplante und laufende Aufgaben auf einem Board.',
+  'feature-board': 'Sieh geplante und laufende Aufgaben unter „Tasks“ (⌘B), auch die, die auf deine Entscheidung warten.',
   'pipeline-editor': 'Lege wiederverwendbare Abläufe aus mehreren Arbeitsschritten an.',
   inbox: 'Finde Nachrichten und Übergaben aus Sessions.',
   search: 'Suche in früheren Sessions nach deiner Arbeit.',

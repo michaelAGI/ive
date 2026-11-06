@@ -5,7 +5,7 @@ import {
   Upload, Globe, Camera, RotateCcw, Link,
   Search, Map as MapIcon, ShieldCheck, PauseCircle, Code2,
   TestTube2, Wrench, CheckCircle2, Activity, GitBranch,
-  Terminal, Clock3, CircleDot
+  Terminal, Clock3, CircleDot, Check
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { isSurfaceAvailable } from '../../lib/extensionRegistry'
@@ -13,14 +13,26 @@ import useStore from '../../state/store'
 import { matchesKey, formatKeyCombo } from '../../lib/keybindings'
 import { sendTerminalCommand } from '../../lib/terminal'
 import { useVoiceInput } from '../../hooks/useVoiceInput'
+import { hasScreenCapture, noticeFromBrowserDenial } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
+import { hasReviewTab, reviewSessionId, reviewTabFirst } from '../../lib/taskReview'
 
 import ExcalidrawWrapper, { extractDiagramNotes } from './ExcalidrawWrapper'
+import TaskReviewTab from './TaskReviewTab'
 import PipelineRunDetail from '../pipeline/PipelineRunDetail'
 import { Button } from '../ui'
 
 const STATUSES = ['backlog', 'todo', 'planning', 'in_progress', 'review', 'testing', 'documenting', 'done', 'blocked']
 const PRIORITIES = ['normal', 'high', 'critical']
-const TABS = ['details', 'history', 'scratchpad', 'preview', 'execute']
+// Review opens first for cards in review, testing or done; a card still in
+// progress with a run opens on Details and keeps Review second. Preview only
+// exists for a task that carries its own preview_url (never an iframe of IVE).
+const previewHref = (value) => { try { const url = new URL(String(value || '')); return ['http:', 'https:'].includes(url.protocol) ? url.href : '' } catch { return '' } }
+const tabsFor = (task) => {
+  const review = hasReviewTab(task) ? ['review'] : []
+  const rest = ['history', 'scratchpad', ...(previewHref(task?.preview_url) ? ['preview'] : []), 'execute']
+  return reviewTabFirst(task) ? ['review', 'details', ...rest] : ['details', ...review, ...rest]
+}
 const DELIVERY_UNAVAILABLE = 'Pipeline delivery is unavailable in this profile. Open integrated-dev to run saved recipes or stage-based execution.'
 
 function normalizePriority(priority) {
@@ -235,9 +247,19 @@ function ExecutionOption({ checked, onToggle, label, detail, tone = 'indigo', ic
   )
 }
 
-export default function TaskDetailModal({ task, workspaceId, commanderSessionId, onSave, onDelete, onClose, onCloseBoard, onDirtyChange }) {
+export default function TaskDetailModal({ task, workspaceId, commanderSessionId, onSave, onDelete, onClose, onCloseBoard, onDirtyChange, initialTab = null, onAccept, onSendBack, onOpenSession, sessionAvailable = true, actionBusy = false, checking = false }) {
   const deliveryAvailable = isSurfaceAvailable('pipeline-editor')
-  const [tab, setTab] = useState('details')
+  const tabs = useMemo(() => tabsFor(task), [task])
+  const [tab, setTab] = useState(() => (initialTab && tabs.includes(initialTab) ? initialTab : tabs[0]))
+  const [sendBackOpen, setSendBackOpen] = useState(false)
+  const sendBackRef = useRef(null)
+  // Closing the note (Cancel or Escape) returns focus to "Send back".
+  const changeSendBackOpen = useCallback((open) => {
+    setSendBackOpen(open)
+    if (!open) requestAnimationFrame(() => sendBackRef.current?.focus())
+  }, [])
+  const inReview = task.status === 'review'
+  useEffect(() => { if (!tabs.includes(tab)) setTab(tabs[0]) }, [tabs, tab])
   const [scratchMode, setScratchMode] = useState('text') // text | diagram
   const [title, setTitle] = useState(task.title || '')
   const [description, setDescription] = useState(task.description || '')
@@ -269,7 +291,7 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
   const [selectedRunDetailId, setSelectedRunDetailId] = useState(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [loadingOverview, setLoadingOverview] = useState(false)
-  const [previewUrl, setPreviewUrl] = useState(task.preview_url || window.location.origin)
+  const [previewUrl, setPreviewUrl] = useState(previewHref(task.preview_url))
   const iframeRef = useCallback((node) => { if (node) node.__iframeRef = node }, [])
   const [attachments, setAttachments] = useState([])
   const [dependsOn, setDependsOn] = useState(() => {
@@ -362,9 +384,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
       if (matchesKey(e, kb.taskTabPrev) || matchesKey(e, kb.taskTabNext)) {
         e.preventDefault()
         e.stopPropagation()
-        const curIdx = TABS.indexOf(tab)
-        if (matchesKey(e, kb.taskTabPrev) && curIdx > 0) setTab(TABS[curIdx - 1])
-        if (matchesKey(e, kb.taskTabNext) && curIdx < TABS.length - 1) setTab(TABS[curIdx + 1])
+        const curIdx = tabs.indexOf(tab)
+        if (matchesKey(e, kb.taskTabPrev) && curIdx > 0) setTab(tabs[curIdx - 1])
+        if (matchesKey(e, kb.taskTabNext) && curIdx < tabs.length - 1) setTab(tabs[curIdx + 1])
         return
       }
 
@@ -394,15 +416,15 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
 
       // ── Tab switching (when not in a form field) ──
       if (!isFormField) {
-        const curIdx = TABS.indexOf(tab)
+        const curIdx = tabs.indexOf(tab)
         if (e.key === 'ArrowLeft') {
           e.preventDefault()
-          if (curIdx > 0) setTab(TABS[curIdx - 1])
+          if (curIdx > 0) setTab(tabs[curIdx - 1])
           return
         }
         if (e.key === 'ArrowRight') {
           e.preventDefault()
-          if (curIdx < TABS.length - 1) setTab(TABS[curIdx + 1])
+          if (curIdx < tabs.length - 1) setTab(tabs[curIdx + 1])
           return
         }
         // ArrowDown → enter the content area
@@ -447,10 +469,12 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [tab])
+  }, [tab, tabs])
 
   // Screenshot using browser's screen capture API
+  const [screenshotNotice, setScreenshotNotice] = useState(null)
   const captureScreenshot = async () => {
+    setScreenshotNotice(null)
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'monitor' },
@@ -479,9 +503,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
         loadAttachments()
       }, 'image/png')
     } catch (err) {
-      if (err.name !== 'NotAllowedError') {
-        console.error('Screenshot failed:', err)
-      }
+      const notice = noticeFromBrowserDenial(err, 'screen')
+      if (notice) setScreenshotNotice(notice)
+      else if (err.name !== 'NotAllowedError') console.error('Screenshot failed:', err)
     }
   }
 
@@ -881,16 +905,21 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
         className={`x-panel shadow-x-3 overflow-hidden flex flex-col scale-in ${
           (tab === 'scratchpad' || tab === 'preview')
             ? 'w-[calc(100vw-1rem)] md:w-[95vw] h-[calc(100dvh-1rem)] md:h-[90vh]'
-            : 'w-[min(820px,calc(100vw-1rem))] max-h-[calc(100dvh-1rem)] md:max-h-[90vh]'
+            : tab === 'review'
+              ? 'w-[min(1180px,calc(100vw-1rem))] h-[min(860px,calc(100dvh-1rem))] md:h-[min(860px,90vh)]'
+              : 'w-[min(820px,calc(100vw-1rem))] max-h-[calc(100dvh-1rem)] md:max-h-[90vh]'
         }`}
+        data-task-modal={task.id}
+        data-task-tab={tab}
         onClick={(e) => e.stopPropagation()}
-        onChangeCapture={() => onDirtyChange?.(true)}
+        onChangeCapture={(event) => { if (!event.target?.closest?.('[data-card-note]')) onDirtyChange?.(true) }}
       >
         {/* Tabs and Actions bar */}
         <div ref={tabBarRef} className="flex flex-wrap items-center justify-between gap-3 border-b border-x-line px-4 md:px-5 py-2.5 bg-x-surface-2 shrink-0 select-none">
           <div className="flex max-w-full items-center gap-1 overflow-x-auto bg-x-surface-2 p-0.5 rounded-xl border border-x-line tab-scroll-hide">
-            {TABS.map((t) => {
-              const label = t === 'details' ? 'Details' :
+            {tabs.map((t) => {
+              const label = t === 'review' ? 'Review' :
+                            t === 'details' ? 'Details' :
                             t === 'history' ? `History${(task.iteration || 1) > 1 ? ` (${(task.iteration || 1) - 1})` : ''}` :
                             t === 'scratchpad' ? `Scratchpad${(scratchText || diagramData) ? ' *' : ''}` :
                             t === 'preview' ? 'Preview' : 'Execute'
@@ -914,7 +943,15 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
             })}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 min-w-0" data-testid="task-modal-actions">
+            {inReview && (
+              <>
+                <Button size="sm" variant="primary" icon={Check} disabled={actionBusy || !onAccept} onClick={() => onAccept?.(task)} title="Move the card to Done">Accept</Button>
+                <Button ref={sendBackRef} size="sm" icon={RotateCcw} disabled={actionBusy} aria-expanded={sendBackOpen} onClick={() => { setTab('review'); setSendBackOpen((open) => !open) }} title="Back to To Do with a note">Send back</Button>
+                {reviewSessionId(task) && sessionAvailable && <Button size="sm" icon={Terminal} onClick={() => onOpenSession?.(task)}>Open session</Button>}
+                {reviewSessionId(task) && !sessionAvailable && <span className="text-[11px] text-x-muted whitespace-nowrap" data-testid="modal-session-gone">Session no longer exists</span>}
+              </>
+            )}
             <button
               onClick={async () => {
                 try {
@@ -949,6 +986,22 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
         </div>
 
         <div ref={contentRef} className="flex-1 overflow-y-auto p-3 md:p-4" style={{ minHeight: 0 }}>
+          {/* ─── Review: what the agent did, the diff, the checks, the timeline ─── */}
+          {tab === 'review' && (
+            <TaskReviewTab
+              task={task}
+              workspace={currentWorkspace}
+              events={taskEvents}
+              historyLoading={historyLoading}
+              onOpenRun={deliveryAvailable ? (runId) => setSelectedRunDetailId(runId) : null}
+              onSendBack={onSendBack}
+              sendBackOpen={inReview && sendBackOpen}
+              onSendBackOpenChange={changeSendBackOpen}
+              busy={actionBusy}
+              checking={checking}
+            />
+          )}
+
           {/* ─── Details ─── */}
           {tab === 'details' && (
             <div className="flex flex-col md:flex-row gap-5 h-full">
@@ -1585,13 +1638,13 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
                 >
                   <ExternalLink size={10} /> open
                 </Button>
-                <Button type="submit"
+                {hasScreenCapture() && <Button type="submit"
                   onClick={captureScreenshot}
                   className="flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium bg-x-tint border border-x-accent/30 text-x-accent hover:bg-x-accent/15 transition-colors duration-[80ms]"
                   title="Browser will ask you to pick a screen/window to capture"
                 >
                   <Camera size={10} /> screenshot & attach
-                </Button>
+                </Button>}
                 <Button type="submit"
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('open-live-preview', {
@@ -1605,6 +1658,9 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
                   <Camera size={10} /> Live Annotator
                 </Button>
               </div>
+              {screenshotNotice && (
+                <MacPermissionNotice notice={screenshotNotice} onRetry={captureScreenshot} onDismiss={() => setScreenshotNotice(null)} className="mb-2" />
+              )}
               <div className="flex-1 rounded-lg border border-x-line overflow-hidden bg-white">
                 <iframe
                   ref={iframeRef}
@@ -1861,16 +1917,19 @@ export default function TaskDetailModal({ task, workspaceId, commanderSessionId,
         </div>
 
         <div className="flex flex-wrap items-center gap-3 px-4 md:px-5 py-2.5 border-t border-x-line bg-x-surface-2 shrink-0 select-none text-[11px] text-x-faint">
-          <Button type="submit"
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 h-[30px] px-4 text-[13px] bg-x-accent hover:bg-x-accent-ink disabled:opacity-40 text-x-on-accent font-medium active:scale-[0.98] transition-colors duration-[80ms] ease-x cursor-pointer"
-          >
-            <Save size={13} strokeWidth={1.75} /> {saving ? 'saving...' : 'Save Changes'}
-          </Button>
+          {/* The Review tab has nothing to save; its actions sit in the header. */}
+          {tab !== 'review' && (
+            <Button type="submit"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-1.5 h-[30px] px-4 text-[13px] bg-x-accent hover:bg-x-accent-ink disabled:opacity-40 text-x-on-accent font-medium active:scale-[0.98] transition-colors duration-[80ms] ease-x cursor-pointer"
+            >
+              <Save size={13} strokeWidth={1.75} /> {saving ? 'saving...' : 'Save Changes'}
+            </Button>
+          )}
           <div className="flex-1" />
           <span className="hidden md:inline text-[11px] text-x-faint">
-            <kbd className="text-x-faint">⌘S</kbd> save · <kbd className="text-x-faint">{formatKeyCombo(useStore.getState().keybindings.taskTabPrev)}/{formatKeyCombo(useStore.getState().keybindings.taskTabNext)}</kbd> tabs · <kbd className="text-x-faint">{formatKeyCombo(useStore.getState().keybindings.taskFieldPrev)}/{formatKeyCombo(useStore.getState().keybindings.taskFieldNext)}</kbd> fields
+            {tab !== 'review' && <><kbd className="text-x-faint">⌘S</kbd> save · </>}<kbd className="text-x-faint">{formatKeyCombo(useStore.getState().keybindings.taskTabPrev)}/{formatKeyCombo(useStore.getState().keybindings.taskTabNext)}</kbd> tabs{tab !== 'review' && <> · <kbd className="text-x-faint">{formatKeyCombo(useStore.getState().keybindings.taskFieldPrev)}/{formatKeyCombo(useStore.getState().keybindings.taskFieldNext)}</kbd> fields</>}
           </span>
           {task.created_at && (
             <span>created {task.created_at?.replace('T', ' ').slice(0, 16)}</span>
