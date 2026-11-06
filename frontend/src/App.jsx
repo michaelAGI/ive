@@ -825,6 +825,7 @@ export default function App() {
       if (panel === 'mac-power') setSettingsSection('mac-power')
       if (panel === 'model-providers') setSettingsSection('model-providers')
       if (panel === 'sound-settings') setSettingsSection('sound-settings')
+      if (panel === 'dictation') setSettingsSection('dictation')
       if (panel === 'workspace-settings') { setWsSettingsInitialId(useStore.getState().activeWorkspaceId); setSettingsSection('workspace-settings') }
       if (panel === 'experimental') setSettingsSection('experimental')
       if (panel === 'safety') setSettingsSection('safety')
@@ -1140,6 +1141,7 @@ export default function App() {
       'mac-power': () => setSettingsSection('mac-power'),
       'model-providers': () => setSettingsSection('model-providers'),
       'sound-settings': () => setSettingsSection('sound-settings'),
+      'dictation': () => setSettingsSection('dictation'),
       'workspace-settings': () => { setWsSettingsInitialId(useStore.getState().activeWorkspaceId); setSettingsSection('workspace-settings') },
       'api-keys': () => setSettingsSection('api-keys'),
       'phone-access': () => setSettingsSection('phone-access'),

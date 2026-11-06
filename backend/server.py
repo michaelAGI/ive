@@ -33861,6 +33861,9 @@ def create_app() -> web.Application:
     app.router.add_post("/api/workspaces/{id}/voice/summarize", _g(voice_summarize, "code", "full"))
     app.router.add_post("/api/workspaces/{id}/voice/tts", _g(voice_tts, "code", "full"))
     app.router.add_get("/api/workspaces/{id}/voice/live", _g(voice_live, "code", "full"))
+    # On-device dictation (Settings → Dictation; backend/dictation.py)
+    from dictation import register_dictation_routes
+    register_dictation_routes(app, _g, _owner)
     app.router.add_get("/api/workspaces/{id}/files", list_workspace_files)
 
     # Memory sync — static sub-paths before {id} placeholders

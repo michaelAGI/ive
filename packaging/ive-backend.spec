@@ -50,7 +50,7 @@ modules.append("ive_research_mcp")
 modules += ["playwright.__main__", "playwright.async_api", "playwright.sync_api", "keyring.backends.macOS"]
 
 datas = []
-for name in ("skills_catalog.json", "mcp_config_template.json", "avcp.sh"):
+for name in ("skills_catalog.json", "mcp_config_template.json", "avcp.sh", "dictation_worker.py", "dictation-requirements.txt"):
     datas.append((str(BACKEND / name), "backend"))
 for folder in ("frontend/dist", "extensions/sandbox", "anti-vibe-code-pwner", "backend/skills"):
     for path in sorted((ROOT / folder).rglob("*")):

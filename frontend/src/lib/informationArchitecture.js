@@ -172,6 +172,10 @@ export const IA_GROUPS = [{
     label: 'Sound Notifications',
     description: 'Choose sounds for updates and requests.'
   }, {
+    id: 'dictation',
+    label: 'Dictation',
+    description: 'On-device speech-to-text for the microphone button.'
+  }, {
     id: 'experimental',
     label: 'Experimental Features',
     description: 'Choose whether to try features still under development.'

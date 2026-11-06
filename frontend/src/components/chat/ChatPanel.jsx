@@ -3048,7 +3048,6 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const hasComposerAttachments = pastedImages.length > 0 || hasComposerAnnotations
   const [runtimeNow, setRuntimeNow] = useState(Date.now())
   const [localBusyStartedAt, setLocalBusyStartedAt] = useState(null)
-  const hasSpeechSupport = typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition)
 
   const chatContext = useChatContext(sessionId)
   const contextSearch = useContextSearch(sessionId, showAutocomplete && autocompleteType === 'at' ? autocompleteQuery : null)
@@ -3124,7 +3123,9 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       return `${prev}${sep}${cleaned}`
     })
   }, [])
-  const { listening, toggle: toggleListening } = useVoiceInput(appendVoiceResult)
+  const {
+    listening, toggle: toggleListening, supported: hasSpeechSupport, interim: voiceInterim, status: voiceStatus,
+  } = useVoiceInput(appendVoiceResult)
   const liveTerminalSessions = useMemo(() => {
     if (!sessionId || !session) return []
     return Object.values(sessions)
@@ -4982,7 +4983,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
             </div>
           )}
 
-          <SessionPromptActions ref={promptActionsRef} sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} variant={inGrid ? 'tile' : 'card'} hint={promptHint} keyboard={!inFlowComposer} />
+          <SessionPromptActions ref={promptActionsRef} sessionId={sessionId} active={sessionDisplayMeta.tone === 'waiting'} disabled={composerUnavailable || !!session?.read_only} variant={inFlowComposer ? 'tile' : 'card'} hint={promptHint} keyboard={!inFlowComposer} />
 
           {showSessionRecovery && (
             <div role="alert" data-chat-delivery-issue className="rounded-lg border border-x-line-strong bg-x-surface px-3 py-2 text-xs text-x-ink">
@@ -5214,6 +5215,13 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
               the side question on the left; model, effort and agent mode on the
               right; one round send button. Stop sits next to it while the agent
               works. Tiles and the phone get the compact variant. */}
+          {listening && (
+            <div className="truncate px-3 pb-1 text-xs text-x-muted" role="status" aria-live="polite">
+              {voiceStatus === 'loading' ? 'Loading the speech model…'
+                : voiceStatus === 'connecting' ? 'Starting dictation…'
+                : voiceInterim || 'Listening…'}
+            </div>
+          )}
           <form onSubmit={handleSend} className={`x-composer ive-session-composer ive-composer${inFlowComposer ? ' ive-composer--compact' : ''}`} data-chat-composer="">
             <input type="file" ref={fileInputRef} onChange={handleFileChange} multiple className="hidden" />
             <div className="ive-composer-field">

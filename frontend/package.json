@@ -40,6 +40,7 @@
     "test:onboarding:browser": "vite build --configLoader runner --logLevel warn && node --test tests/onboarding.mjs",
     "test:onboarding:webkit": "vite build --configLoader runner --logLevel warn && IVE_QA_BROWSER=webkit node --test tests/onboarding.mjs",
     "test:mobile": "node --test tests/mobile.mjs",
+    "test:dictation": "node --test tests/dictation-unit.mjs",
     "test:phone": "node --test tests/phone.mjs",
     "test:phone-keys": "node --test tests/phone-keys-unit.mjs",
     "test:e2e": "node ../e2e/run.mjs",

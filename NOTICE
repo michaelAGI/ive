@@ -18,6 +18,13 @@ It includes the following third-party material:
   They are trademarks of their owners and are not covered by IVE's license.
   Sources are listed in frontend/src/assets/providers/SOURCES.md.
 
+- On-device dictation (Settings > Dictation) downloads, on the user's request and
+  outside this package: NVIDIA Parakeet TDT 0.6B v3 (CC-BY-4.0, converted by the
+  mlx-community as mlx-community/parakeet-tdt-0.6b-v3), the Apache-2.0 package
+  parakeet-mlx, mlx and mlx-metal (MIT), numpy (BSD-3-Clause), dacite (MIT), and in
+  the packaged app a python-build-standalone interpreter (PSF-2.0). Versions and
+  checksums are pinned in backend/dictation.py and backend/dictation-requirements.txt.
+
 Python, npm and Rust dependencies are not bundled in this repository. They are
 installed separately and keep their own licenses, listed in
 backend/requirements.txt, frontend/package-lock.json and

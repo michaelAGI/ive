@@ -88,7 +88,7 @@ def verify_export(app, expected_paths, team):
         authorities = re.findall(r'^Authority=(Developer ID Application: .+)$', details.stdout+details.stderr, re.M)
         if details.returncode or len(authorities) != 1 or SIGN.validate_identity(authorities[0]) != team:
             raise RuntimeError(f'Export did not Developer-ID-sign required code: {relative}')
-        SIGN.verify_signature(path, authorities[0], team, node=(Path(relative) == SIGN.NODE))
+        SIGN.verify_signature(path, authorities[0], team, node=(Path(relative) == SIGN.NODE), app=(Path(relative) == Path('.')))
         SIGN.run(['/usr/bin/codesign', '--verify', '--strict', '-R', requirement, str(path)])
         if Path(relative).name == 'ive-phone-power':
             SIGN.run(['/usr/bin/codesign', '--verify', '--strict', '-R',
@@ -109,10 +109,9 @@ def perform_export(source, output, team, audit, targets, report):
     try:
         app.parent.mkdir(parents=True)
         SIGN.run(['/usr/bin/ditto', str(source), str(app)])
-        entitlements = output/'node-entitlements.plist'
-        entitlements.write_bytes(plistlib.dumps(SIGN.JIT_ENTITLEMENTS))
+        entitlements = SIGN.write_entitlement_files(output)
         for relative in targets:
-            SIGN.run(adhoc_command(app/relative, entitlements if relative == SIGN.NODE else None))
+            SIGN.run(adhoc_command(app/relative, entitlements.get(relative)))
         SIGN.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)])
         (archive/'Info.plist').write_bytes(plistlib.dumps(archive_metadata(source, team)))
         options.write_bytes(plistlib.dumps(export_options(team)))
@@ -157,7 +156,7 @@ def main():
     report = {'source': str(source), 'output': str(output), 'team_id': team,
               'dry_run': args.dry_run, 'completed': False, 'signed': False, 'notarized': False,
               'export_options': export_options(team), 'macho_count': len(audit['macho_images']),
-              'signing_order': [{'path': str(path), 'entitlements': SIGN.JIT_ENTITLEMENTS if path == SIGN.NODE else {}}
+              'signing_order': [{'path': str(path), 'entitlements': SIGN.entitlements_for(path)}
                                 for path in targets],
               'export_command': export_command(output/f'{source.stem}.xcarchive', output/'export', output/'ExportOptions.plist')}
     if args.dry_run:

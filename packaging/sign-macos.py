@@ -30,6 +30,8 @@ GUARD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GUARD)
 NODE = Path('Contents/Resources/backend/_internal/playwright/driver/node')
 JIT_ENTITLEMENTS = {'com.apple.security.cs.allow-jit': True}
+# The hardened runtime blocks the microphone unless the app itself asks for it.
+APP_ENTITLEMENTS = plistlib.loads((HERE/'ive-app.entitlements').read_bytes())
 SOURCES = [
     'https://developer.apple.com/documentation/security/customizing-the-notarization-workflow',
     'https://developer.apple.com/documentation/apple-silicon/porting-just-in-time-compilers-to-apple-silicon',
@@ -52,6 +54,17 @@ def validate_paths(source, output):
     if output.is_relative_to(source) or source.is_relative_to(output):
         raise ValueError('Source and output must not contain each other')
     return source, output
+
+
+def entitlements_for(relative):
+    return JIT_ENTITLEMENTS if relative == NODE else APP_ENTITLEMENTS if relative == Path('.') else {}
+
+
+def write_entitlement_files(output):
+    paths = {NODE: output/'node-entitlements.plist', Path('.'): output/'app-entitlements.plist'}
+    for relative, path in paths.items():
+        path.write_bytes(plistlib.dumps(entitlements_for(relative)))
+    return paths
 
 
 def signing_targets(source, audit):
@@ -87,7 +100,7 @@ def resolve_identity(identity):
     return matches[0]
 
 
-def verify_signature(path, identity, team, node=False):
+def verify_signature(path, identity, team, node=False, app=False):
     run(['/usr/bin/codesign', '--verify', '--strict', str(path)])
     details = subprocess.run(['/usr/bin/codesign', '-d', '--verbose=4', str(path)],
                              capture_output=True, text=True, check=False)
@@ -100,6 +113,11 @@ def verify_signature(path, identity, team, node=False):
         entitlements = run(['/usr/bin/codesign', '-d', '--entitlements', '-', '--xml', str(path)])
         if plistlib.loads(entitlements.encode()) != JIT_ENTITLEMENTS:
             raise RuntimeError('Node must have exactly the allow-jit entitlement')
+    if app:
+        # Export may add identifiers, so this checks only what the microphone needs.
+        entitlements = run(['/usr/bin/codesign', '-d', '--entitlements', '-', '--xml', str(path)])
+        if not entitlements.strip() or any(plistlib.loads(entitlements.encode()).get(key) is not True for key in APP_ENTITLEMENTS):
+            raise RuntimeError('The app is missing its microphone entitlement')
 
 
 def notary_submit(path, profile, output):
@@ -132,12 +150,11 @@ def execute(source, output, identity, team, targets, profile, report):
     app = output/source.name
     try:
         run(['/usr/bin/ditto', str(source), str(app)])
-        entitlement_path = output/'node-entitlements.plist'
-        entitlement_path.write_bytes(plistlib.dumps(JIT_ENTITLEMENTS))
+        entitlement_paths = write_entitlement_files(output)
         for relative in targets:
             target = app/relative
-            run(codesign_command(target, fingerprint, entitlement_path if relative == NODE else None))
-            verify_signature(target, identity, team, node=(relative == NODE))
+            run(codesign_command(target, fingerprint, entitlement_paths.get(relative)))
+            verify_signature(target, identity, team, node=(relative == NODE), app=(relative == Path('.')))
         run(['/usr/bin/codesign', '--verify', '--deep', '--strict', str(app)])
         with (app/'Contents/Info.plist').open('rb') as stream:
             version = plistlib.load(stream)['CFBundleShortVersionString']
@@ -195,7 +212,7 @@ def main():
     report = {'source': str(source), 'output': str(output), 'team_id': team, 'dry_run': args.dry_run,
               'signed': False, 'notarized': False, 'completed': False,
               'upload_requested': bool(args.notary_profile), 'sources': SOURCES,
-              'signing_order': [{'path': str(path), 'entitlements': JIT_ENTITLEMENTS if path == NODE else {}}
+              'signing_order': [{'path': str(path), 'entitlements': entitlements_for(path)}
                                 for path in targets]}
     if args.dry_run:
         print(json.dumps(report, indent=2))

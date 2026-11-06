@@ -148,6 +148,7 @@ export const TOOL_EXPLANATIONS = {
   accounts: 'Verwalte Konten und Identitäten deiner KI-Werkzeuge.',
   connectors: 'Verbinde deine KI-Konten, Apps und eigene Verbindungen an einem Ort.',
   'sound-settings': 'Stelle akustische Hinweise ein.',
+  dictation: 'Richte die Spracheingabe ein, die auf diesem Mac läuft.',
   experimental: 'Aktiviere bei Bedarf Funktionen, die noch experimentell sind.',
   'grid-templates': 'Passe die Anordnung mehrerer Sessions an.',
   shortcuts: 'Finde und ändere Tastenkombinationen.',

@@ -1,4 +1,4 @@
-import { Plus, SquareTerminal, FolderOpen, X, ToggleLeft, Settings, BookOpen, FileText, Keyboard, Square, Shield, Columns, Columns3, Radio, Search, Copy, Download, Layout, LayoutGrid, History, Inbox, ListChecks, Kanban, GitBranch, GitCompareArrows, StickyNote, User, RotateCcw, Package, FlaskConical, Zap, Volume2, MessageSquareQuote, ListOrdered, Server, Sparkles, Brain, MessagesSquare, MessageSquare, ExternalLink, BookOpenCheck, Key, Telescope, Newspaper, Share2, FileCode2, Sliders, ScrollText, Boxes, Coins, Eye, Smartphone, Home, SunMoon, Lightbulb } from 'lucide-react';
+import { Plus, SquareTerminal, FolderOpen, X, ToggleLeft, Settings, BookOpen, FileText, Keyboard, Square, Shield, Columns, Columns3, Radio, Search, Copy, Download, Layout, LayoutGrid, History, Inbox, ListChecks, Kanban, GitBranch, GitCompareArrows, StickyNote, User, RotateCcw, Package, FlaskConical, Zap, Volume2, MessageSquareQuote, ListOrdered, Server, Sparkles, Brain, MessagesSquare, MessageSquare, ExternalLink, BookOpenCheck, Key, Telescope, Newspaper, Share2, FileCode2, Sliders, ScrollText, Boxes, Coins, Eye, Smartphone, Home, SunMoon, Lightbulb, Mic } from 'lucide-react';
 import { isSurfaceAvailable } from './extensionRegistry';
 import { getKeybindings, formatKeyCombo } from './keybindings';
 export const ACTIONS = [{
@@ -449,6 +449,13 @@ export const ACTIONS = [{
   label: 'Sound Notifications',
   icon: Volume2,
   section: 'Config',
+  hideFromPanel: true
+}, {
+  id: 'dictation',
+  label: 'Dictation',
+  icon: Mic,
+  section: 'Config',
+  hint: 'On-device speech-to-text for the microphone button',
   hideFromPanel: true
 }, {
   id: 'api-keys',
