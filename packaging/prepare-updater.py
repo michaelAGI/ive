@@ -20,7 +20,7 @@ def verify_app(app):
     run('/usr/bin/codesign', '--verify', '--deep', '--strict', str(app))
     run('/usr/bin/xcrun', 'stapler', 'validate', str(app))
     run('/usr/sbin/spctl', '--assess', '--type', 'execute', str(app))
-    details = run('/usr/bin/codesign', '-dv', str(app)).stderr
+    details = run('/usr/bin/codesign', '-dvv', str(app)).stderr
     if 'TeamIdentifier=66Y43UAY3C' not in details or 'Authority=Developer ID Application:' not in details:
         raise ValueError('The app must carry the IVE Developer ID signature.')
 
