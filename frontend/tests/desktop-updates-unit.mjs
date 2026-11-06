@@ -58,9 +58,11 @@ test('repeated install clicks cannot install twice', async () => {
   await Promise.all([c.install(), c.install()])
   assert.equal(calls.filter(c => c.command === 'desktop_update_install').length, 1)
 })
-test('web mode and older native shells do not expose unsupported update controls', async () => {
+test('web mode hides updates while a native initialization failure remains recoverable', async () => {
   const c = createUpdateController({ supported: false, invoke() { throw new Error('Must not invoke') } })
   await c.initialize(); assert.equal(c.getSnapshot().supported, false)
   const old = fixture({ failure: 'desktop_update_status' }); await old.controller.initialize()
-  assert.equal(old.controller.getSnapshot().supported, false)
+  assert.equal(old.controller.getSnapshot().supported, true)
+  assert.equal(old.controller.getSnapshot().error, 'Failed operation')
+  assert.equal(await old.controller.check(), true)
 })

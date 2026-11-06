@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-needs-you-notify"
+description = "Enables the needs_you_notify command without any pre-configured scope."
+commands.allow = ["needs_you_notify"]
+
+[[permission]]
+identifier = "deny-needs-you-notify"
+description = "Denies the needs_you_notify command without any pre-configured scope."
+commands.deny = ["needs_you_notify"]

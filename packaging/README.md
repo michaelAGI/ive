@@ -72,6 +72,8 @@ Publish `IVE-macOS-arm64.dmg`, its checksum, `IVE-macOS-arm64.app.tar.gz`, its `
 
 The native tests exercise signed temporary packages, tampering, signed-version mismatches and downgrade refusal. After producing the real assets, also run the ignored `release_artifact_upgrades_an_isolated_previous_app` test with `IVE_QA_UPDATER_RELEASE` pointing to the release directory and `IVE_QA_UPDATER_OLD_APP` pointing to the previous app artifact. It updates a temporary copy and validates its Apple signature and ticket; it never replaces `/Applications/IVE.app`.
 
+Also verify Settings → General → IVE updates in a real WKWebView: the installed version must appear, the automatic preference must persist, and a live check must reach the release feed. Mocked browser IPC does not exercise Tauri's remote-origin ACL. App commands are declared in `build.rs` and granted explicitly in the main-window capability. Keep initialization failures visible so users can retry. For native UI QA, launch with isolated data and port, prove readiness before attaching UI tools, and confirm the displayed port; macOS may otherwise select or launch another copy with the same bundle identifier.
+
 ## Verification
 
 Keep installer-specific evidence under `packaging/artifacts/` (ignored). Check the frozen backend in a fresh data directory, internal MCP startup, app-owned start/stop/restart, persistent data, occupied port behavior, matching source/resource manifest, DMG mount/install, architecture and code signature. Browser checks use the Playwright plugin against the app's own local backend. A passing browser check is not a claim that every WebKit/native permission or external integration was exercised.

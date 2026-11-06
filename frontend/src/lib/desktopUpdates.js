@@ -33,7 +33,7 @@ export function createUpdateController(transport) {
     async initialize() {
       if (!state.supported) return
       try { set(await transport.invoke('desktop_update_status')) }
-      catch { set({ supported: false }) }
+      catch (error) { set({ error: typeof error === 'string' ? error : error?.message || 'Updates could not be initialized. Restart IVE and try again.' }) }
     },
     check: () => run('checking', async () => {
       set({ ...await transport.invoke('desktop_update_check'), checked: true })
