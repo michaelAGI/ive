@@ -9,10 +9,11 @@ import { excerptWithRules, permissionPresentation } from '../../lib/conversation
 const isEditable = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
 
 // The current terminal dialog, answered in place. A permission request in the
-// chat (variant 'card' | 'tile') is drawn like a chat app draws it: who wants
-// what, the exact command or file, then the same 1 / 2 / 3 choices as the
-// terminal. Plan approvals, AskUserQuestion menus, Codex dialogs and the band
-// above a terminal tile (variant 'band') show the dialog 1:1 (PromptMenu).
+// full session view (variant 'card') is drawn like a chat app draws it: who
+// wants what, the exact command or file, then the same 1 / 2 / 3 choices as
+// the terminal. Plan approvals, AskUserQuestion menus, Codex dialogs, Board
+// tiles (variant 'tile') and the band above a terminal tile (variant 'band')
+// show the dialog 1:1 (PromptMenu).
 // Every reply goes through the guarded endpoint against the exact dialog on
 // screen. The imperative handle lets the composer route Enter and y/n/1-9
 // shortcuts through the same reply.
@@ -33,9 +34,10 @@ export default function SessionPromptActions({ ref, sessionId, active, disabled 
   const waiting = active && !menu && !answered && (!current?.screen?.trim() || current?.incomplete)
   const unavailable = disabled || hookUnavailable
   const agent = cliType === 'codex' ? 'Codex' : cliType === 'gemini' ? 'Gemini' : cliType === 'antigravity' ? 'Antigravity' : 'Claude'
-  // A Claude Code permission dialog in the chat is the card; everything else
-  // (plans, questions, Codex's question-first dialogs, terminal bands) stays 1:1.
-  const asCard = !band && !!menu && menu.kind === 'permission' && menu.answerable !== false && !questionFirst(menu)
+  // A Claude Code permission dialog in the full session view is the card;
+  // everything else (plans, questions, Codex's question-first dialogs, Board
+  // tiles and terminal bands) shows the dialog 1:1.
+  const asCard = variant === 'card' && !!menu && menu.kind === 'permission' && menu.answerable !== false && !questionFirst(menu)
   const presentation = asCard
     ? permissionPresentation({ excerpt: excerptWithRules(menu.excerpt, current?.screen), choices: menu.options.map((option) => ({ value: option.key, label: option.label })) }, agent)
     : null

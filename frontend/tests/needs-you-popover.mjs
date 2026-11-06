@@ -22,7 +22,7 @@ const desk = (extra = {}) => ({ activeWorkspaceId: 'w', activeSessionId: 's', op
 async function fixture({ theme = 'light', width = 1440, hash = '#session-s', storage = {}, sessions, screens } = {}) {
   const rows = sessions || [session('s', 'Orbit chat', null), session('t', 'Orbit terminal', attentionFor(EDIT_THREE))]
   const f = await createTourFixture(browser, { width, height: 960, theme, settings: { product_tour_version: '2' }, workspaces: [workspace], sessions: rows,
-    storage: { 'ive.operator-desk': desk(), 'ive.grid-session-views': { s: 'chat', t: 'terminal' }, 'cc-gridColumns': '2', ...storage },
+    storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': desk(), 'ive.grid-session-views': { s: 'chat', t: 'terminal' }, 'cc-gridColumns': '2', ...storage },
     messages: Object.fromEntries(rows.map((row) => [row.id, row.id === 's' ? [{ id: 'user', session_id: 's', role: 'user', content: 'Find the Orbit traffic project.', created_at: '2026-10-25T09:56:00Z' }] : []])) })
   f.screens = screens || Object.fromEntries(rows.map((row) => [row.id, row.id === 's' ? '' : EDIT_THREE]))
   f.inputs = Object.fromEntries(rows.map((row) => [row.id, []]))
@@ -189,7 +189,8 @@ try {
   {
     const older = attentionFor(BASH_TWO, { tool_name: 'Bash', tool_input: { command: "ls -d */ Projects/*/ | grep -i 'orbit|traffic'" }, asked_at: 1760435600 })
     const f = await fixture({ sessions: [session('s', 'Orbit chat', older), session('t', 'Orbit terminal', attentionFor(EDIT_THREE))], screens: { s: BASH_TWO, t: EDIT_THREE } }); const p = f.page
-    await p.locator('[data-session-view="s"] [data-prompt-menu="s"] [role="listbox"]').waitFor()
+    // The open session shows its permission dialog as the chat card (no listbox).
+    await p.locator('[data-session-view="s"] [data-prompt-menu="s"]').waitFor()
     await card(p, 't').waitFor()
     assert.equal(await card(p, 's').count(), 0, 'the open session never gets a card')
     await p.evaluate(() => document.activeElement?.blur?.())
@@ -210,7 +211,7 @@ try {
   {
     const asked = { t: 1760435700, u: 1760435500, v: 1760435600, x: 1760435800, y: 1760435900 }
     const rows = [session('s', 'Orbit chat', null), ...Object.entries(asked).map(([id, at]) => session(id, `Session ${id.toUpperCase()}`, attentionFor(EDIT_THREE, { asked_at: at })))]
-    const f = await fixture({ hash: '#home', sessions: rows, storage: { 'ive.operator-desk': desk({ openTabs: ['s', ...Object.keys(asked)], showHome: true, sessionFocus: false }) } }); const p = f.page
+    const f = await fixture({ hash: '#home', sessions: rows, storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': desk({ openTabs: ['s', ...Object.keys(asked)], showHome: true, sessionFocus: false }) } }); const p = f.page
     await card(p, 'u').waitFor()
     assert.deepEqual(await popover(p).locator('[data-needs-you-card]').evaluateAll((els) => els.map((el) => el.getAttribute('data-needs-you-card'))), ['u', 'v', 't'])
     assert.equal(await popover(p).locator('[data-needs-you-more]').innerText(), '+2 more')
@@ -222,7 +223,7 @@ try {
     await p.screenshot({ path: `${out}needs-you-${engine}-stack.png`, fullPage: true })
     // The fourth question (x) has no card ("+2 more") and no menu on Home: ⌘⇧Y opens its session and takes its menu.
     await p.keyboard.press('Meta+Shift+Y')
-    await p.locator('[data-session-view="x"] [data-prompt-menu="x"] [role="listbox"]').waitFor()
+    await p.locator('[data-session-view="x"] [data-prompt-menu="x"]').waitFor()
     await p.waitForFunction(() => document.activeElement?.closest?.('[data-prompt-menu]')?.getAttribute('data-prompt-menu') === 'x')
     assert.equal(await focusedCard(p), 'DIV', 'the session menu, not a card')
     assert.equal(Object.values(f.inputs).flat().length, 0)

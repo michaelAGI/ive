@@ -20,7 +20,7 @@ async function fixture(theme = 'light', width = 1440) {
     workspaces: [{ id: 'w', name: 'Orbit', path: '/isolated/orbit' }],
     // 't' asked first: ⌘⇧Y starts there.
     sessions: [session('s', 'Orbit chat', 1760435800), session('t', 'Orbit terminal', 1760435700)],
-    storage: { 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'terminal' }, 'cc-gridColumns': '2' },
+    storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'chat', t: 'terminal' }, 'cc-gridColumns': '2' },
     messages: { s: [{ id: 'user', session_id: 's', role: 'user', content: 'Find the Orbit traffic project.', created_at: '2026-10-25T09:56:00Z' }], t: [] } })
   f.screens = { s: width < 1024 ? BASH_LONG : BASH_TWO, t: EDIT_THREE }
   f.viewState = { s: null, t: null }
