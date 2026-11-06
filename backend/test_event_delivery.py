@@ -90,8 +90,9 @@ class ScopedCommanderBroadcastTests(unittest.IsolatedAsyncioTestCase):
         self.joiner = FakeSocket(workspace_id='w1')
         self.other = FakeSocket(workspace_id='w2')
         clients = {self.owner, self.joiner, self.other}
-        ns = load_functions('server.py', {'broadcast', '_broadcast_commander_event', '_workspace_visible_to_auth'},
+        ns = load_functions('server.py', {'broadcast', '_broadcast_ordered', '_broadcast_commander_event', '_workspace_visible_to_auth'},
             json=json, ws_clients=clients, asyncio=asyncio,
+            _session_broadcast_locks={},
             get_session_config=AsyncMock(side_effect=lambda sid: {'id': sid, 'workspace_id': 'w1'} if sid == 's1' else None),
             _session_readable_to_auth=lambda session, ctx: ctx.is_owner or ctx.workspace_id == session.get('workspace_id'),
             _process_test_queue=AsyncMock())

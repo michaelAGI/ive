@@ -91,6 +91,7 @@ export async function createTourFixture(browser, options = {}) {
   }
   const controls = {
     emit(event) { broadcast(event) },
+    disconnect() { for (const socket of sockets) socket.close({ code: 1001, reason: 'Isolated reconnect test' }) },
     failSave: Boolean(options.failSave), failInput: false, failExecute: false, failAccept: false, failChanges: false,
     failArchive: Boolean(options.failArchive), holdArchive: Boolean(options.holdArchive), archiveDelayMs: options.archiveDelayMs || 0,
     releaseArchives() { controls.holdArchive = false; for (const release of archiveReleases) release(); archiveReleases.clear() },
@@ -209,9 +210,9 @@ export async function createTourFixture(browser, options = {}) {
       data.pty.push(clone(request))
       const item = data.sessions.find((entry) => entry.id === request.session_id)
       if (item && (request.action === 'start_pty' || (request.action === 'resume_pty' && item.pty_alive))) {
-        Object.assign(item, { status: 'idle', agentState: 'idle', pty_alive: true })
+        if (!options.preserveRuntimeOnResume) Object.assign(item, { status: 'idle', agentState: 'idle', pty_alive: true })
         schedule(() => {
-          broadcast({ type: 'status', session_id: item.id, status: 'idle', pty_alive: true })
+          broadcast({ type: 'status', session_id: item.id, status: item.status, pty_alive: true })
           socket.send(JSON.stringify({ type: 'output', session_id: item.id, data: '\r\nIVE test transport · no provider process\r\n❯ ' }))
         }, 25)
       } else if (request.action === 'stop' && item) controls.setSessionStatus(item.id, 'exited', { pty_alive: false })

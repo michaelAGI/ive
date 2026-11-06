@@ -120,6 +120,24 @@ class TurnSyncTests(unittest.IsolatedAsyncioTestCase):
         self.write(event("task_complete", 200), event("task_started", 201, "b"))
         self.assertFalse(await self.sync())
 
+    async def test_terminal_abort_is_distinct_from_success_and_pauses_other_clients(self):
+        self.write(event("task_started", 100), event("turn_aborted", 200))
+        self.assertTrue(await self.sync())
+        event_sent = self.broadcast.call_args.args[0]
+        self.assertEqual(event_sent["state"], "idle")
+        self.assertTrue(event_sent["interrupted"])
+        self.assertEqual(self.state["turns_completed"], 0)
+        self.assertFalse(await self.sync())
+
+    async def test_abort_cannot_clear_a_newer_prompt_or_still_visible_dialog(self):
+        self.write(event("turn_aborted", 200))
+        self.state["state"] = "prompting"
+        self.screen = "Would you like to run the following command?\n› 1. Yes, proceed (y)\n2. No\nPress enter to confirm or esc to cancel"
+        self.assertFalse(await self.sync())
+        self.screen = READY
+        self.state["last_event_at"] = 201
+        self.assertFalse(await self.sync())
+
     async def test_new_raw_terminal_submit_blocks_old_completion_before_hook(self):
         self.submitted_at = 201
         self.assertFalse(await self.sync())

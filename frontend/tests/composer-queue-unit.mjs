@@ -75,6 +75,27 @@ function installFakeApi() {
   }
 }
 
+test('Stop while preparing a batch pauses it before any input is sent', async () => {
+  setStatus('b', 'idle')
+  let release, entered = false
+  const getMessages = api.getMessages
+  api.getMessages = async (...args) => {
+    entered = true
+    await new Promise(resolve => { release = resolve })
+    return getMessages(...args)
+  }
+  q.enqueueMessage('b', 'Hold this message')
+  assert.ok(await until(() => entered))
+  window.dispatchEvent(new CustomEvent('cc-session-interrupted', { detail: { sessionId: 'b' } }))
+  api.getMessages = getMessages
+  release()
+  assert.ok(await until(() => queueOf('b').items[0]?.state === 'queued'))
+  assert.equal(queueOf('b').hold.reason, 'stopped')
+  assert.deepEqual(sentTo('b'), [])
+  q.sendQueuedNow('b')
+  assert.ok(await until(() => sentTo('b').length === 1))
+})
+
 beforeEach(() => {
   q.__resetComposerQueue()
   q.setQueueTiming({ SETTLE_MS: 40, SEND_GAP_MS: 400, CONFIRM_POLL_MS: 20, CONFIRM_TIMEOUT_MS: 1500, UNCERTAIN_TIMEOUT_MS: 250, DELIVERED_LINGER_MS: 80, TICK_MS: 15 })
@@ -82,7 +103,7 @@ beforeEach(() => {
   sent = []
   inputMode = 'ok'
   installFakeApi()
-  useStore.setState({ sessions: {}, sessionInputs: {}, notifications: [], pendingOptimisticMessages: {}, lastSentPrompts: {}, ws, connected: true })
+  useStore.setState({ sessions: {}, sessionInputs: {}, notifications: [], pendingOptimisticMessages: {}, lastSentPrompts: {}, ws, connected: true, sessionStateSynced: true })
   useStore.getState().loadSessions([session('a', { status: 'running', agentState: 'working' }), session('b', { cli_type: 'codex' })])
   q.ensureStarted()
 })
@@ -92,6 +113,15 @@ test('only Claude and Codex sessions queue; read-only views do not', () => {
   assert.equal(q.queueSupported(session('x', { cli_type: 'codex' })), true)
   assert.equal(q.queueSupported(session('x', { cli_type: 'gemini' })), false)
   assert.equal(q.queueSupported(session('x', { read_only: true })), false)
+})
+
+test('reconnected transport cannot send until the current session snapshot is applied', async () => {
+  useStore.setState({ sessionStateSynced: false })
+  q.enqueueMessage('b', 'Wait for synchronization')
+  await sleep(150)
+  assert.deepEqual(sentTo('b'), [])
+  useStore.setState({ sessionStateSynced: true })
+  assert.ok(await until(() => sentTo('b').length === 1))
 })
 
 test('queued while working, delivered once after the turn ends, confirmed by the transcript', async () => {

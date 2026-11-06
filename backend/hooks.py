@@ -694,9 +694,13 @@ async def mark_interrupted(session_id: str, source: str = "interrupt") -> bool:
         return False
     s["state"] = "idle"
     s["tool_stack"].clear()
+    s["last_event_at"] = time.time()
+    interrupted_at = s["last_event_at"]
     logger.info("Session %s interrupted by user (%s) -> idle", session_id[:8], source)
     await _broadcast({"type": "prompt_state", "session_id": session_id, "state": "idle"})
-    await _broadcast({"type": "session_state", "session_id": session_id, "state": "idle", "source": source})
+    if _hook_sessions.get(session_id) is not s or s.get("state") != "idle" or s.get("last_event_at") != interrupted_at:
+        return False
+    await _broadcast({"type": "session_state", "session_id": session_id, "state": "idle", "source": source, "interrupted": True})
     return True
 
 
@@ -1653,6 +1657,11 @@ async def _handle_stop(session_id: str, payload: dict):
     s["tool_stack"].clear()
     s["turns_completed"] = int(s.get("turns_completed") or 0) + 1
     s["last_event_at"] = time.time()
+    idle_at = s["last_event_at"]
+
+    def still_idle():
+        return (_hook_sessions.get(session_id) is s and s.get("state") == "idle"
+                and s.get("last_event_at") == idle_at)
 
     # Notify selected lifecycle contributors after the session settles.
     try:
@@ -1660,9 +1669,15 @@ async def _handle_stop(session_id: str, payload: dict):
     except Exception:
         pass
 
+    if not still_idle():
+        return
     # Always broadcast prompt_state idle
     await _broadcast({"type": "prompt_state", "session_id": session_id, "state": "idle"})
+    if not still_idle():
+        return
     await _broadcast({"type": "session_state", "session_id": session_id, "state": "idle", "source": "hook"})
+    if not still_idle():
+        return
 
     # Throttled session_idle for oversight nudge
     now = time.monotonic()
@@ -1689,6 +1704,8 @@ async def _handle_stop(session_id: str, payload: dict):
         except RuntimeError:
             pass
 
+    if not still_idle():
+        return
     # Permission question detection — check if the session stopped because
     # it asked "Want me to implement this?" instead of just doing it.
     try:
@@ -1722,6 +1739,8 @@ async def _handle_stop(session_id: str, payload: dict):
     except Exception as e:
         logger.debug("Permission question check failed: %s", e)
 
+    if not still_idle():
+        return
     # Server-side cascade advancement
     try:
         from cascade_runner import on_session_idle
@@ -1729,6 +1748,8 @@ async def _handle_stop(session_id: str, payload: dict):
     except Exception as e:
         logger.debug("Cascade runner idle check failed: %s", e)
 
+    if not still_idle():
+        return
     # Worker queue: auto-deliver queued tasks
     try:
         from worker_queue import on_session_idle as wq_on_session_idle
@@ -1736,6 +1757,8 @@ async def _handle_stop(session_id: str, payload: dict):
     except Exception as e:
         logger.debug("Worker queue idle check failed: %s", e)
 
+    if not still_idle():
+        return
     # Pipeline engine: advance configurable pipelines
     try:
         from pipeline_engine import on_session_idle as pe_on_session_idle
@@ -1743,6 +1766,8 @@ async def _handle_stop(session_id: str, payload: dict):
     except Exception as e:
         logger.debug("Pipeline engine idle check failed: %s", e)
 
+    if not still_idle():
+        return
     # Rolling digest: update one compact session summary and append a small
     # turn summary. The updater is workspace-gated by context_sharing_enabled.
     try:
@@ -1775,6 +1800,8 @@ async def _handle_stop(session_id: str, payload: dict):
         from idle_reflection import schedule as _idle_schedule
         tool_uses = int(s.get("tool_uses_since_reflection", 0))
         cli_type, workspace_id = await _idle_reflection_context(session_id)
+        if not still_idle():
+            return
         _idle_schedule(session_id, cli_type, tool_uses, workspace_id)
         # Reset the work counter once we've committed to the next reflection
         # window. Tool uses after this point accumulate toward the *next* one.

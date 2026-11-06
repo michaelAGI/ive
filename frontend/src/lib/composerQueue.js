@@ -164,7 +164,7 @@ export function sendQueuedNow(sessionId) {
 }
 
 export function holdQueue(sessionId, reason, message) {
-  if (!getQueue(sessionId).items.some((i) => i.state === 'queued')) return
+  if (!getQueue(sessionId).items.some((i) => i.state === 'queued' || i.state === 'sending')) return
   mutate(sessionId, (q) => ({ ...q, hold: { reason, message: message || '', at: now() } }))
 }
 
@@ -215,7 +215,7 @@ function canDeliver(sessionId, { claimed = false } = {}) {
   const q = getQueue(sessionId)
   if (q.hold || !q.items.some((i) => i.state === 'queued')) return false
   if (q.items.some((i) => i.state === 'sending')) return false
-  if ((!claimed && inFlight.has(sessionId)) || !socketUp()) return false
+  if ((!claimed && inFlight.has(sessionId)) || !socketUp() || useStore.getState().sessionStateSynced === false) return false
   const session = useStore.getState().sessions?.[sessionId]
   if (!queueSupported(session) || session.pty_alive === false) return false
   const rt = rtOf(sessionId)
@@ -379,7 +379,7 @@ async function deliver(sessionId) {
         if (research.error) { fail(`Research could not start: ${research.error.message || 'request rejected'}`); return }
       }
       // Still the same idle session on a live socket after the awaits?
-      if (!socketUp() || rtOf(sessionId).tone !== 'ready') { backToQueue(); return }
+      if (!socketUp() || useStore.getState().sessionStateSynced === false || rtOf(sessionId).tone !== 'ready' || getQueue(sessionId).hold) { backToQueue(); return }
 
       try {
         const result = await api.sendSessionInput(sessionId, prepared.processed, { ready_timeout: 8 })
@@ -519,7 +519,7 @@ export function ensureStarted() {
   restoreDrafts()
   unsubscribers.push(useStore.subscribe((s, prev) => {
     if (s.sessionInputs !== prev?.sessionInputs) persistDrafts(s.sessionInputs)
-    if (s.sessions !== prev?.sessions || s.connected !== prev?.connected || s.ws !== prev?.ws) {
+    if (s.sessions !== prev?.sessions || s.connected !== prev?.connected || s.ws !== prev?.ws || s.sessionStateSynced !== prev?.sessionStateSynced) {
       observe()
       scheduleTick(0)
     }

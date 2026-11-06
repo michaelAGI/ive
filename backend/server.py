@@ -25,6 +25,7 @@ import time
 import urllib.parse
 import uuid
 import wave
+import weakref
 from typing import Optional
 
 import aiohttp
@@ -3137,7 +3138,25 @@ async def _fail_session_start(
         logger.debug("SESSION_FAILED_TO_START emit skipped (_fail_session_start)", exc_info=True)
 
 
+_session_broadcast_locks = weakref.WeakValueDictionary()
+
+
 async def broadcast(event: dict):
+    # Scope checks do asynchronous DB IO. Without serialization, a slow
+    # "working" lookup can send after a later "idle" event and strand chat.
+    embedded = event.get("session")
+    sid = event.get("session_id") or (embedded.get("id") if isinstance(embedded, dict) else None)
+    if sid:
+        lock = _session_broadcast_locks.get(sid)
+        if lock is None:
+            lock = _session_broadcast_locks[sid] = asyncio.Lock()
+        async with lock:
+            await _broadcast_ordered(event)
+    else:
+        await _broadcast_ordered(event)
+
+
+async def _broadcast_ordered(event: dict):
     data = json.dumps(event)
     dead = []
     embedded_session = event.get("session")
@@ -3467,7 +3486,7 @@ async def _sync_codex_turn_completion(session_id: str) -> bool:
     from session_attention import get_attention
 
     state = hooks._hook_sessions.get(session_id)
-    if not state or state.get("state") != "working" or not pty_mgr.is_alive(session_id):
+    if not state or state.get("state") not in {"working", "prompting"} or not pty_mgr.is_alive(session_id):
         return False
     config = await get_session_config(session_id)
     if not config or config.get("cli_type") != "codex" or not config.get("native_session_id"):
@@ -3479,13 +3498,15 @@ async def _sync_codex_turn_completion(session_id: str) -> bool:
     if not path:
         return False
     boundary = await asyncio.to_thread(read_turn_boundary, path)
-    if not boundary or boundary[0] != "task_complete":
+    if not boundary or boundary[0] not in {"task_complete", "turn_aborted"}:
         return False
     # A new Enter can precede UserPromptSubmit and the rollout append. Check
     # input from every delivery path, including the raw terminal WebSocket.
     if not pty_mgr.is_alive(session_id) or boundary[2] < pty_mgr.get_last_submit_at(session_id):
         return False
-    if hooks._hook_sessions.get(session_id) is not state or get_attention(session_id):
+    if hooks._hook_sessions.get(session_id) is not state or boundary[2] < (state.get("last_event_at") or 0):
+        return False
+    if boundary[0] == "task_complete" and get_attention(session_id):
         return False
     # Only the current emulated screen is evidence. Raw output may contain an
     # old prompt and must not release a queue into a live approval or tool run.
@@ -3495,6 +3516,8 @@ async def _sync_codex_turn_completion(session_id: str) -> bool:
             or _session_permission_menu(screen)
             or _is_incomplete_permission_screen(screen)):
         return False
+    if boundary[0] == "turn_aborted":
+        return await hooks.mark_interrupted(session_id, "codex_transcript_interrupt")
     return await hooks.mark_transcript_turn_complete(session_id, boundary[2])
 
 
@@ -3503,7 +3526,7 @@ async def _codex_turn_sync_loop():
     import hooks
     while True:
         for sid, state in list(hooks._hook_sessions.items()):
-            if state.get("state") != "working" or not pty_mgr.is_alive(sid):
+            if state.get("state") not in {"working", "prompting"} or not pty_mgr.is_alive(sid):
                 continue
             try:
                 if await _cached_session_cli_type(sid) == "codex":

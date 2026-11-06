@@ -14,12 +14,13 @@ globalThis.localStorage = {
 globalThis.window = Object.assign(new EventTarget(), {
   location: { protocol: 'http:', host: 'localhost', hostname: 'localhost', search: '' },
 })
-let vite, store
+let vite, store, snapshots
 before(async () => {
   vite = await createServer({ configFile: false, root: fileURLToPath(new URL('..', import.meta.url)),
     optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', logLevel: 'error' })
   store = (await vite.ssrLoadModule('/src/state/store.js')).default
+  snapshots = await vite.ssrLoadModule('/src/lib/sessionSnapshots.js')
 })
 after(async () => { await vite?.close() })
 beforeEach(() => {
@@ -133,4 +134,65 @@ test('an empty authoritative list clears ghost focus and all session-bound notic
   assert.equal(store.getState().activeSessionId, null)
   assert.equal(store.getState().sessionFocus, false)
   assert.deepEqual(store.getState().notifications, [{ id: 2, type: 'error' }])
+})
+
+const response = (stamp, rows) => snapshots.tagSessionSnapshot(rows, stamp)
+test('a delayed reconnect snapshot cannot undo a new idle event, including a repeated event', () => {
+  store.getState().loadSessions([{ ...session('s'), status: 'running', agentState: 'working' }])
+  const stamp = snapshots.beginSessionSnapshot()
+  store.getState().setSessionStatus('s', 'idle')
+  store.getState().setSessionStatus('s', 'idle')
+  store.getState().resyncSessions(response(stamp, [{ ...session('s'), status: 'running', agentState: 'working' }]))
+  assert.equal(store.getState().sessions.s.status, 'idle')
+  assert.equal(store.getState().sessions.s.agentState, 'idle')
+})
+
+test('a delayed workspace list cannot clear a new approval or resurrect a deleted session', () => {
+  store.getState().loadSessions([session('s'), session('deleted')])
+  const stamp = snapshots.beginSessionSnapshot()
+  store.getState().setSessionAttention('s', { kind: 'permission', message: 'Approve this command' })
+  store.getState().removeSession('deleted')
+  store.getState().loadSessions(response(stamp, [{ ...session('s'), attention: null }, session('deleted')]))
+  assert.equal(store.getState().sessions.s.status, 'waiting')
+  assert.equal(store.getState().sessions.s.attention.message, 'Approve this command')
+  assert.equal(store.getState().sessions.deleted, undefined)
+})
+
+test('fresh snapshots correct missed events, while older concurrent responses cannot roll them back', () => {
+  store.getState().loadSessions([session('s')])
+  const old = snapshots.beginSessionSnapshot()
+  const fresh = snapshots.beginSessionSnapshot()
+  store.getState().resyncSessions(response(fresh, [{ ...session('s'), status: 'running', agentState: 'working' }]))
+  store.getState().loadSessions(response(old, [session('s')]))
+  assert.equal(store.getState().sessions.s.status, 'running')
+  const end = snapshots.beginSessionSnapshot()
+  store.getState().resyncSessions(response(end, [session('s')]))
+  assert.equal(store.getState().sessions.s.status, 'idle')
+})
+
+test('old empty snapshots do not remove sessions updated since the request', () => {
+  store.getState().loadSessions([session('s')])
+  const stamp = snapshots.beginSessionSnapshot()
+  store.getState().setSessionStatus('s', 'running')
+  store.getState().resyncSessions(response(stamp, []), { knownSessionIdsAtRequest: ['s'] })
+  assert.equal(store.getState().sessions.s.status, 'running')
+})
+
+test('a newer deletion snapshot prevents resurrection by an older workspace response', () => {
+  store.getState().loadSessions([session('s')])
+  const old = snapshots.beginSessionSnapshot()
+  const fresh = snapshots.beginSessionSnapshot()
+  store.getState().resyncSessions(response(fresh, []))
+  store.getState().loadSessions(response(old, [session('s')]))
+  assert.equal(store.getState().sessions.s, undefined)
+})
+
+test('a fresh reconnect snapshot clears a plan answered in the terminal while offline', () => {
+  store.getState().loadSessions([session('s')])
+  store.getState().setSessionAttention('s', { kind: 'plan', menu: { kind: 'plan' } })
+  const stamp = snapshots.beginSessionSnapshot()
+  store.getState().resyncSessions(response(stamp, [{ ...session('s'), attention: null }]))
+  assert.equal(store.getState().sessions.s.attention, null)
+  assert.equal(store.getState().planWaiting.s, false)
+  assert.equal(store.getState().sessions.s.status, 'idle')
 })

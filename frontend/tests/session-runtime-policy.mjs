@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { mkdir } from 'node:fs/promises'
 import { webkit } from 'playwright'
 import { createTourFixture } from './interactive-onboarding-fixture.mjs'
 
 const browser = await webkit.launch()
+const out = new URL('../../packaging/artifacts/session-turn-sync/', import.meta.url).pathname
+await mkdir(out, { recursive: true })
 try {
   for (const width of [1440, 780]) {
     const f = await createTourFixture(browser, {
@@ -23,23 +26,27 @@ try {
     await notice.waitFor()
     assert.match(await notice.innerText(), /830k tokens.*last request/s)
     assert.match(await notice.innerText(), /Selected: opus.*Last observed: claude-fable-5-1/s)
-    assert.match(await notice.innerText(), /200k window/)
+    // The current UI describes observed usage and offers continuity actions;
+    // the old 1.0.9 assertion expected a fixed context-window label it no longer shows.
+    assert.equal(await notice.getByRole('button', { name: 'Continue in fresh session', exact: true }).count(), 1)
+    assert.equal(await notice.getByRole('button', { name: 'New topic', exact: true }).count(), 1)
     assert.equal(await notice.getByRole('button', { name: 'Compact context' }).isDisabled(), true)
     // Restoring both tabs must not launch either saved transcript.
     await p.waitForTimeout(500)
     assert.equal(f.data.pty.filter((item) => item.action === 'start_pty').length, 0)
     assert.equal(f.writes.length, 0)
     f.controls.setSessionStatus('s', 'idle', { pty_alive: true })
-    await p.waitForFunction(() => !document.querySelector('[aria-label="Session context"] button')?.disabled)
+    const submitted = p.waitForResponse(r => r.url().endsWith('/sessions/s/input') && r.request().method() === 'POST')
     await notice.getByRole('button', { name: 'Compact context' }).click()
-    await p.waitForFunction(() => document.querySelector('[aria-label="Session context"] button')?.textContent === 'Compact context')
+    assert.equal((await submitted).status(), 200)
+    await notice.getByRole('button', { name: 'Compact context', exact: true }).waitFor()
     const inputs = f.writes.filter((item) => item.path.endsWith('/input'))
     assert.equal(inputs.length, 1)
     assert.equal(inputs[0].body.message, '/compact')
     assert.equal(f.data.pty.some((item) => item.action === 'start_pty' && item.session_id === 'old'), false)
     assert.deepEqual(f.errors, [])
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
-    await p.screenshot({ path: new URL(`../../packaging/artifacts/release-1.0.9/context-${width}.png`, import.meta.url).pathname })
+    await p.screenshot({ path: `${out}context-${width}.png` })
     await f.context.close()
   }
   console.log(JSON.stringify({ passed: true, restoredTabsDoNotLaunch: true, contextWarning: true, explicitCompact: true, modelMismatchVisible: true, widths: [1440, 780] }))
