@@ -205,6 +205,7 @@ test('the left sidebar fully collapses on Chat home and session, with persistent
     const initialMain = await main.boundingBox()
     await homeComposer.fill('Keep my home draft while I make more room.')
     const before = structuredClone(processMutations(f))
+    assert.equal(await page.getByRole('button', { name: /^(?:Hide|Show) sidebar$/ }).count(), 1, 'one sidebar control while navigation is open, in the sidebar head')
     await sidebar.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
     await sidebar.waitFor({ state: 'detached' })
     const reopen = header.getByRole('button', { name: 'Show sidebar', exact: true })
@@ -238,8 +239,9 @@ test('the left sidebar fully collapses on Chat home and session, with persistent
     await reopen.click()
     await sidebar.waitFor({ state: 'visible' })
     assert.equal(await composer.inputValue(), 'Keep this session draft when the navigation closes.')
-    // Exercise the existing header entry point as well as the new nav control.
-    await header.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
+    // The header carries no second hide control; the keyboard shortcut is the other entry point.
+    assert.equal(await header.getByRole('button', { name: /^(?:Hide|Show) sidebar$/ }).count(), 0, 'no duplicate sidebar control in the header while navigation is open')
+    await page.keyboard.press('Meta+Backslash')
     await sidebar.waitFor({ state: 'detached' })
     await page.reload()
     await reopen.waitFor({ state: 'visible' })

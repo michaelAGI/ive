@@ -47,6 +47,7 @@ export default function NavSidebar({
   const mode = useExperienceMode(s => s.mode)
   const view = useView()
   const newSessionKey = useStore((s) => s.keybindings?.newSession)
+  const sidebarKey = useStore((s) => s.keybindings?.sidebar)
   const counts = useStore(selectCounts)
   const sessions = useStore(s=>s.sessions)
   const waitingSessions = visibleSessions(sessions).filter(sessionNeedsAttention)
@@ -65,7 +66,8 @@ export default function NavSidebar({
         <div className="ive-sidebar-head-actions">
           <button type="button" data-sidebar-dismiss className="ive-sidebar-icon-btn"
             aria-label={isMobile ? 'Close sidebar' : 'Hide sidebar'}
-            title={isMobile ? 'Close sidebar' : 'Hide sidebar'} onClick={onHideSidebar}>
+            aria-controls="ive-project-sidebar"
+            title={isMobile ? 'Close sidebar' : `Hide sidebar${sidebarKey ? ` (${formatKeyCombo(sidebarKey)})` : ''}`} onClick={onHideSidebar}>
             {isMobile ? <X size={17} aria-hidden="true" /> : <PanelLeftClose size={17} aria-hidden="true" />}
           </button>
           <button
