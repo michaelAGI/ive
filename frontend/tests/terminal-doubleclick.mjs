@@ -11,10 +11,11 @@ try {
     settings: { product_tour_version: '2' },
     workspaces: [{ id: 'w', name: 'Example', path: '/isolated/example' }],
     sessions: ['s', 't'].map(id => ({ id, workspace_id: 'w', name: `Session ${id}`, cli_type: id === 't' ? 'shell' : 'claude', model: 'sonnet', status: 'idle', pty_alive: true, session_type: 'worker', tags: [] })),
-    storage: { 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'terminal', t: 'terminal' }, 'cc-gridColumns': '2' },
+    storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' }, 'ive.operator-desk': { activeWorkspaceId: 'w', activeSessionId: 's', openTabs: ['s', 't'], showHome: false, activeNavGroup: 'work' }, 'ive.grid-session-views': { s: 'terminal', t: 'terminal' }, 'cc-gridColumns': '2' },
   })
   const p = f.page
   await p.goto('https://ive-guide.test/#board')
+  await p.locator('[data-board-screen]').waitFor()
   const terminal = id => p.locator(`[data-terminal-session="${id}"] .xterm-screen`)
   await terminal('t').waitFor()
   // Preserve the same xterm DOM node across board -> session -> board.

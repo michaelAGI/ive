@@ -1748,13 +1748,6 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 .ive-chat-question-choices button[data-choice-kind="persistent"] { order: 3; flex-basis: 100%; background: transparent; border-color: transparent; color: var(--x-muted); font-size: 12px; }
 .ive-chat-question-choices button:hover { filter: brightness(.95); }
 .ive-chat-question button:disabled { opacity: .45; cursor: not-allowed; }
-.ive-chat-question-reply { margin-top: 14px; }
-.ive-chat-question-reply label { display: block; margin-bottom: 6px; font-size: 12px; color: var(--x-muted); }
-.ive-chat-question-reply > div { display: flex; align-items: center; padding: 5px; border: 1px solid var(--x-line-strong); border-radius: 10px; }
-.ive-chat-question-reply input { width: 100%; min-width: 0; padding: 7px; background: transparent; }
-.ive-chat-question-reply input:focus { border-color: transparent !important; box-shadow: none !important; outline: none; }
-.ive-chat-question-reply > div:focus-within { border-color: var(--x-muted); }
-.ive-chat-question-reply button { padding: 8px; background: var(--x-ink); color: var(--x-bg); border-radius: 7px; }
 .ive-chat-reply-status { display: flex; align-items: center; gap: 8px; color: var(--x-muted); font-size: 12px; }
 .ive-chat-question-error { color: var(--x-danger); font-size: 12px; }
 .ive-chat-question button:focus-visible, .ive-chat-request-details summary:focus-visible, .ive-chat-text-button:focus-visible, .ive-conversation-activity-toggle:focus-visible, .ive-conversation-message-actions button:focus-visible { outline: 1px solid var(--x-muted); outline-offset: 2px; }
