@@ -54,7 +54,23 @@ python3 packaging/sign-macos.py \
 
 Remove `--dry-run` to sign a new output directory. For local signing, adding `--notary-profile PROFILE` explicitly submits the app archive and DMG using an existing `notarytool` keychain profile, requires Apple's `Accepted` result, staples the tickets and checks Gatekeeper. Existing output directories are never overwritten. No signing script stores passwords or changes keychain permissions.
 
-Verify the final downloaded app and DMG using `codesign`, `spctl` and `xcrun stapler validate`. Apple's cloud-certificate requirements are documented at https://developer.apple.com/help/account/certificates/cloud-managed-certificates/; Tauri's macOS signing guide is https://v2.tauri.app/distribute/sign/macos/. No update endpoint or automatic updater is configured in this preview. Neither signing credentials nor service API keys belong in this repository or the bundle.
+Verify the final downloaded app and DMG using `codesign`, `spctl` and `xcrun stapler validate`. Apple's cloud-certificate requirements are documented at https://developer.apple.com/help/account/certificates/cloud-managed-certificates/; Tauri's macOS signing guide is https://v2.tauri.app/distribute/sign/macos/. Neither signing credentials nor service API keys belong in this repository or the bundle.
+
+## In-app updates (1.0.21+)
+
+Settings → General → IVE updates checks the public GitHub release feed. IVE also checks after startup and every six hours. Manual installation requires the explicit “Install and restart” action. Automatic updates are opt-in: downloaded, signature-verified packages are installed on the next app launch, before starting the owned backend. Saved chats, projects and settings remain in the separate app data directory. Versions through 1.0.20 need one manual upgrade to gain this feature.
+
+The Rust updater uses the public key in `tauri.conf.json`, requires a signed app version, rejects older/equal releases and accepts only this repository’s versioned macOS archive URL. Native update commands are restricted to the main window on the exact owned backend origin. Generic updater plugin commands are not granted to the webview. A saved package is verified again before installation; a corrupt cache is discarded. An immediate installation stops the owned backend gracefully, including phone-availability cleanup, before replacing the bundle.
+
+Generate update assets from the **final Developer-ID-signed, notarized, stapled app**, after cloud export. Signing an earlier ad-hoc bundle would distribute the wrong app. The updater signing key is separate from the Apple Developer ID key and must be backed up securely; only its public key belongs in Git. The release machine keeps it outside the checkout at `~/.config/ive/updater/release.key` with owner-only access. Never regenerate this key for an ordinary release.
+
+```sh
+python3 packaging/prepare-updater.py --app FINAL/IVE.app --output RELEASE --notes RELEASE-NOTES.txt
+```
+
+Publish `IVE-macOS-arm64.dmg`, its checksum, `IVE-macOS-arm64.app.tar.gz`, its `.sig` and checksum, and `latest.json` together in a draft GitHub release. Make that complete release public/latest only after validation. Both the website download and the updater then resolve the same release. Never replace a published archive without also replacing its signature and feed. Keep all version fields synchronized, including `frontend/package.json` and its lockfile.
+
+The native tests exercise signed temporary packages, tampering, signed-version mismatches and downgrade refusal. After producing the real assets, also run the ignored `release_artifact_upgrades_an_isolated_previous_app` test with `IVE_QA_UPDATER_RELEASE` pointing to the release directory and `IVE_QA_UPDATER_OLD_APP` pointing to the previous app artifact. It updates a temporary copy and validates its Apple signature and ticket; it never replaces `/Applications/IVE.app`.
 
 ## Verification
 
