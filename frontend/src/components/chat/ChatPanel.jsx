@@ -31,7 +31,7 @@ import SessionPromptActions from '../session/SessionPromptActions'
 import SessionHeaderActions from './SessionHeaderActions'
 import { shortcutChoice } from '../../lib/promptMenu'
 import { QUESTION_OPEN_HINT, SENDING_HINT } from '../../lib/promptAnswer'
-import { activityLabel, hasVisibleMessage } from '../../lib/conversationPresentation'
+import { activityLabel, emptyChatGreeting, hasVisibleMessage } from '../../lib/conversationPresentation'
 import ChatFindBar from '../find/ChatFindBar'
 import ComposerQueue from './ComposerQueue'
 import { useComposerQueue } from '../../hooks/useComposerQueue'
@@ -4788,13 +4788,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col items-center justify-center py-16 text-center px-4 select-none">
-                    <div className="relative mb-3">
-                      <MessageSquare size={28} className="relative text-x-accent/60" />
-                    </div>
-                    <h3 className="text-sm font-semibold text-x-ink-secondary">Start the Conversation</h3>
-                    <p className="text-[11px] text-x-muted max-w-xs mt-1 leading-relaxed">
-                      Describe what you want to change or ask a question. Add relevant files or project notes as context.
-                    </p>
+                    <p data-chat-empty="" className="text-[15px] text-x-ink leading-relaxed">{emptyChatGreeting()} What are we doing today?</p>
                   </div>
                 )
               ) : (

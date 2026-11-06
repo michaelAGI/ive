@@ -26,8 +26,11 @@ function MenuShell({ x, y, onClose, children, summary }) {
 
   useEffect(() => {
     const clickHandler = () => onClose()
-    window.addEventListener('click', clickHandler)
-    return () => window.removeEventListener('click', clickHandler)
+    // React flushes this effect while the click that opened the menu is
+    // still bubbling towards the window; listening from the next task keeps
+    // that click from closing the menu it just opened.
+    const timer = setTimeout(() => window.addEventListener('click', clickHandler), 0)
+    return () => { clearTimeout(timer); window.removeEventListener('click', clickHandler) }
   }, [onClose])
   useEscapeToClose(true, onClose)
   useEffect(() => { setPos(clampTo(x, y, menuRef.current)) }, [x, y])

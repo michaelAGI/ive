@@ -354,3 +354,23 @@ test('Dev remains usable with 100 saved sessions and mode switches do not launch
     await page.screenshot({ path: `${shots}/${engineName}-dev-100-sessions.png` })
   } finally { await f.context.close() }
 })
+
+test('the chat list menu opens from its … button and offers Archive and Delete', async () => {
+  const f = await fixture({ workspaces: [workspace], sessions: [session('menu'), session('other')] })
+  try {
+    const { page } = f
+    const sidebar = page.locator('#ive-project-sidebar')
+    await sidebar.getByRole('button', { name: 'More actions for Conversation menu', exact: true }).click()
+    const menu = page.getByRole('menu')
+    await menu.waitFor({ state: 'visible' })
+    assert.equal(await menu.getByRole('menuitem', { name: 'Delete', exact: true }).count(), 1, 'the chat can be deleted from its menu')
+    assert.equal(await menu.getByRole('menuitem', { name: 'Archive chat', exact: true }).count(), 1)
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'detached' })
+    await sidebar.getByRole('button', { name: 'More actions for Conversation other', exact: true }).click()
+    await page.getByRole('menu').waitFor({ state: 'visible' })
+    await page.locator('main.x-app-main').click({ position: { x: 20, y: 20 } })
+    await page.getByRole('menu').waitFor({ state: 'detached' })
+    await assertNoErrorsOrOverflow(f)
+  } finally { await f.context.close() }
+})
