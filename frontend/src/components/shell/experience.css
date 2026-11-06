@@ -1,0 +1,42 @@
+.ive-experience-switch { display:inline-flex; flex-shrink:0; gap:2px; padding:3px; border:1px solid var(--x-line); border-radius:9px; background:var(--x-surface); }
+.ive-experience-switch button { display:flex; align-items:center; justify-content:center; gap:6px; padding:5px 10px; border-radius:6px; color:var(--x-muted); font-size:12px; font-weight:550; }
+.ive-experience-switch button[aria-pressed="true"] { color:var(--x-ink); background:var(--x-bg); box-shadow:0 1px 3px #00000014; }
+.ive-experience-switch button:focus-visible, .ive-chat-assistant button:focus-visible { outline:2px solid var(--x-focus); outline-offset:2px; }
+.ive-experience-mobile { display:none; }
+.ive-chat-history { padding:8px 10px; min-height:0; overflow-y:auto; }
+.ive-chat-history-heading { display:flex; justify-content:space-between; align-items:center; padding:7px 9px; font-size:11px; font-weight:600; color:var(--x-muted); }
+.ive-chat-history-heading button { padding:5px; border-radius:5px; }
+.ive-chat-history-row { display:flex; align-items:center; border-radius:8px; margin:2px 0; }
+.ive-chat-history-row:hover, .ive-chat-history-row.is-active { background:var(--x-hover); }
+.ive-chat-history-open { display:flex; gap:9px; align-items:center; flex:1; min-width:0; padding:10px 8px; text-align:left; }
+.ive-chat-history-open > svg { flex-shrink:0; color:var(--x-muted); }
+.ive-chat-history-open > span { min-width:0; }
+.ive-chat-history-open strong { display:block; font-size:12px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--x-ink); }
+.ive-chat-history-open small { display:block; color:var(--x-muted); font-size:10px; margin-top:3px; }
+.ive-chat-history-more { color:var(--x-muted); flex-shrink:0; padding:7px; border-radius:5px; }
+.ive-chat-history-empty { color:var(--x-muted); font-size:12px; padding:12px 9px; line-height:1.6; }
+.ive-chat-history-load { font-size:12px; color:var(--x-accent-ink); padding:10px; }
+.ive-chat-home .ive-home-inner { max-width:760px; margin:0 auto; padding-top:clamp(40px,11vh,110px); }
+.ive-chat-home-heading { margin:0 0 28px; font-size:clamp(25px,3vw,34px); font-weight:550; line-height:1.2; letter-spacing:-.9px; color:var(--x-ink); }
+.ive-chat-home .ive-home-date { margin-bottom:12px; }
+.ive-chat-home .ive-home-composer { border-radius:18px; border:1px solid var(--x-line-strong); background:var(--x-bg); box-shadow:0 4px 22px #00000005; }
+.ive-chat-home .ive-home-composer textarea { font-size:15px; line-height:1.65; min-height:110px; padding:20px; }
+.ive-chat-home .ive-home-composer-row { padding:10px 14px 14px; gap:8px; flex-wrap:wrap; }
+.ive-chat-assistant { display:flex; gap:3px; padding:3px; border-radius:8px; background:var(--x-surface); }
+.ive-chat-assistant button { padding:6px 12px; border-radius:6px; font-size:12px; color:var(--x-muted); }
+.ive-chat-assistant button[aria-pressed="true"] { background:var(--x-bg); color:var(--x-ink); font-weight:600; box-shadow:0 1px 3px #00000010; }
+.ive-chat-project { max-width:180px; min-width:0; background:transparent; color:var(--x-muted); border:1px solid var(--x-line); border-radius:7px; padding:7px; font-size:11px; }
+.ive-chat-home-hint { color:var(--x-muted); font-size:12px; line-height:1.6; margin:12px 4px 28px; }
+.ive-chat-history.is-compact { padding:0; margin-top:20px; }
+.ive-chat-history.is-compact .ive-chat-history-row { border-bottom:1px solid var(--x-line-subtle); border-radius:0; }
+.ive-chat-history.is-compact .ive-chat-history-open { padding:14px 9px; }
+.ive-chat-history.is-compact .ive-chat-history-open strong { font-size:13px; }
+@media (max-width:767px) {
+  .ive-experience-mobile { display:inline-flex; }
+  .ive-experience-switch { margin:6px 12px; align-self:flex-start; }
+  .ive-experience-switch button { padding:8px 14px; }
+  .ive-chat-home .ive-home-inner { padding:35px 18px 24px; }
+  .ive-chat-project { max-width:140px; }
+  .ive-chat-home .ive-home-composer-row .ive-header-fill { display:none; }
+  .ive-chat-home .ive-home-composer-row > [type="submit"] { margin-left:auto; }
+}

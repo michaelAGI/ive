@@ -12,11 +12,11 @@ import '../lib/i18n/shell'
 
 // Agent sessions can show chat alone, chat with a drawer, or a full terminal.
 // TerminalSlot keeps the same running terminal across all three views.
-export default function SessionScreen({ sessionId, sidebarTab = null, sidebarFile = null, onSidebarTabChange, onCloseSidebar, onOpenPanel, onOpenReview }) {
+export default function SessionScreen({ sessionId, chatOnly = false, sidebarTab = null, sidebarFile = null, onSidebarTabChange, onCloseSidebar, onOpenPanel, onOpenReview }) {
   const t = useT()
   const session = useStore((s) => s.sessions[sessionId])
-  const drawerOpen = useStore((s) => !!s.terminalDrawer[sessionId])
-  const terminalExpanded = useStore((s) => s.terminalDrawer[sessionId] === 'full')
+  const drawerOpen = useStore((s) => !chatOnly && !!s.terminalDrawer[sessionId])
+  const terminalExpanded = useStore((s) => !chatOnly && s.terminalDrawer[sessionId] === 'full')
   const drawerHeight = useStore((s) => s.terminalDrawerHeight)
   const terminalKey = useStore((s) => s.keybindings?.toggleTerminal)
   // The session overview (status, latest reply, changed files, checks) is one
@@ -41,8 +41,8 @@ export default function SessionScreen({ sessionId, sidebarTab = null, sidebarFil
               <ChatPanel
                 sessionId={sessionId}
                 inGrid={false}
-                onToggleTerminal={() => useStore.getState().toggleTerminalDrawer(sessionId)}
-                onOpenTerminal={() => useStore.getState().toggleTerminalDrawer(sessionId, true)}
+                onToggleTerminal={chatOnly ? undefined : () => useStore.getState().toggleTerminalDrawer(sessionId)}
+                onOpenTerminal={chatOnly ? undefined : () => useStore.getState().toggleTerminalDrawer(sessionId, true)}
                 isTerminalOpen={drawerOpen}
                 briefOpen={briefOpen}
                 onToggleBrief={() => useStore.getState().toggleSessionBrief()}

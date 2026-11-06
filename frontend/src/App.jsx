@@ -89,16 +89,18 @@ const QuickActionPalette = lazyPanel(() => import('./components/command/QuickAct
 import CascadeBar from './components/chat/CascadeBar'
 import CascadeVariableDialog from './components/prompts/CascadeVariableDialog'
 import NotificationToast, { ToastBoundary } from './components/layout/NotificationToast'
+import NeedsYouPopover from './components/layout/NeedsYouPopover'
 import PanelBoundary from './components/PanelBoundary'
 import { canRestoreTerminalFocus } from './lib/gridFocus'
 import { openFindInSession } from './lib/findRouter'
 import useStore from './state/store'
+import useExperienceMode from './state/experienceMode'
 import { operatorDeskChanged, persistOperatorDesk, restoreOperatorDesk, runningSessionTabs } from './lib/operatorDesk'
 import { toggleTheme } from './lib/theme'
 import { loadLanguageSetting } from './lib/i18n'
 import { installRouter, viewOf } from './lib/route'
 import { api } from './lib/api'
-import { typeInTerminal } from './lib/terminal'
+import { typeInTerminalUnlessQuestion } from './lib/terminal'
 
 const OWNER_ACTORS = ['localhost', 'owner_legacy', 'owner_device']
 
@@ -332,7 +334,13 @@ export default function App() {
   // shortcuts share it (see store.goBoard / goSession, lib/route.js).
   const gridFocus = useStore((s) => s.sessionFocus)
   const setGridFocus = useStore((s) => s.setSessionFocus)
-  const view = useView()
+  const navigationView = useView()
+  const experienceMode = useExperienceMode(s => s.mode)
+  // A presentation choice only: preserve the Dev board/focus/layout in the
+  // navigation store while Chat shows one conversation. Never start a worker.
+  const view = experienceMode === 'chat' && navigationView !== 'home'
+    ? activeSessionId && sessions[activeSessionId] && !isShellSession(sessions[activeSessionId]) ? 'session' : 'home'
+    : navigationView
   // URL hash ⇄ store: #home, #board, #session-<id>; Back/Forward and deep links.
   useEffect(() => installRouter(useStore), [])
   // Mirrors anyModalOpen (computed further down) for callbacks defined here.
@@ -342,7 +350,7 @@ export default function App() {
     useStore.getState().goSession(id)
     // Give the terminal the keyboard once the session is laid out, but
     // never take it from an open modal (e.g. DocsPanel creating a session).
-    setTimeout(() => { if (!anyModalOpenRef.current) window.dispatchEvent(new Event('cc-focus-terminal')) }, 120)
+    setTimeout(() => { if (!anyModalOpenRef.current && useExperienceMode.getState().mode === 'dev') window.dispatchEvent(new Event('cc-focus-terminal')) }, 120)
   }
   const leaveGridFocus = () => useStore.getState().goBoard()
   // One place that hands the keyboard back to the selected session's terminal
@@ -352,7 +360,7 @@ export default function App() {
   // dialogs and menus alone.
   const restoreTerminalFocus = useCallback(() => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (anyModalOpenRef.current) return
+      if (anyModalOpenRef.current || useExperienceMode.getState().mode === 'chat') return
       const state = useStore.getState()
       if (state.showHome || !state.activeSessionId) return
       if (!canRestoreTerminalFocus(document.activeElement)) return
@@ -599,7 +607,7 @@ export default function App() {
   }, [isMobile])
   // Phone home is the session list; "Home" there opens the full Home page.
   const [phoneFullHome, setPhoneFullHome] = useState(false)
-  const phoneHomeLevel = isMobile && (showHome || openTabs.length === 0)
+  const phoneHomeLevel = isMobile && view === 'home'
   const phoneSession = isMobile && !phoneHomeLevel
   const phoneOverview = phoneHomeLevel && !phoneFullHome
   useEffect(() => { if (phoneSession) setPhoneFullHome(false) }, [phoneSession])
@@ -669,6 +677,19 @@ export default function App() {
     setShowPreviewPalette(false)
     setShowQuickFeature(false); setQuickFeaturePrefill(''); setQuickFeatureVoice(false)
   }, [])
+
+  // A result in review opens its card on the Review tab of Tasks (⌘B); plan
+  // approvals, paused runs and blockers keep the guided TaskFlow dialog.
+  const openTaskReview = useCallback((taskId) => {
+    closeExclusivePanels()
+    setBoardInitialAction(`review:${taskId}`)
+    setShowBoard(true)
+  }, [closeExclusivePanels])
+  const reviewTask = useCallback((taskId) => {
+    if (useStore.getState().tasks[taskId]?.status === 'review') { openTaskReview(taskId); return }
+    closeExclusivePanels()
+    setTaskFlow({ taskId })
+  }, [closeExclusivePanels, openTaskReview])
 
   const openSessionSidebarTab = useCallback((tab, { toggle = false } = {}) => {
     if (toggle && showSessionSidebar && sessionSidebarTab === tab) {
@@ -804,6 +825,7 @@ export default function App() {
       if (panel === 'mac-power') setSettingsSection('mac-power')
       if (panel === 'model-providers') setSettingsSection('model-providers')
       if (panel === 'sound-settings') setSettingsSection('sound-settings')
+      if (panel === 'dictation') setSettingsSection('dictation')
       if (panel === 'workspace-settings') { setWsSettingsInitialId(useStore.getState().activeWorkspaceId); setSettingsSection('workspace-settings') }
       if (panel === 'experimental') setSettingsSection('experimental')
       if (panel === 'safety') setSettingsSection('safety')
@@ -924,7 +946,8 @@ export default function App() {
         [view === 'session' && !!terminalDrawer[activeSessionId] && !typingTarget, () => useStore.getState().toggleTerminalDrawer(activeSessionId, false)],
         // Session → Board, including when the enlarged terminal has focus.
         // Consume the key here so it cannot also interrupt the running CLI.
-        [gridFocus && !useStore.getState().showHome && (!typingTarget || inTerminal), leaveGridFocus],
+        // Tasks (⌘B) runs its own Escape chain (note, modal, board); not here.
+        [gridFocus && !showBoard && !useStore.getState().showHome && (!typingTarget || inTerminal), leaveGridFocus],
       ]
       for (const [isOpen, close, nonModal] of escapeStack) {
         if (isOpen && !(nonModal && inTerminal)) { e.preventDefault(); e.stopPropagation(); close(); return }
@@ -983,6 +1006,7 @@ export default function App() {
     // ⌘J: the terminal drawer of the open session. From Board/Home it opens
     // the selected session first; on the phone the drawer stays the old one.
     onToggleTerminal: () => {
+      useExperienceMode.getState().setMode('dev')
       const store = useStore.getState()
       if (isMobile) { setIsTerminalOpen((t) => !t); return }
       if (viewOf(store) === 'session') {
@@ -1001,7 +1025,7 @@ export default function App() {
     if (!isSurfaceAvailable(action)) return false
     // Levels and inline toggles (not exclusive overlays)
     if (action === 'home') { closeExclusivePanels(); useStore.getState().goHome(); return true }
-    if (action === 'board') { closeExclusivePanels(); useStore.getState().goBoard(); return true }
+    if (action === 'board') { closeExclusivePanels(); useExperienceMode.getState().setMode('dev'); useStore.getState().goBoard(); return true }
     if (action === 'review') {
       const store = useStore.getState()
       if (!store.activeSessionId) { store.addNotification?.({ type: 'info', message: 'Open a session first.' }); return true }
@@ -1117,6 +1141,7 @@ export default function App() {
       'mac-power': () => setSettingsSection('mac-power'),
       'model-providers': () => setSettingsSection('model-providers'),
       'sound-settings': () => setSettingsSection('sound-settings'),
+      'dictation': () => setSettingsSection('dictation'),
       'workspace-settings': () => { setWsSettingsInitialId(useStore.getState().activeWorkspaceId); setSettingsSection('workspace-settings') },
       'api-keys': () => setSettingsSection('api-keys'),
       'phone-access': () => setSettingsSection('phone-access'),
@@ -1280,7 +1305,7 @@ export default function App() {
       onFindProject={(q) => { setWorkspaceSearchQuery(q || ''); setShowWorkspacePicker(true) }}
       onOpenPanel={executeHomeAction}
       onOpenSession={(id) => useStore.getState().goSession(id)}
-      onReviewTask={(taskId) => setTaskFlow({ taskId })}
+      onReviewTask={reviewTask}
     />
   )
 
@@ -1290,6 +1315,7 @@ export default function App() {
     ) : (
       <SessionScreen
         sessionId={activeSessionId}
+        chatOnly={experienceMode === 'chat'}
         sidebarTab={showSessionSidebar ? sessionSidebarTab : null}
         sidebarFile={reviewInitialFile}
         onSidebarTabChange={setSessionSidebarTab}
@@ -1335,7 +1361,7 @@ export default function App() {
                     <PhoneKeyBar sessionId={id} />
                   </>
                 ) : (
-                  <ChatPanel sessionId={id} onToggleTerminal={() => setIsTerminalOpen(!isTerminalOpen)} isTerminalOpen={false} phone />
+                  <ChatPanel sessionId={id} onToggleTerminal={experienceMode === 'dev' ? () => setIsTerminalOpen(!isTerminalOpen) : undefined} isTerminalOpen={false} phone />
                 )}
               </div>
             </div>
@@ -1344,8 +1370,8 @@ export default function App() {
         {/* Terminal view of the phone session (switched in the phone header). */}
         {activeSessionId && !isShellSession(sessions[activeSessionId]) && (
           <div
-            data-terminal-drawer={isTerminalOpen ? 'open' : 'closed'}
-            className={`ive-terminal-drawer absolute bottom-0 left-0 right-0 border-t border-x-line bg-x-surface-2 z-30 transition-all duration-300 ease-in-out flex flex-col overflow-hidden ${isTerminalOpen ? 'h-[360px] translate-y-0' : 'h-0 border-t-0'}`}
+            data-terminal-drawer={isTerminalOpen && experienceMode === 'dev' ? 'open' : 'closed'}
+            className={`ive-terminal-drawer absolute bottom-0 left-0 right-0 border-t border-x-line bg-x-surface-2 z-30 transition-all duration-300 ease-in-out flex flex-col overflow-hidden ${isTerminalOpen && experienceMode === 'dev' ? 'h-[360px] translate-y-0' : 'h-0 border-t-0'}`}
           >
             <div className={`flex-1 min-h-0 flex flex-col bg-x-surface-2 relative transition-opacity duration-200 ${isTerminalOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
               <TerminalView sessionId={activeSessionId} inDrawer={true} phone />
@@ -1361,7 +1387,7 @@ export default function App() {
   )
 
   const mobileScreen = phoneSession && activeSessionId ? mobileSessionArea
-    : phoneOverview ? (
+    : experienceMode === 'dev' && phoneOverview ? (
       <div key="phone-overview" className="flex-1 min-h-0 overflow-y-auto bg-x-bg x-canvas">
         <PhoneOverview onOpenHome={() => setPhoneFullHome(true)} />
       </div>
@@ -1371,6 +1397,7 @@ export default function App() {
     // Phone, inside a session: back, name + status, Chat/Terminal, Stop.
     <PhoneSessionHeader
       sessionId={activeSessionId}
+      chatOnly={experienceMode === 'chat'}
       view={isTerminalOpen ? 'terminal' : 'chat'}
       onView={(v) => setIsTerminalOpen(v === 'terminal')}
       onBack={() => useStore.getState().goHome()}
@@ -1427,6 +1454,8 @@ export default function App() {
       phoneLevel={phoneSession ? 'session' : phoneOverview ? 'overview' : 'home'}
       sidebar={(
         <NavSidebar
+          isMobile={isMobile}
+          onHideSidebar={() => isMobile ? setMobileDrawerOpen(false) : useStore.setState({ sidebarVisible: false })}
           onOpenPanel={executeHomeAction}
           onNewSession={() => openQuickStart()}
           onGoHome={() => panelActions('home')}
@@ -1470,7 +1499,7 @@ export default function App() {
         <>
           {/* Lazy-loaded overlay panels — only the modal region suspends (fallback=null), never the shell. */}
           <Suspense fallback={null}>
-          {taskFlow && <TaskFlow key={taskFlow.tourKey || taskFlow.taskId || 'task-draft'} initial={taskFlow} onClose={() => setTaskFlow(null)} onCreated={() => {}} onBoard={(workspaceId) => { if (workspaceId) useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('feature-board') }} onKnowledge={(workspaceId) => { useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('memory') }} />}
+          {taskFlow && <TaskFlow key={taskFlow.tourKey || taskFlow.taskId || 'task-draft'} initial={taskFlow} onClose={() => setTaskFlow(null)} onCreated={() => {}} onBoard={(workspaceId, options) => { if (workspaceId) useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); if (options?.reviewTaskId) openTaskReview(options.reviewTaskId); else executeHomeAction('feature-board') }} onKnowledge={(workspaceId) => { useStore.getState().setActiveWorkspace(workspaceId); setTaskFlow(null); executeHomeAction('memory') }} />}
           {showCommand && <CommandPalette initialQuery={commandQuery} onClose={() => { setShowCommand(false); setCommandQuery('') }} onAction={handleCommandAction} />}
           {showCheatSheet && <CheatSheet onClose={() => setShowCheatSheet(false)} onRun={runCheatSheetAction} />}
           {showWorkspacePicker && <WorkspacePicker
@@ -1494,15 +1523,15 @@ export default function App() {
           {showAttention && (
             <Modal title="Needs your attention" size="md" onClose={() => setShowAttention(false)} bodyClassName="overflow-y-auto p-4">
               <AttentionBar showAll emptyMessage="Nothing needs your attention right now."
-                onReviewTask={(taskId) => { closeExclusivePanels(); setTaskFlow({ taskId }) }}
+                onReviewTask={reviewTask}
                 onReviewSession={(sessionId) => {
                   closeExclusivePanels()
                   const store = useStore.getState()
                   const session = store.sessions[sessionId]
                   if (!session) return
                   store.setActiveWorkspace(session.workspace_id)
-                  store.goSession(sessionId)
-                  store.toggleTerminalDrawer(sessionId, true)
+                  store.goSession(sessionId, { autoStart: false })
+                  if (useExperienceMode.getState().mode === 'dev') store.toggleTerminalDrawer(sessionId, true)
                 }}
                 onSafetySettings={() => executeHomeAction('safety')}
               />
@@ -1667,7 +1696,8 @@ export default function App() {
               onClose={() => { URL.revokeObjectURL(screenshotData.imageUrl); setScreenshotData(null) }}
               onSendToSession={(filePath) => {
                 const sid = useStore.getState().activeSessionId
-                if (sid) typeInTerminal(sid, filePath)
+                // A path's digits would select and confirm an open dialog's option.
+                if (sid) typeInTerminalUnlessQuestion(sid, filePath)
               }}
             />
           )}
@@ -1702,6 +1732,7 @@ export default function App() {
           <SessionDeleteDialog />
           <SessionRenameDialog />
           <ToastBoundary><NotificationToast sideChatOpen={showSideChat} /></ToastBoundary>
+          <ToastBoundary><NeedsYouPopover sideChatOpen={showSideChat} /></ToastBoundary>
         </>
       )}
     >

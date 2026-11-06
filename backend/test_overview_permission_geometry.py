@@ -42,7 +42,9 @@ class PermissionGeometryTests(unittest.IsolatedAsyncioTestCase):
             '_session_cli_type':AsyncMock(return_value='claude'),
             '_detect_cli_startup_blocker':lambda *_:None,'_startup_blocker_text':lambda _: '',
             'get_auth':lambda _:self.state,'_terminal_control_violation':lambda *_:self.blocked}
-        exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name in names],type_ignores=[]),'server.py','exec'),self.ns)
+        nodes=[n for n in tree.body if (isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and (n.name in names or n.name.startswith('_dialog_')))
+               or (isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id.startswith('_DIALOG_') for t in n.targets))]
+        exec(compile(ast.Module(body=nodes,type_ignores=[]),'server.py','exec'),self.ns)
 
     async def feed_long(self):
         await self.capture.process('session',LONG_MENU.replace('\n','\r\n').encode())
@@ -102,5 +104,67 @@ class PermissionGeometryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.rows,400)
         self.assertEqual(self.manager.expand_unowned_geometry('session'),{'changed':False,'state':'incomplete'})
         self.assertEqual(self.resize.call_count,1)
+
+CODEX_LONG = ("  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: Write the fixture.\n\n  $ cat <<'EOF' > fixture.txt\n"
+              + "\n".join(f"  line {i}" for i in range(70)) + "\n  EOF\n\n\n› 1. Yes, proceed (y)\n"
+              "  2. Yes, and don't ask again for commands that start with `cat` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n"
+              "  Press enter to confirm or esc to cancel")
+
+class CodexPermissionViewTests(PermissionGeometryTests):
+    """The Overview's permission view treats Codex dialogs like Claude's."""
+    def setUp(self):
+        super().setUp()
+        self.ns['_session_cli_type']=AsyncMock(return_value='codex')
+        self.captured_state=CODEX_LONG.splitlines()[-40:]
+        async def sleep(_):
+            if self.pending_frame:
+                self.pending_frame=False
+                await self.capture.process('session',('\x1b[2J\x1b[H'+CODEX_LONG.replace('\n','\r\n')).encode())
+        self.ns['_asyncio']=SimpleNamespace(sleep=sleep)
+
+    async def feed_long(self):
+        await self.capture.process('session',CODEX_LONG.replace('\n','\r\n').encode())
+        self.assertNotIn('Would you like',self.capture.get_screen('session'))
+        self.assertTrue(self.ns['_is_incomplete_permission_screen'](self.capture.get_screen('session')))
+
+    async def test_long_permission_redraw_gives_complete_current_frame(self):
+        await self.feed_long()
+        result=await self.output()
+        self.assertEqual(result['permission_view_state'],'ready')
+        menu=result['menu']
+        self.assertEqual((menu['kind'],menu['question'],menu['selected']),('permission','Would you like to run the following command?','1'))
+        self.assertEqual([o['label'] for o in menu['options']][::2],['Yes, proceed (y)','No, and tell Codex what to do differently (esc)'])
+        self.assertIn('line 0',menu['excerpt']);self.assertIn('line 69',menu['excerpt'])
+        self.assertEqual({**menu,'choices':tuple(menu['choices'])},self.ns['_session_permission_menu'](result['screen']))
+        self.resize.assert_called_once_with(120,200)
+
+    async def test_active_geometry_owner_never_resized(self):
+        await self.feed_long();self.session.geometry_owner='visible-terminal'
+        result=await self.output()
+        self.assertEqual(result['permission_view_state'],'terminal_in_use')
+        self.assertIsNone(result['menu']);self.resize.assert_not_called()
+
+    async def test_read_only_caller_cannot_resize_through_get(self):
+        await self.feed_long();self.blocked='read-only visitor'
+        result=await self.output()
+        self.assertEqual(result['permission_view_state'],'control_unavailable')
+        self.assertIsNone(result['menu']);self.resize.assert_not_called()
+
+    async def test_ordinary_output_get_never_changes_geometry(self):
+        await self.feed_long();result=await self.output(permission=False)
+        self.assertIsNone(result['permission_view_state']);self.assertNotIn('menu',result);self.resize.assert_not_called()
+
+    async def test_complete_short_prompt_does_not_redraw(self):
+        short=CODEX_LONG.replace("\n".join(f"  line {i}" for i in range(70)),'  line 0')
+        await self.capture.process('session',short.replace('\n','\r\n').encode())
+        result=await self.output();self.resize.assert_not_called()
+        self.assertIsNone(result['permission_view_state']);self.assertEqual(result['menu']['kind'],'permission')
+
+    async def test_composer_has_no_menu_and_a_startup_screen_never_one(self):
+        await self.capture.process('session',b'>_ OpenAI Codex\r\n\xe2\x80\xba Ask Codex to do anything')
+        self.assertIsNone((await self.output())['menu'])
+        await self.capture.process('session',('\x1b[2J\x1b[H'+CODEX_LONG.replace("\n".join(f"  line {i}" for i in range(70)),'  line 0').replace('\n','\r\n')).encode())
+        self.ns['_detect_cli_startup_blocker']=lambda *_:{'type':'trust_required'}
+        self.assertIsNone((await self.output())['menu'])
 
 if __name__=='__main__':unittest.main()

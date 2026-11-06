@@ -71,5 +71,21 @@ class SigningTests(unittest.TestCase):
             sign.verify_signature(Path('node'), IDENTITY, '66Y43UAY3C', node=True)
             self.assertIn('--xml', run.call_args.args[0])
 
+    def test_outer_app_requests_microphone_and_verification_fails_without_it(self):
+        self.assertEqual(sign.entitlements_for(Path('.')), {'com.apple.security.device.audio-input': True})
+        self.assertEqual(sign.entitlements_for(Path('Contents/MacOS/ive-phone-power')), {})
+        self.assertEqual(sign.entitlements_for(sign.NODE), sign.JIT_ENTITLEMENTS)
+        details = SimpleNamespace(returncode=0, stdout='', stderr=(
+            f'Authority={IDENTITY}\nTeamIdentifier=66Y43UAY3C\n'
+            'Timestamp=Oct 11, 2026\nCodeDirectory flags=0x10000(runtime)\n'))
+        granted = sign.plistlib.dumps({**sign.APP_ENTITLEMENTS, 'com.apple.application-identifier': 'x'}).decode()
+        with patch.object(sign, 'run', return_value=granted), \
+             patch.object(sign.subprocess, 'run', return_value=details):
+            sign.verify_signature(Path('IVE.app'), IDENTITY, '66Y43UAY3C', app=True)
+        for missing in ('', sign.plistlib.dumps({}).decode()):
+            with self.subTest(missing=missing), patch.object(sign, 'run', return_value=missing), \
+                 patch.object(sign.subprocess, 'run', return_value=details), self.assertRaises(RuntimeError):
+                sign.verify_signature(Path('IVE.app'), IDENTITY, '66Y43UAY3C', app=True)
+
 
 if __name__ == '__main__': unittest.main()

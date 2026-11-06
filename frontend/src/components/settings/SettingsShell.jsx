@@ -16,6 +16,7 @@ import SharingPanel from './SharingPanel'
 import PhonePanel from './PhonePanel'
 import MacPowerPanel from './MacPowerPanel'
 import SoundSettingsPanel from './SoundSettingsPanel'
+import DictationPanel from './DictationPanel'
 import WorkspaceSettingsPanel, { WORKSPACE_SETTING_SECTIONS } from './WorkspaceSettingsPanel'
 import { Button, IconButton } from '../ui'
 
@@ -25,7 +26,7 @@ const SURFACE_BY_ID = new Map(CONFIGURE_SURFACES.map(surface => [surface.id, sur
 export const SETTINGS_GROUPS = [
   {
     label: 'This machine',
-    sectionIds: ['general-settings', 'mac-power', 'sound-settings', 'shortcuts'],
+    sectionIds: ['general-settings', 'mac-power', 'sound-settings', 'dictation', 'shortcuts'],
   },
   {
     label: 'This workspace',
@@ -62,6 +63,7 @@ const SECTION_COMPONENTS = {
   accounts: AccountManager,
   connectors: ConnectorsPanel,
   'sound-settings': SoundSettingsPanel,
+  dictation: DictationPanel,
   experimental: ExperimentalPanel,
   'grid-templates': GridTemplateEditor,
   shortcuts: ShortcutsPanel,

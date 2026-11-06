@@ -398,6 +398,15 @@ async function deliver(sessionId) {
           backToQueue()
           return
         }
+        if (status === 409 && body.code === 'question_open') {
+          // Nothing was typed: the agent is asking the user something. Wait
+          // for the next idle; the composer shows the question in place.
+          const rt = rtOf(sessionId)
+          rt.idleSince = null
+          rt.forceSettle = false
+          backToQueue()
+          return
+        }
         if (status === 409 && body.startup_blocker) {
           backToQueue({ reason: 'failed', message: body.startup_blocker.label || 'The CLI shows a startup prompt.', at: now() })
           return

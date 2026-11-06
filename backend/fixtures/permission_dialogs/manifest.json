@@ -1,0 +1,793 @@
+[
+  {
+    "name": "claude-trust",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "startup_blocker",
+    "question": "Quick safety check: Is this a project you created or one you trust?",
+    "options": [
+      "No, exit",
+      "Yes, I trust this folder"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Enter to confirm · Esc to cancel",
+    "notes": "First-run folder trust dialog (unnumbered, cursor starts on No, exit; answered with Down+Enter). Negative fixture: never answerable as a permission.",
+    "scenario": "claude-main",
+    "step": 0,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      13,
+      1
+    ],
+    "raw_bytes": 1375,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:44:18+00:00"
+  },
+  {
+    "name": "claude-bash",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to proceed?",
+    "options": [
+      "Yes",
+      "Yes, and always allow access to /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1 from this project",
+      "Yes, and switch to auto mode · auto mode handles these prompts for you",
+      "No"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "Bash permission dialog (a plain echo is auto-allowed as read-only, the redirect prompts).",
+    "scenario": "claude-main",
+    "step": 8,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      19,
+      1
+    ],
+    "raw_bytes": 8585,
+    "quiescent": false,
+    "captured_at": "2026-10-25T12:44:43+00:00"
+  },
+  {
+    "name": "claude-bash-after-digit-2",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "probe",
+    "question": "",
+    "options": [],
+    "selected_index": null,
+    "cursor_glyph": null,
+    "footer": null,
+    "notes": "Screen 0.5 s after pressing the digit 2 on the Bash dialog. Observed with 2.1.310: the digit selects and confirms at once (dialog gone, option 2 applied, command running); no Enter needed, so the Esc that follows interrupts the turn.",
+    "scenario": "claude-main",
+    "step": 11,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      37,
+      2
+    ],
+    "raw_bytes": 10310,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:44:44+00:00"
+  },
+  {
+    "name": "claude-create-file",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to create notes.txt?",
+    "options": [
+      "Yes",
+      "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+      "No"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "Write tool dialog, approved with Enter.",
+    "scenario": "claude-main",
+    "step": 17,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      22,
+      1
+    ],
+    "raw_bytes": 14096,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:44:49+00:00"
+  },
+  {
+    "name": "claude-edit-file",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to make this edit to notes.txt?",
+    "options": [
+      "Yes",
+      "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+      "No"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "Edit tool dialog, approved with Enter.",
+    "scenario": "claude-main",
+    "step": 24,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      35,
+      1
+    ],
+    "raw_bytes": 28217,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:44:59+00:00"
+  },
+  {
+    "name": "claude-fetch",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to allow Claude to fetch this content?",
+    "options": [
+      "Yes",
+      "Yes, and don't ask again for example.com",
+      "No, and tell Claude what to do differently (esc)"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "",
+    "notes": "WebFetch dialog, cancelled with Esc.",
+    "scenario": "claude-main",
+    "step": 30,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      37,
+      1
+    ],
+    "raw_bytes": 49183,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:07+00:00"
+  },
+  {
+    "name": "claude-ask-single",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "ask_user_question",
+    "question": "Which colour?",
+    "options": [
+      "Red",
+      "Green",
+      "Blue",
+      "Type something.",
+      "Chat about this"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    "notes": "AskUserQuestion, one question.",
+    "scenario": "claude-main",
+    "step": 36,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      29,
+      0
+    ],
+    "raw_bytes": 63722,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:12+00:00",
+    "descriptions": [
+      "Choose red",
+      "Choose green",
+      "Choose blue",
+      "",
+      ""
+    ]
+  },
+  {
+    "name": "claude-ask-multi",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "ask_user_question",
+    "question": "Which colour?",
+    "options": [
+      "Red",
+      "Green",
+      "Blue",
+      "Type something.",
+      "Chat about this"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    "notes": "AskUserQuestion, two questions, second one multi-select.",
+    "scenario": "claude-main",
+    "step": 42,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      29,
+      0
+    ],
+    "raw_bytes": 78374,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:17+00:00",
+    "descriptions": [
+      "Choose red",
+      "Choose green",
+      "Choose blue",
+      "",
+      ""
+    ]
+  },
+  {
+    "name": "claude-ask-multi-q2",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "ask_user_question",
+    "question": "Which sizes?",
+    "options": [
+      "[ ] S",
+      "[ ] M",
+      "[ ] L",
+      "[ ] Type something",
+      "Chat about this"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Enter to select · Tab/Arrow keys to navigate · Esc to cancel",
+    "notes": "Second question (multi-select) after pressing Tab.",
+    "scenario": "claude-main",
+    "step": 45,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      28,
+      0
+    ],
+    "raw_bytes": 81156,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:17+00:00",
+    "descriptions": [
+      "Small",
+      "Medium",
+      "Large",
+      "Submit",
+      ""
+    ]
+  },
+  {
+    "name": "claude-model-picker",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "negative",
+    "question": "Select model",
+    "options": [
+      "Default (recommended)  Fable 5.1",
+      "Opus 5.5               For complex work and everyday tasks",
+      "Fable 5.1              For your toughest challenges",
+      "Sonnet 5.5             Most efficient for simpler tasks",
+      "Haiku 5.5 ✔            Fastest for quick answers",
+      "Haiku 4.5              Fastest for quick answers",
+      "Sonnet 5               Efficient for routine tasks",
+      "Opus 5                 Best for everyday, complex tasks",
+      "Fable 5                Most capable for your hardest and longest-running tasks"
+    ],
+    "selected_index": 4,
+    "cursor_glyph": "❯",
+    "footer": "Enter to set as default · s to use this session only · Esc to cancel",
+    "notes": "/model picker. Negative fixture.",
+    "scenario": "claude-main",
+    "step": 51,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      27,
+      3
+    ],
+    "raw_bytes": 88947,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:21+00:00"
+  },
+  {
+    "name": "claude-permissions",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "negative",
+    "question": "Permissions",
+    "options": [
+      "Add a new rule…",
+      "mcp__computer-use__computer_batch",
+      "mcp__computer-use__cursor_position",
+      "mcp__computer-use__double_click",
+      "mcp__computer-use__hold_key",
+      "mcp__computer-use__key",
+      "mcp__computer-use__left_click",
+      "mcp__computer-use__left_click_drag",
+      "mcp__computer-use__left_mouse_down"
+    ],
+    "selected_index": null,
+    "cursor_glyph": "",
+    "footer": "←/→ to switch · ↓ to select · Esc to cancel",
+    "notes": "/permissions screen (Allow tab). Negative fixture.",
+    "scenario": "claude-main",
+    "step": 57,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "manual"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      21,
+      34
+    ],
+    "raw_bytes": 96894,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:45:24+00:00"
+  },
+  {
+    "name": "codex-trust",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "startup_blocker",
+    "question": "Trust this folder?",
+    "options": [
+      "Trust and continue",
+      "Back to Agent Command Center"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "›",
+    "footer": "enter continue · esc back",
+    "notes": "Folder trust prompt (numbered, › cursor, answered with Enter). Negative fixture.",
+    "scenario": "codex-main",
+    "step": 0,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      37,
+      1
+    ],
+    "raw_bytes": 13693,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:51:13+00:00"
+  },
+  {
+    "name": "claude-plan-approval",
+    "cli": "claude",
+    "cli_version": "2.1.310 (Claude Code)",
+    "kind": "plan_approval",
+    "question": "Claude has written up a plan and is ready to execute. Would you like to proceed?",
+    "options": [
+      "Yes, and use auto mode",
+      "Yes, manually approve edits",
+      "Tell Claude what to change"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "ctrl+g to edit in Vim · ~/.claude/plans/make-a-one-line-plan-twinkling-lamport.md",
+    "notes": "ExitPlanMode approval dialog in --permission-mode plan.",
+    "descriptions": [
+      "",
+      "",
+      "shift+tab to approve with this feedback"
+    ],
+    "scenario": "claude-plan",
+    "step": 8,
+    "argv": [
+      "claude",
+      "--settings",
+      "{\"disableAllHooks\":true}",
+      "--model",
+      "haiku",
+      "--permission-mode",
+      "plan"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      34,
+      3
+    ],
+    "raw_bytes": 9287,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:51:19+00:00"
+  },
+  {
+    "name": "codex-command",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "permission",
+    "question": "Would you like to run the following command?",
+    "options": [
+      "Yes, proceed (y)",
+      "Yes, and don't ask again for commands that start with `touch created.txt` (p)",
+      "No, and tell Codex what to do differently (esc)"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "›",
+    "footer": "Press enter to confirm or esc to cancel",
+    "notes": "Command approval (read-only sandbox, on-request).",
+    "scenario": "codex-main",
+    "step": 6,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      39,
+      120
+    ],
+    "raw_bytes": 121588,
+    "quiescent": false,
+    "captured_at": "2026-10-25T12:53:35+00:00"
+  },
+  {
+    "name": "codex-command-after-digit-2",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "probe",
+    "question": null,
+    "options": [],
+    "selected_index": null,
+    "cursor_glyph": null,
+    "footer": null,
+    "notes": "Screen 0.5 s after pressing the digit 2 on the command approval. Observed with 0.164.0: the digit selects and confirms at once (\"You approved codex to always run commands that start with ...\", command ran); the letters y/p/esc shown in the labels are hotkeys too.",
+    "scenario": "codex-main",
+    "step": 9,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      36,
+      2
+    ],
+    "raw_bytes": 124277,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:53:35+00:00"
+  },
+  {
+    "name": "codex-model-picker",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "negative",
+    "question": "Select Model and Effort",
+    "options": [
+      "GPT-6.1-Sol            Latest workhorse model for coding and everyday work.",
+      "GPT-6-Astra (current)  Frontier intelligence for the most demanding work.",
+      "GPT-6-Sol              Previous generation workhorse model.",
+      "GPT-6-Luna             Fast and affordable model for easier tasks.",
+      "GPT-5.6-Sol            Older generation workhorse model.",
+      "GPT-5.6-Terra          Older balanced model for straightforward work.",
+      "GPT-5.6-Luna           Older fast and efficient model."
+    ],
+    "selected_index": 1,
+    "cursor_glyph": "›",
+    "footer": "enter select · esc back",
+    "notes": "/model picker. Negative fixture (cursor sits on the current model, not on 1.).",
+    "scenario": "codex-model",
+    "step": 6,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      39,
+      120
+    ],
+    "raw_bytes": 117724,
+    "quiescent": true,
+    "captured_at": "2026-10-25T12:58:50+00:00"
+  },
+  {
+    "name": "legacy-claude-create-file",
+    "cli": "claude",
+    "cli_version": "2.1.299 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to create notes.txt?",
+    "options": [
+      "Yes",
+      "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+      "No"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "Rendered screen (not raw bytes) taken from IVE's permission_view at 140 columns on 2026-10-14, copied from the ive-team ux-redesign worktree.",
+    "path": "legacy-2.1.299/claude-create-file.txt",
+    "format": "screen",
+    "size": [
+      140,
+      null
+    ]
+  },
+  {
+    "name": "legacy-claude-edit-file",
+    "cli": "claude",
+    "cli_version": "2.1.299 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to make this edit to notes.txt?",
+    "options": [
+      "Yes",
+      "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)",
+      "No"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "Rendered screen (not raw bytes) taken from IVE's permission_view at 140 columns on 2026-10-14, copied from the ive-team ux-redesign worktree.",
+    "path": "legacy-2.1.299/claude-edit-file.txt",
+    "format": "screen",
+    "size": [
+      140,
+      null
+    ]
+  },
+  {
+    "name": "legacy-claude-fetch",
+    "cli": "claude",
+    "cli_version": "2.1.299 (Claude Code)",
+    "kind": "permission",
+    "question": "Do you want to allow Claude to fetch this content?",
+    "options": [
+      "Yes",
+      "Yes, and don't ask again for example.com",
+      "No, and tell Claude what to do differently (esc)"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "❯",
+    "footer": "",
+    "notes": "Rendered screen (not raw bytes) taken from IVE's permission_view at 140 columns on 2026-10-14, copied from the ive-team ux-redesign worktree.",
+    "path": "legacy-2.1.299/claude-fetch.txt",
+    "format": "screen",
+    "size": [
+      140,
+      null
+    ]
+  },
+  {
+    "name": "legacy-claude-tool-use-redraw",
+    "cli": "claude",
+    "cli_version": "2.1.299 (Claude Code)",
+    "kind": "redraw",
+    "question": "Do you want to proceed?",
+    "options": [],
+    "selected_index": null,
+    "cursor_glyph": "❯",
+    "footer": "Esc to cancel · Tab to amend",
+    "notes": "409 stale_session_prompt sample: before/expected/after screens of an MCP tool-use dialog that redrew while answering.",
+    "path": "legacy-2.1.299/claude-tool-use-redraw.json",
+    "format": "json"
+  },
+  {
+    "name": "codex-network",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "permission",
+    "question": "Would you like to run the following command?",
+    "options": [
+      "Yes, proceed (y)",
+      "Yes, and don't ask again for commands that start with `curl -sI https://example.com` (p)",
+      "No, and tell Codex what to do differently (esc)"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "›",
+    "footer": "Press enter to confirm or esc to cancel",
+    "notes": "Second approval kind: network access from the read-only sandbox.",
+    "scenario": "codex-second",
+    "step": 7,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      39,
+      120
+    ],
+    "raw_bytes": 165629,
+    "quiescent": false,
+    "captured_at": "2026-10-25T13:03:16+00:00"
+  },
+  {
+    "name": "codex-patch",
+    "cli": "codex",
+    "cli_version": "codex-cli 0.164.0",
+    "kind": "permission",
+    "question": "Would you like to run the following command?",
+    "options": [
+      "Yes, proceed (y)",
+      "Yes, and don't ask again for commands that start with `printf 'hello' > hello.md` (p)",
+      "No, and tell Codex what to do differently (esc)"
+    ],
+    "selected_index": 0,
+    "cursor_glyph": "›",
+    "footer": "Press enter to confirm or esc to cancel",
+    "notes": "Third approval kind: file change (apply_patch) from the read-only sandbox.",
+    "scenario": "codex-second",
+    "step": 13,
+    "argv": [
+      "codex",
+      "--ask-for-approval",
+      "on-request",
+      "--sandbox",
+      "read-only"
+    ],
+    "size": [
+      120,
+      40
+    ],
+    "cursor": [
+      39,
+      120
+    ],
+    "raw_bytes": 183771,
+    "quiescent": false,
+    "captured_at": "2026-10-25T13:03:41+00:00"
+  }
+]

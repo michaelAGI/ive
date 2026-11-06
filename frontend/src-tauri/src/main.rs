@@ -12,6 +12,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 #[derive(Default)]
 struct Backend(Mutex<Option<Child>>, AtomicBool);
@@ -42,6 +43,46 @@ fn external_url(url: &tauri::Url) {
         let _ = Command::new("/usr/bin/open").arg(url.as_str())
             .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
+}
+
+fn alert_text(text: &str, limit: usize) -> String {
+    text.chars().filter(|c| !c.is_control()).take(limit).collect::<String>().trim().to_owned()
+}
+
+fn bring_to_front(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_minimized().unwrap_or(false) { window.unminimize().map_err(|e| e.to_string())?; }
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
+/// A "needs you" alert outside the window. Ok(false) when macOS will not show
+/// it; never waits for the user.
+#[tauri::command]
+fn needs_you_notify(app: tauri::AppHandle, title: String, body: String, tag: String) -> Result<bool, String> {
+    let center = app.notification();
+    if !matches!(center.permission_state(), Ok(PermissionState::Granted)) { return Ok(false); }
+    let (title, body, tag) = (alert_text(&title, 120), alert_text(&body, 240), alert_text(&tag, 120));
+    if title.is_empty() && body.is_empty() { return Ok(false); }
+    let mut notification = center.builder().title(if title.is_empty() { "IVE".to_owned() } else { title }).body(body);
+    if !tag.is_empty() { notification = notification.extra("tag", tag); }
+    Ok(notification.show().is_ok())
+}
+
+/// Dock badge with the number of waiting sessions; None or 0 clears it.
+#[tauri::command]
+fn set_badge_count(window: tauri::WebviewWindow, count: Option<u64>) -> Result<(), String> {
+    let count = count.filter(|c| *c > 0).map(|c| i64::try_from(c).unwrap_or(i64::MAX));
+    window.set_badge_count(count).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn focus_main_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    bring_to_front(&window)
+}
+
+#[tauri::command]
+fn window_is_focused(window: tauri::WebviewWindow) -> Result<bool, String> {
+    window.is_focused().map_err(|e| e.to_string())
 }
 
 fn finder_path() -> String {
@@ -148,6 +189,8 @@ fn spawn_backend(app: &tauri::AppHandle, data_dir: &Path, port: u16, nonce: &str
 fn main() {
     let failure: Failure = Default::default();
     let app = tauri::Builder::default().manage(Backend::default())
+        .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![needs_you_notify, set_badge_count, focus_main_window, window_is_focused])
         .setup(move |app| {
             let port = std::env::var("IVE_DESKTOP_PORT").ok().and_then(|s| s.parse::<u16>().ok()).filter(|p| *p > 1024).unwrap_or(5112);
             let data_dir = std::env::var_os("IVE_DESKTOP_DATA_DIR").map(PathBuf::from)
@@ -177,6 +220,12 @@ fn main() {
                     }
                 }).build()?;
             let handle = app.handle().clone();
+            // A click on a notification brings the window back; the page then
+            // focuses the oldest open question itself.
+            let click_handle = handle.clone();
+            let _ = app.notification().on_action(move |_| {
+                if let Some(main) = click_handle.get_webview_window("main") { let _ = bring_to_front(&main); }
+            });
             let signal_handle = handle.clone();
             let _ = ctrlc::set_handler(move || signal_handle.exit(0));
             let failure = failure.clone();

@@ -1,8 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLabel, hasVisibleMessage, permissionPresentation } from '../src/lib/conversationPresentation.js'
+import { activityLabel, choiceTone, excerptWithRules, hasVisibleMessage, permissionPresentation, promptNotice } from '../src/lib/conversationPresentation.js'
 import { parseSessionPermissionPrompt, submitSessionPromptReply } from '../src/lib/sessionPrompt.js'
 import { promptChoices } from '../src/lib/sessionPrompt.js'
+import { menuFromPrompt } from '../src/lib/promptMenu.js'
 
 const two = `Bash command
 Find Orbit and traffic projects
@@ -20,18 +21,25 @@ test('two-choice permission exposes native refusal, not persistent approval', as
   assert.deepEqual(prompt.choices.map(c=>c.value), ['1','2'])
   assert.deepEqual(promptChoices({prompt}).allowSession, null)
   assert.equal(promptChoices({prompt}).deny, '2')
-  const display=permissionPresentation(prompt)
+  const withRules=(p,screen)=>({...p,excerpt:excerptWithRules(p.excerpt,screen)})
+  const display=permissionPresentation(withRules(prompt,two))
   // The request line is the command; the hook's note and the safety line are detail.
   assert.equal(display.description, "ls -d */ Projects/*/ | grep -i 'orbit|traffic'")
   assert.deepEqual(display.detailLines, ['Find Orbit and traffic projects', "Safety check not configured: missing API key 'api_key_gemini_api' (fail-closed)"])
   assert.equal(display.summary, 'The assistant wants to run a command')
-  assert.equal(permissionPresentation(prompt, 'Claude').summary, 'Claude wants to run a command')
-  const plain = permissionPresentation(parseSessionPermissionPrompt(`Bash command\nnpm test\nRun the tests\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again for npm commands in demo\n  3. No\nEsc to cancel`), 'Claude')
+  assert.equal(permissionPresentation(withRules(prompt,two), 'Claude').summary, 'Claude wants to run a command')
+  const real=`Bash command\nTip: auto mode handles these prompts for you\nRun the tests\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\nnpm test\n╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don't ask again for npm commands in demo\n  3. No\nEsc to cancel`
+  const plain = permissionPresentation(withRules(parseSessionPermissionPrompt(real),real), 'Claude')
   assert.equal(plain.description, 'npm test')
   assert.deepEqual(plain.detailLines, ['Run the tests'])
   assert.deepEqual(plain.choices.map(c=>c.label), ['Allow once', 'Always allow npm commands in demo', 'Don’t allow'])
   assert.match(display.notice, /safety check needs setup/i)
   assert.deepEqual(display.choices.map(c=>c.label), ['Allow once', 'Don’t allow'])
+  const menu=menuFromPrompt(prompt)
+  // The CLI's words stay; presentation adds only tone and the setup notice.
+  assert.deepEqual(menu.options.map(o=>o.label), ['Yes', 'No'])
+  assert.deepEqual(menu.options.map((o,i)=>choiceTone(o,i,menu)), ['allow', 'deny'])
+  assert.match(promptNotice(menu), /safety check needs setup/i)
   let sent
   await submitSessionPromptReply('s',two,'2',{sendInput:async (...args)=>{sent=args;return {ok:true}}})
   assert.deepEqual(sent,['s','2',{expected_screen:two,ready_timeout:0}])
@@ -42,9 +50,10 @@ test('incomplete and historical two-choice requests never expose approval', () =
 test('persistent scope stays verbatim and separate from one-time consent', () => {
   const prompt=parseSessionPermissionPrompt(two.replace('2. No',"2. Yes, and don't ask again in /production\n   3. No"))
   assert.equal(promptChoices({prompt}).deny,'3')
-  const display=permissionPresentation(prompt)
-  assert.equal(display.choices[1].label,"Yes, and don't ask again in /production")
-  assert.equal(display.choices[1].kind,'persistent')
+  const menu=menuFromPrompt(prompt)
+  assert.equal(menu.options[1].label,"Yes, and don't ask again in /production")
+  assert.equal(choiceTone(menu.options[1],1,menu),'persistent')
+  assert.equal(promptNotice({...menu,excerpt:'Bash command\nls'}),'')
 })
 test('activity summaries do not expose shell commands or tool payloads', () => {
   const steps=[{type:'tool_execution',tool_use:{name:'Bash',input:{command:'cat secret.env'}}}]

@@ -1,7 +1,7 @@
 import { visibleSessions } from '../../lib/visibleSessions'
 import { sessionNeedsAttention } from '../../lib/sessionAttention'
 import { useRef, useState } from 'react'
-import { Command, Plus, SquarePen, Search, X, House, Columns3, GitCompareArrows, BookOpen, Settings, Plug, Smartphone } from 'lucide-react'
+import { Command, Plus, SquarePen, Search, X, House, Columns3, GitCompareArrows, BookOpen, Settings, Plug, Smartphone, PanelLeftClose } from 'lucide-react'
 import useStore from '../../state/store'
 import useView from '../../hooks/useView'
 import { selectCounts } from '../../state/selectors'
@@ -14,8 +14,10 @@ import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
 import markLight from '../../assets/ive-mark-light.svg'
 import markDark from '../../assets/ive-mark-dark.svg'
+import useExperienceMode from '../../state/experienceMode'
+import ChatHistory from './ChatHistory'
 
-// The sidebar: brand, filter, Work (Home · Board · Review · Knowledge), the
+// The sidebar: brand, filter, Work (Home · Overview · Changes · Knowledge), the
 // project tree, Set up (Settings · Connectors · Phone), and the foot. Helper
 // sessions (Commander, Brainstormer) never appear here.
 function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {
@@ -39,8 +41,10 @@ function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {
 export default function NavSidebar({
   onOpenPanel, onNewSession, onGoHome, onGoBoard, onOpenAttention, onOpenReview, onOpenKnowledge,
   activeOverlay = null, attentionCount = 0, catchUp = null,
+  onHideSidebar, isMobile = false,
 }) {
   const t = useT()
+  const mode = useExperienceMode(s => s.mode)
   const view = useView()
   const newSessionKey = useStore((s) => s.keybindings?.newSession)
   const counts = useStore(selectCounts)
@@ -59,6 +63,11 @@ export default function NavSidebar({
           <span className="ive-brand-name">IVE</span>
         </div>
         <div className="ive-sidebar-head-actions">
+          <button type="button" data-sidebar-dismiss className="ive-sidebar-icon-btn"
+            aria-label={isMobile ? 'Close sidebar' : 'Hide sidebar'}
+            title={isMobile ? 'Close sidebar' : 'Hide sidebar'} onClick={onHideSidebar}>
+            {isMobile ? <X size={17} aria-hidden="true" /> : <PanelLeftClose size={17} aria-hidden="true" />}
+          </button>
           <button
             type="button"
             data-chrome-button
@@ -72,9 +81,9 @@ export default function NavSidebar({
         </div>
       </div>
 
-      <NewTerminalButton sidebar />
+      {mode === 'dev' && <NewTerminalButton sidebar />}
       <button type="button" data-sidebar-new-chat className="ive-sidebar-new-chat" onClick={onNewSession}>
-        <SquarePen size={16} aria-hidden="true" /><span>{t('nav.newSession')}</span>{newSessionKey && <kbd className="ive-kbd">{formatKeyCombo(newSessionKey)}</kbd>}
+        <SquarePen size={16} aria-hidden="true" /><span>{mode === 'chat' ? 'New chat' : t('nav.newSession')}</span>{newSessionKey && <kbd className="ive-kbd">{formatKeyCombo(newSessionKey)}</kbd>}
       </button>
 
       <div className="ive-sidebar-filter">
@@ -82,7 +91,7 @@ export default function NavSidebar({
         <input
           ref={filterRef}
           type="search"
-          aria-label="Filter sessions by name or model"
+          aria-label={mode === 'chat' ? 'Filter chats by name or assistant' : 'Filter sessions by name or model'}
           value={filter}
           placeholder={t('nav.search')}
           onChange={(e) => setFilter(e.target.value)}
@@ -103,7 +112,7 @@ export default function NavSidebar({
       <nav className="ive-nav-group" aria-label={t('nav.work')}>
         <div className="t-label ive-nav-group-title">{t('nav.work')}</div>
         <NavItem id="home" icon={House} label={t('nav.home')} current={!activeOverlay && view === 'home'} onClick={onGoHome} />
-        <NavItem id="board" icon={Columns3} label={t('nav.board')} current={!activeOverlay && view === 'board'} onClick={onGoBoard}>
+        {mode === 'dev' && <NavItem id="board" icon={Columns3} label={t('nav.board')} current={!activeOverlay && view === 'board'} onClick={onGoBoard}>
           {counts.running > 0 && <span className="ive-nav-badge" data-board-badge>{counts.running} running</span>}
           {catchUp?.stale && (
             <span
@@ -114,7 +123,7 @@ export default function NavSidebar({
               aria-hidden="true"
             />
           )}
-        </NavItem>
+        </NavItem>}
         {waiting > 0 && (
           <button type="button" className="ive-needs-you" onClick={onOpenAttention}
             aria-haspopup="dialog">
@@ -122,11 +131,11 @@ export default function NavSidebar({
             <span aria-hidden="true">→</span>
           </button>
         )}
-        <NavItem id="review" icon={GitCompareArrows} label={t('nav.review')} current={activeOverlay === 'review'} onClick={onOpenReview} />
+        {mode === 'dev' && <NavItem id="review" icon={GitCompareArrows} label="Review changes" current={activeOverlay === 'review'} onClick={onOpenReview} />}
         <NavItem id="knowledge" icon={BookOpen} label={t('nav.knowledge')} current={activeOverlay === 'knowledge'} onClick={onOpenKnowledge} />
       </nav>
 
-      <div className="ive-nav-group ive-nav-group--projects">
+      {mode === 'chat' ? <ChatHistory filter={filter} /> : <div className="ive-nav-group ive-nav-group--projects">
         <div className="t-label ive-nav-group-title ive-project-heading">
           <span>{t('nav.projects')}</span>
           <button type="button" className="ive-sidebar-icon-btn" aria-label={t('nav.addProject')} title={t('nav.addProject')} onClick={() => window.dispatchEvent(new CustomEvent('open-add-workspace'))}>
@@ -134,7 +143,7 @@ export default function NavSidebar({
           </button>
         </div>
         <Sidebar filter={filter} />
-      </div>
+      </div>}
 
       <nav className="ive-nav-group ive-nav-group--setup" aria-label={t('nav.setup')}>
         <div className="t-label ive-nav-group-title">{t('nav.setup')}</div>

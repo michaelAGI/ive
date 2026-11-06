@@ -29,7 +29,7 @@ cp packaging/build/phone-power/ive-phone-power "$APP/Contents/MacOS/ive-phone-po
 cp packaging/phone-power/com.ive.desktop.phone-power.plist "$APP/Contents/Library/LaunchDaemons/"
 # The helper is compiled/signed separately; seal the added bundle resources.
 # Registration and system power changes happen only after explicit app setup.
-/usr/bin/codesign --force --sign - --options runtime "$APP"
+/usr/bin/codesign --force --sign - --options runtime --entitlements packaging/ive-app.entitlements "$APP"
 packaging/.venv/bin/python packaging/verify-bundle.py --bundle "$APP" --max-macos 13.5 --report packaging/artifacts/bundle-audit.json
 ARCH="$(uname -m)"
 VERSION="$(node -p 'JSON.parse(require("fs").readFileSync("frontend/src-tauri/tauri.conf.json")).version')"

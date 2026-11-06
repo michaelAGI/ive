@@ -432,7 +432,7 @@ def _ws_doc_settings() -> dict:
     """Read the workspace's board-doc policy. Defaults if anything fails."""
     defaults = {
         "mode": "agent_with_backstop",
-        "new_column": "review",
+        "new_column": "backlog",
         "existing_column": "review",
     }
     if not WORKSPACE_ID:
@@ -1354,7 +1354,7 @@ TOOLS = {
             "Completion-time stamp for feature-board documentation. Call this once at the end "
             "of feature-shaped work. Idempotent: re-calls return already_documented=true.\n\n"
             "action='create' — file a new ticket in the workspace's configured new-ticket column "
-            "(default 'review'). Required: title. Optional: body, parent_task_id, target_column. "
+            "(default 'backlog'). Required: title. Optional: body, parent_task_id, target_column. "
             "Sets active_ticket_id + task_id on this session to the new ticket.\n\n"
             "action='update' — move the bound ticket (active_ticket_id, falling back to task_id) "
             "to the workspace's existing-ticket column (default 'review'). Optional body is "
@@ -2061,7 +2061,7 @@ def tool_list_backlog(args: dict) -> str:
         return json.dumps({"error": "no workspace bound to this session"})
     status_filter = args.get("status_filter", "open")
     limit = int(args.get("limit", 100))
-    path = f"/tasks?workspace={urllib.parse.quote(WORKSPACE_ID)}"
+    path = f"/tasks?workspace={urllib.parse.quote(WORKSPACE_ID)}&brief=1"
     if status_filter not in ("all", "open"):
         path += f"&status={urllib.parse.quote(str(status_filter))}"
     result = api_call("GET", path)

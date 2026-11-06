@@ -2,6 +2,7 @@
 // project folder, like a Mac Terminal window. No agent, no chat view, no
 // model / permission / effort, status is just Running or Exited.
 import useStore from '../state/store'
+import useExperienceMode from '../state/experienceMode'
 import { api } from './api'
 import { lastOutputAt } from './terminalWriters'
 
@@ -28,6 +29,7 @@ export async function typeIntoShellWhenReady(sessionId, line, { quietMs = 400, m
 }
 
 function openShell(session) {
+  useExperienceMode.getState().setMode('dev')
   const store = useStore.getState()
   store.addSession(session)
   if (store.tabScope === 'workspace' && session.workspace_id) store.setActiveWorkspace(session.workspace_id)

@@ -1,6 +1,6 @@
 import SessionContextActions from '../session/SessionContextActions'
 import NewTerminalButton from '../session/NewTerminalButton'
-import { Plus, Search, MessageCircle, Settings } from 'lucide-react'
+import { Plus, Search, MessageCircle, Settings, FileCheck2 } from 'lucide-react'
 import useStore from '../../state/store'
 import SidebarToggle from '../layout/SidebarToggle'
 import { registerHeaderSlot } from './HeaderPortal'
@@ -9,19 +9,22 @@ import { routeLabel } from '../../lib/route'
 import { formatKeyCombo } from '../../lib/keybindings'
 import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
+import ExperienceSwitch from './ExperienceSwitch'
+import useExperienceMode from '../../state/experienceMode'
 
-// 44 px header: sidebar toggle, breadcrumb (Home / Board / project › session),
+// 44 px header: sidebar toggle, breadcrumb (Home / Overview / project › session),
 // the address (ive/demo-app/add-rate-limiting), two portal slots the screens
 // fill (crumb, actions) and the global buttons. In a session only the side
 // chat button stays; new session, search and settings live on ⌃N / ⌘K.
 function Breadcrumb({ view, onGoBoard }) {
   const t = useT()
+  const mode = useExperienceMode(s => s.mode)
   const session = useStore((s) => (s.activeSessionId ? s.sessions[s.activeSessionId] : null))
   const workspace = useStore((s) => s.workspaces.find((ws) => ws.id === session?.workspace_id) || null)
   if (view === 'session' && session) {
     return (
       <nav className="ive-breadcrumb" aria-label="Where you are" data-breadcrumb="">
-        {workspace && (
+        {workspace && mode === 'dev' && (
           <>
             <button
               type="button"
@@ -51,6 +54,7 @@ function Breadcrumb({ view, onGoBoard }) {
 
 export default function HeaderBar({ view, onGoHome, onGoBoard, onNewSession, onOpenPanel, onToggleSideChat, sideChatOpen = false, isOwner = false }) {
   const t = useT()
+  const mode = useExperienceMode(s => s.mode)
   const address = useStore((s) => routeLabel(s, s.workspaces))
   const newKey = useStore((s) => s.keybindings?.newSession)
   const chatKey = useStore((s) => s.keybindings?.sideChat)
@@ -62,14 +66,16 @@ export default function HeaderBar({ view, onGoHome, onGoBoard, onNewSession, onO
   return (
     <header className="x-context-bar ive-header" data-view={view} data-session-header={inSession ? '' : undefined}>
       <SidebarToggle />
+      <ExperienceSwitch />
       <Breadcrumb view={view} onGoBoard={onGoBoard} />
-      <span className="ive-header-address mono" data-header-address="" title={address}>{address}</span>
+      {mode === 'dev' && <span className="ive-header-address mono" data-header-address="" title={address}>{address}</span>}
       <div data-header-slot="crumb" className="ive-header-slot" ref={(el) => registerHeaderSlot('crumb', el)} />
       <div className="ive-header-fill" />
-      <NewTerminalButton />
+      {mode === 'dev' && <NewTerminalButton />}
       <div data-header-slot="actions" className="ive-header-slot ive-header-slot--actions" ref={(el) => registerHeaderSlot('actions', el)} />
       <div className="ive-header-global">
-        {(inSession || view === 'board') && session && session.cli_type !== 'shell' && <SessionContextActions sessionId={session.id} readOnly={!!session.read_only} phone />}
+        {mode === 'chat' && inSession && session && <button type="button" className="ive-header-btn" aria-label="Review changes" title={`Review changes in ${session.name || 'this chat'}`} onClick={() => onOpenPanel?.('review')}><FileCheck2 size={15} aria-hidden="true" /><span className="ive-header-btn-label">Review changes</span></button>}
+        {mode === 'dev' && (inSession || view === 'board') && session && session.cli_type !== 'shell' && <SessionContextActions sessionId={session.id} readOnly={!!session.read_only} phone />}
         {!inSession && (
           <button
             type="button"
@@ -96,7 +102,7 @@ export default function HeaderBar({ view, onGoHome, onGoBoard, onNewSession, onO
             <Search size={15} aria-hidden="true" />
           </button>
         )}
-        {isOwner && onToggleSideChat && (
+        {mode === 'dev' && isOwner && onToggleSideChat && (
           <button
             type="button"
             data-chrome-button

@@ -42,3 +42,7 @@ review-*/
 .agents/
 .codex/
 packaging/*-20*/
+
+# Symlinked local environments (no trailing slash so links are ignored too).
+.venv
+frontend/node_modules

@@ -1,0 +1,38 @@
+
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   /private/var/folders/hb/2nz8b6110ng_bll0pn1140500000gn/T/ive-dialogs-claude-hl8kv7ok/proj
+
+  Get to finished work sooner with Opus 5.5. Switch anytime with /model.
+  1 more notice hidden
+
+❯ Do these steps strictly one at a time, each with its own tool call, no batching: 1) run the shell command echo hello-ive 2) create the
+  file notes.txt with the text hi 3) edit notes.txt so it says hello 4) fetch https://example.com and tell me its title. Then stop.
+
+  Ran 1 shell command
+  ⎿  13 skills available
+
+⏺ Write(notes.txt)
+  ⎿  Wrote 1 line to notes.txt
+      1 hi
+
+⏺ Update(notes.txt)
+  ⎿  Added 1 line, removed 1 line
+      1 -hi
+      1   No newline at end of file
+      2 +hello
+      3   No newline at end of file
+
+⏺ Fetch(https://example.com)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Fetch
+ Claude wants to fetch content from example.com
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ url: https://example.com/
+ prompt: What is the title of this page? Reply with the title only.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to allow Claude to fetch this content?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for example.com
+   3. No, and tell Claude what to do differently (esc)

@@ -1,0 +1,40 @@
+
+
+› Run the command curl -sI https://example.com and show me the status line.
+
+
+• I’ll run the command and check the status line.
+
+• Exited (status 6) curl -sI https://example.com
+  └ (no output)
+
+✗ You canceled the request to run curl -sI https://example.com
+
+• Exited (status 1) curl -sI https://example.com
+  └ (no output)
+
+■ Conversation interrupted - use /feedback if something went wrong
+
+
+› Create a file hello.md containing the single word hello.
+
+
+• I’ll create hello.md containing hello.
+
+• Running printf 'hello' > hello.md
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I create hello.md containing hello? The workspace is read-only under the current sandbox.
+
+  $ printf 'hello' > hello.md
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `printf 'hello' > hello.md` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

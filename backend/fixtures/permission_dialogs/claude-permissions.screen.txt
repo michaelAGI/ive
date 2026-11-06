@@ -1,0 +1,40 @@
+
+❯ Use the AskUserQuestion tool to ask me exactly one question "Which colour?" with the options Red, Green and Blue,
+  then wait for my answer.
+
+⏺ User declined to answer questions
+  ⎿  · Which colour? (Red / Green / Blue)
+
+✻ Baked for 1s · done 13:45
+
+❯ Use the AskUserQuestion tool once with two questions in the same call: "Which colour?" with options Red, Green, Blue
+  (single choice) and "Which sizes?" with options S, M, L (multiSelect true). Then wait for my answers.
+
+⏺ User declined to answer questions
+  ⎿  · Which colour? (Red / Green / Blue)
+     · Which sizes? (S / M / L)
+
+✻ Baked for 1s · done 13:45
+
+❯ /model
+  ⎿  Kept model as Haiku 5.5
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ ◐ medium · /effort ▔
+   Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace
+
+   Claude Code won't ask before using allowed tools.
+   ╭───────────────────────────────────────────────╮
+   │ ⌕ Search…                                     │
+   ╰───────────────────────────────────────────────╯
+
+     1.  Add a new rule…
+     2.  mcp__computer-use__computer_batch
+     3.  mcp__computer-use__cursor_position
+     4.  mcp__computer-use__double_click
+     5.  mcp__computer-use__hold_key
+     6.  mcp__computer-use__key
+     7.  mcp__computer-use__left_click
+     8.  mcp__computer-use__left_click_drag
+     9.  mcp__computer-use__left_mouse_down
+   ↓ 10. mcp__computer-use__left_mouse_up
+
+   ←/→ to switch · ↓ to select · Esc to cancel

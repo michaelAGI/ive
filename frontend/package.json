@@ -1,9 +1,9 @@
 {
   "name": "ive-frontend",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "private": true,
   "type": "module",
-  "description": "IVE frontend \u2014 React + Vite + xterm.js UI for the Integrated Vibecoding Environment",
+  "description": "IVE frontend — React + Vite + xterm.js UI for the Integrated Vibecoding Environment",
   "license": "Apache-2.0",
   "author": "AIFOREU GmbH",
   "homepage": "https://github.com/michael-ra/ive#readme",
@@ -40,6 +40,7 @@
     "test:onboarding:browser": "vite build --configLoader runner --logLevel warn && node --test tests/onboarding.mjs",
     "test:onboarding:webkit": "vite build --configLoader runner --logLevel warn && IVE_QA_BROWSER=webkit node --test tests/onboarding.mjs",
     "test:mobile": "node --test tests/mobile.mjs",
+    "test:dictation": "node --test tests/dictation-unit.mjs",
     "test:phone": "node --test tests/phone.mjs",
     "test:phone-keys": "node --test tests/phone-keys-unit.mjs",
     "test:e2e": "node ../e2e/run.mjs",
@@ -51,7 +52,7 @@
     "test:terminal-reveal": "node tests/terminal-reveal.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.12.4",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
@@ -68,7 +69,7 @@
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.0",
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "^2.12.4",
     "@vitejs/plugin-react": "^5.2.0",
     "playwright": "^1.62.1",
     "tailwindcss": "^4.2.0",

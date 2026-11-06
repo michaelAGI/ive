@@ -4,7 +4,7 @@
 // listed as extension-provided). Run: node --test frontend/tests/ws-event-contract-unit.mjs
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,6 +15,12 @@ const frontendSrc = join(root, 'frontend', 'src')
 // Backend pushes these, the browser deliberately does nothing with them.
 // Keep the reason next to each entry.
 const IGNORED_BY_FRONTEND = {}
+
+// Backend files that speak over their own WebSocket, not the session bus, so
+// their message types never reach useWebSocket.js.
+const SEPARATE_SOCKETS = {
+  'backend/dictation.py': 'on-device dictation stream (/api/dictation/stream), handled in lib/dictation.js',
+}
 
 // Types built at runtime (f-strings, parameters). `needle` must still exist in
 // `file`, so a rename there fails this test instead of silently passing.
@@ -107,6 +113,7 @@ export function backendBroadcastSites() {
   const sites = []
   const files = walk(backendDir, (n) => n.endsWith('.py') && !n.startsWith('test_'))
   for (const file of files) {
+    if (relative(root, file) in SEPARATE_SOCKETS) continue
     const src = readFileSync(file, 'utf8')
     for (const m of src.matchAll(CALL_RE)) {
       let j = m.index + m[0].length
@@ -241,6 +248,9 @@ test('allowlists do not hide stale entries', () => {
   }
   for (const t of Object.keys(EXTERNAL_PRODUCERS)) {
     assert.ok(!sent.has(t), `${t} now has an in-tree producer; drop the external entry`)
+  }
+  for (const file of Object.keys(SEPARATE_SOCKETS)) {
+    assert.ok(existsSync(join(root, file)), `${file} is listed as a separate socket but does not exist`)
   }
 })
 

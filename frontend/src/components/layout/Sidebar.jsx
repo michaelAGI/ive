@@ -26,6 +26,8 @@ const CoordinationSidebarBadge = resolveExtensionPanel('swarmlock', 'Coordinatio
 const IndexWorkspaceAction = resolveExtensionPanel('forge', 'IndexWorkspaceAction')
 import { Button } from '../ui'
 import { isQuickWorkspace, openQuickStart, shortenHome } from '../../lib/quickStart'
+import { noticeFromApiError } from '../../lib/macPermissions'
+import MacPermissionNotice from '../system/MacPermissionNotice'
 
 // The project tree inside NavSidebar: one group per project with its
 // sessions (status dot, name, word on hover), sub-agents, background tasks,
@@ -311,6 +313,9 @@ function WorkspaceFileTree({ workspaceId }) {
   const [expandedPaths, setExpandedPaths] = useState({})
   const [loadingPaths, setLoadingPaths] = useState({})
   const [loadingRoot, setLoadingRoot] = useState(false)
+  // macOS refused the folder (Desktop, Documents, iCloud, ...): one sentence
+  // with the settings button instead of a silently empty tree.
+  const [accessNotice, setAccessNotice] = useState(null)
 
   const loadFolder = async (path) => {
     setLoadingPaths(p => ({ ...p, [path]: true }))
@@ -318,9 +323,12 @@ function WorkspaceFileTree({ workspaceId }) {
       const res = await api.getWorkspaceFiles(workspaceId, path)
       if (res && res.items) {
         setTreeData(t => ({ ...t, [path]: res.items }))
+        setAccessNotice(null)
       }
     } catch (err) {
-      console.error("Failed to load folder", path, err)
+      const notice = noticeFromApiError(err)
+      if (notice) setAccessNotice({ ...notice, path })
+      else console.error("Failed to load folder", path, err)
     } finally {
       setLoadingPaths(p => ({ ...p, [path]: false }))
     }
@@ -376,6 +384,9 @@ function WorkspaceFileTree({ workspaceId }) {
 
       {isOpen && (
         <div className="flex flex-col mt-0.5 pb-2 max-h-[300px] overflow-y-auto scrollbar-thin select-none">
+          {accessNotice && (
+            <MacPermissionNotice compact notice={accessNotice} onRetry={() => loadFolder(accessNotice.path)} className="mx-2 my-1" />
+          )}
           {loadingRoot ? (
             <div className="flex items-center gap-2 px-3 py-2 text-[11px] text-x-faint font-mono">
               <RefreshCw size={10} className="animate-spin text-x-accent shrink-0" />
@@ -395,7 +406,7 @@ function WorkspaceFileTree({ workspaceId }) {
                 onOpenFile={handleOpenFile}
               />
             ))
-          ) : (
+          ) : accessNotice ? null : (
             <div className="px-3 py-2 text-[11px] text-x-faint italic font-mono">
               No files found
             </div>
@@ -511,49 +522,6 @@ export default function Sidebar({ filter = '' }) {
     setColorPickerWs(null)
   }
 
-
-  // The one initial loader: workspaces, their sessions, tasks, templates,
-  // tab groups, prompts, cascades and the CLI profiles.
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
-    try {
-      const wsList = await api.getWorkspaces()
-      useStore.getState().setWorkspaces(wsList)
-      // Auto-set activeWorkspaceId if not yet set so that features like
-      // skill install have a valid workspace context from the start.
-      if (wsList.length > 0 && !useStore.getState().activeWorkspaceId) {
-        useStore.getState().setActiveWorkspace(wsList[0].id)
-      }
-      const sessResults = await Promise.all(
-        wsList.map((ws) => api.getSessions(ws.id).catch(() => []))
-      )
-      for (let i = 0; i < wsList.length; i++) {
-        useStore.getState().loadSessions(sessResults[i])
-        setExpanded((p) => ({ ...p, [wsList[i].id]: true }))
-      }
-      // Eagerly load tasks for all workspaces so the auto-oversight
-      // nudge gate (useWebSocket session_idle handler) can check whether
-      // an idle worker actually has an active task assigned.
-      const allTasks = await api.getTasks()
-      if (Array.isArray(allTasks)) useStore.getState().loadTasks(allTasks)
-      // Grid templates are tiny and used the moment the user opens the layout dropdown.
-      useStore.getState().loadGridTemplates()
-      // Tab groups for one-click tab set switching.
-      useStore.getState().loadTabGroups()
-      // Prompt cache backs @prompt:<name> token expansion + the chip preview.
-      useStore.getState().loadPrompts()
-      useStore.getState().loadCascades()
-      // CLI profiles drive model/mode/effort dropdowns from backend data.
-      api.getCliFeatures().then((data) => {
-        if (data?.profiles) useStore.getState().loadCliProfiles(data.profiles)
-      }).catch(() => {})
-    } catch (e) {
-      console.error('Failed to load data:', e)
-    }
-  }
 
   const handleDeleteSession = async (e, sessionId) => {
     e.stopPropagation()

@@ -1,7 +1,7 @@
 # IVE Phone Power helper
 
 This is a narrow macOS 13.5+ Apple Silicon helper for an explicitly enabled,
-time-bounded IVE work session, from Mac & Energie or iPhone setup. It is **not installed by building it**. Never
+time-bounded IVE work session, from Mac & Power or iPhone setup. It is **not installed by building it**. Never
 run a registration or power action as part of a build or unattended smoke test.
 
 ## Package and sign
@@ -54,7 +54,7 @@ redacted status, but must not trigger admin UI or learn `lease_id`. Keep renewal
 in the native backend lifecycle, independent of browser tab visibility. Stop on
 remote-mode disable/revocation; a backend/app crash also loses renewal and the
 native app identity is polled independently. Every new session after a maximum
-duration needs another explicit start. An independent Mac & Energie session does
+duration needs another explicit start. An independent Mac & Power session does
 not require a phone tunnel and survives tunnel loss. The backend shares a single
 lease between the two entry points and rejects conflicting starts; phone consent
 withdrawal does not silently terminate an independently enabled agent session.
@@ -63,7 +63,7 @@ withdrawal does not silently terminate an independently enabled agent session.
 
 `start` optionally accepts `lid_low_power: Bool` and `pause_apps: [String]`.
 Legacy phone starts omit both and preserve their previous behavior. The Mac &
-Energie screen never starts on load or restores an enabled switch on relaunch.
+Power screen never starts on load or restores an enabled switch on relaunch.
 Its timer starts when the user explicitly enables the function. Arming with an
 open lid only establishes the existing awake lease; no low-power setting or app
 signal changes until `AppleClamshellState` is explicitly true. Opening the lid

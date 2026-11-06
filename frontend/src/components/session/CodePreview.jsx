@@ -1,6 +1,7 @@
 import { FileCode, Check, X, Eye } from 'lucide-react'
 import useStore from '../../state/store'
-import { typeInTerminal } from '../../lib/terminal'
+import { api } from '../../lib/api'
+import { QUESTION_OPEN_HINT, promptErrorMessage } from '../../lib/promptAnswer'
 import { Button } from '../ui'
 
 export default function CodePreview() {
@@ -11,15 +12,17 @@ export default function CodePreview() {
 
   if (editCaptures.length === 0) return null
 
-  const handleApprove = (capture) => {
-    typeInTerminal(capture.session_id, 'y\r')
+  // y/n go through the acknowledged input endpoint: while a dialog is open it
+  // answers 409 question_open instead of confirming the highlighted option.
+  const answer = (capture, key) => {
+    api.sendSessionInput(capture.session_id, key, { ready_timeout: 0 }).catch((err) => {
+      useStore.getState().addNotification?.({ sessionId: capture.session_id, type: 'warning', message: promptErrorMessage(err) })
+    })
     useStore.getState().resolveCapture(capture.id)
   }
-
-  const handleReject = (capture) => {
-    typeInTerminal(capture.session_id, 'n\r')
-    useStore.getState().resolveCapture(capture.id)
-  }
+  const handleApprove = (capture) => answer(capture, 'y')
+  const handleReject = (capture) => answer(capture, 'n')
+  const questionOpen = (capture) => !!sessions[capture.session_id]?.attention
 
   const handleFocus = (capture) => {
     const store = useStore.getState()
@@ -62,14 +65,18 @@ export default function CodePreview() {
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-t border-x-line">
               <Button type="submit"
                 onClick={() => handleApprove(capture)}
-                className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] font-medium bg-x-good/15 hover:bg-x-good/25 text-x-good border border-x-good/30 transition-colors duration-[80ms]"
+                disabled={questionOpen(capture)}
+                title={questionOpen(capture) ? QUESTION_OPEN_HINT : undefined}
+                className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] font-medium bg-x-good/15 hover:bg-x-good/25 text-x-good border border-x-good/30 transition-colors duration-[80ms] disabled:opacity-40"
               >
                 <Check size={9} />
                 approve
               </Button>
               <Button type="submit"
                 onClick={() => handleReject(capture)}
-                className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] font-medium bg-x-accent-ink/15 hover:bg-x-accent-ink/25 text-x-accent-ink border border-x-accent-ink/30 transition-colors duration-[80ms]"
+                disabled={questionOpen(capture)}
+                title={questionOpen(capture) ? QUESTION_OPEN_HINT : undefined}
+                className="flex items-center gap-1 px-1.5 py-1.5 text-[11px] font-medium bg-x-accent-ink/15 hover:bg-x-accent-ink/25 text-x-accent-ink border border-x-accent-ink/30 transition-colors duration-[80ms] disabled:opacity-40"
               >
                 <X size={9} />
                 reject

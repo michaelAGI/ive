@@ -3,7 +3,7 @@ import { chromium, webkit } from 'playwright'
 import { createTourFixture } from './interactive-onboarding-fixture.mjs'
 const engine=process.env.IVE_QA_BROWSER||'chromium'
 const browser=await (engine==='webkit'?webkit:chromium).launch()
-const f=await createTourFixture(browser,{settings:{product_tour_version:'2'},workspaces:[{id:'w',name:'Test project',path:'/isolated/project'}],sessions:[{id:'s',name:'Shared mode test',workspace_id:'w',cli_type:'claude',permission_mode:'default',model:'sonnet',status:'waiting',agentState:'waiting',pty_alive:true,session_type:'worker',archived:0,tags:[]}],messages:{s:[{id:'old',session_id:'s',role:'assistant',content:'Permission mode test.',created_at:'2020-01-01T00:00:00Z'}]},storage:{'ive.operator-desk':{activeWorkspaceId:'w',activeSessionId:'s',openTabs:['s'],showHome:false},'cc-sidebarVisible':'1'}})
+const f=await createTourFixture(browser,{settings:{product_tour_version:'2'},workspaces:[{id:'w',name:'Test project',path:'/isolated/project'}],sessions:[{id:'s',name:'Shared mode test',workspace_id:'w',cli_type:'claude',permission_mode:'default',model:'sonnet',status:'waiting',agentState:'waiting',pty_alive:true,session_type:'worker',archived:0,tags:[]}],messages:{s:[{id:'old',session_id:'s',role:'assistant',content:'Permission mode test.',created_at:'2020-01-01T00:00:00Z'}]},storage: { 'ive.experience-mode.v1': { mode: 'dev', provider: 'claude' },'ive.operator-desk':{activeWorkspaceId:'w',activeSessionId:'s',openTabs:['s'],showHome:false},'cc-sidebarVisible':'1'}})
 let snapshot={state:'none'},socket,applies=0
 const updates=[], terminalInput=[]
 await f.context.routeWebSocket('**/ws',ws=>{socket=ws;ws.onMessage(raw=>terminalInput.push(String(raw)))})
@@ -35,7 +35,7 @@ try{
  assert.match(await p.getByTestId('perms-menu').innerText(),/Answer the current request first/)
  assert.equal(updates[0].apply_live,true)
  await p.keyboard.press('Escape')
- await p.getByTitle('Toggle PTY Terminal Drawer',{exact:true}).click()
+ await p.locator('.ive-header').getByRole('button', { name: /^Terminal(?: \(.+\))?$/ }).click()
  const term=p.getByTestId('terminal-perms'),termValue=p.getByTestId('terminal-perms-value')
  await term.waitFor()
  assert.match(await termValue.innerText(),/Default.*change pending/i)

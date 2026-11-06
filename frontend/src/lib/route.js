@@ -3,6 +3,9 @@
 // #session-<id>) and the address shown in the header (ive/demo-app/add-rate-limiting).
 // installRouter keeps store and hash in sync in both directions so Back/Forward
 // and deep links work; '#workspace-settings-*' and other hashes stay untouched.
+// A session hash may carry a query (#session-<id>?answer=1): answer=1 focuses
+// that session's PromptMenu once the session is on screen (a notification or
+// the iPhone linking into an open question). The written hash never keeps it.
 
 export const VIEWS = ['home', 'board', 'session']
 
@@ -23,14 +26,19 @@ export function routeOf(state) {
 }
 
 export function parseHash(hash) {
-  const text = String(hash || '').replace(/^#/, '')
+  const raw = String(hash || '').replace(/^#/, '')
+  const queryAt = raw.indexOf('?')
+  const text = queryAt < 0 ? raw : raw.slice(0, queryAt)
   if (text === 'home') return { view: 'home' }
   if (text === 'board') return { view: 'board' }
   const match = text.match(/^session-(.+)$/)
   if (!match) return null
   try {
     const sessionId = decodeURIComponent(match[1])
-    return sessionId ? { view: 'session', sessionId } : null
+    if (!sessionId) return null
+    const route = { view: 'session', sessionId }
+    if (queryAt >= 0 && new URLSearchParams(raw.slice(queryAt + 1)).get('answer') === '1') route.answer = true
+    return route
   } catch {
     return null
   }
@@ -80,10 +88,17 @@ export function applyRoute(store, route) {
   return true
 }
 
+// Default for `?answer=1`: the PromptMenu of that session, as soon as it is
+// rendered. Loaded lazily so this module stays free of the store for tests.
+const focusAnswer = (sessionId) => {
+  import('./promptFocus.js').then((mod) => mod.focusPromptMenuWhenRendered(sessionId)).catch(() => {})
+}
+
 export function installRouter(store, {
   history = globalThis.window?.history,
   location = globalThis.window?.location,
   target = globalThis.window,
+  onAnswer = focusAnswer,
 } = {}) {
   let pending = parseHash(location?.hash)
   let lastHash = null
@@ -119,7 +134,15 @@ export function installRouter(store, {
   const apply = (route) => {
     applying = true
     lastHash = formatHash(route)
-    try { return applyRoute(store, route) } finally { applying = false }
+    try {
+      const applied = applyRoute(store, route)
+      if (applied && route.answer) {
+        // Drop the query so the same link fires a hashchange again next time.
+        try { history?.replaceState?.(history.state ?? null, '', lastHash) } catch { /* history unavailable */ }
+        onAnswer?.(route.sessionId)
+      }
+      return applied
+    } finally { applying = false }
   }
 
   const unsubscribe = store.subscribe((state) => {
@@ -137,7 +160,8 @@ export function installRouter(store, {
   const onHashChange = () => {
     const route = parseHash(location?.hash)
     if (!route) return
-    if (formatHash(route) === lastHash && !pending) return
+    // Same view again is a no-op, unless the link asks to answer there.
+    if (formatHash(route) === lastHash && !pending && !route.answer) return
     if (!apply(route)) pending = route
   }
   target?.addEventListener?.('hashchange', onHashChange)

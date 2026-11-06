@@ -43,6 +43,9 @@ class InputDeliveryContractTests(unittest.IsolatedAsyncioTestCase):
             "_detect_cli_startup_blocker": self.blocker,
             "_startup_blocker_text": lambda _: "ready",
             "_asyncio": SimpleNamespace(sleep=AsyncMock()),
+            "capture_proc": SimpleNamespace(get_screen=lambda _: ""),
+            "_session_permission_menu": lambda _: None,
+            "_is_incomplete_permission_screen": lambda _: False,
         }
         exec(compile(ast.Module(body=[handler], type_ignores=[]), str(SOURCE), "exec"), namespace)
         self.send = namespace["send_session_input"]

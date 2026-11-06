@@ -10,7 +10,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import useStore from '../../state/store'
 import { api } from '../../lib/api'
-import { sendPlanChoice, sendPlanFeedback, sendTerminalCommand } from '../../lib/terminal'
+import { sendTerminalCommand } from '../../lib/terminal'
+import { answerPlanChoice, sendPlanFeedbackGuarded } from '../../lib/planAnswer'
 import { parseDiffLines } from '../../lib/diffParser'
 import { detectLang, tokenizeLinePrism, TOKEN_CLASSES_PRISM } from '../../lib/syntaxHighlightPrism'
 import { getCliLabel, getRoleDefaultModel, getDefaultPermissionMode } from '../../lib/constants'
@@ -18,10 +19,13 @@ import Scratchpad from './Scratchpad'
 import MermaidBlock from './MermaidBlock'
 import { addRecentAnnotations } from '../../lib/annotations'
 import { Button } from '../ui'
+import ReviewContextCard from './ReviewContextCard'
+import ReviewActions from './ReviewActions'
+import { REVIEW_SCOPES } from '../../lib/reviewContext'
 
 const STATUS_LABELS = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', '?': 'Untracked' }
 const STATUS_ICONS = { M: FileEdit, A: FilePlus, D: FileMinus, '?': FileQuestion }
-const DEFAULT_REVIEW_AGENT_PROMPT = `Act as a careful code reviewer. Walk the diff, flag bugs, security issues, regressions, dead code, and unclear naming. Quote the offending lines and propose concrete fixes. Be terse; skip what already looks correct.
+const DEFAULT_REVIEW_AGENT_PROMPT = `Act as a careful code reviewer. Read and explain the supplied changes without editing files or applying fixes. Walk the diff, flag bugs, security issues, regressions, dead code, and unclear naming. Quote the offending lines and propose concrete fixes. Be terse; skip what already looks correct.
 
 {annotations}
 
@@ -164,6 +168,8 @@ function resolveReviewCliType(workspace, activeSession) {
 }
 
 function reviewProviderLabel(value) {
+  if (value === 'claude') return 'Claude'
+  if (value === 'codex') return 'Codex'
   if (!value || value === 'active') return 'Active session CLI'
   return getCliLabel(value)
 }
@@ -196,7 +202,9 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
       if (bi === 0) return -1
       return ai - bi
     })
-  const reviewCliType = resolveReviewCliType(workspace, activeSession)
+  const configuredCliType = resolveReviewCliType(workspace, activeSession)
+  const [reviewCliType, setReviewCliType] = useState(() => configuredCliType === 'codex' ? 'codex' : 'claude')
+  useEffect(() => { setReviewCliType(configuredCliType === 'codex' ? 'codex' : 'claude') }, [activeSession?.id, configuredCliType])
   const configuredReviewProvider = workspace?.review_provider || 'active'
 
   // ── Tabs ──
@@ -242,13 +250,13 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
   const [gitDiffSearchQuery, setGitDiffSearchQuery] = useState('')
   const [gitExpandedDirs, setGitExpandedDirs] = useState({})
   const diffViewportRef = useRef(null)
+  const gitDiffRequest = useRef(0)
 
   // Code Review Line Annotations
   const [reviewSelectedLines, setReviewSelectedLines] = useState(new Set())
   const [reviewComments, setReviewComments] = useState({}) // groupFirstIdx -> text
   const [reviewLastClicked, setReviewLastClicked] = useState(null)
   const [reviewCopied, setReviewCopied] = useState(false)
-  const [reviewMenuOpen, setReviewMenuOpen] = useState(false)
   const [reviewAgentOpen, setReviewAgentOpen] = useState(false)
   const [reviewAgentMode, setReviewAgentMode] = useState('new')
   const [reviewAgentPrompt, setReviewAgentPrompt] = useState(DEFAULT_REVIEW_AGENT_PROMPT)
@@ -382,8 +390,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
   const handlePlanApprove = () => {
     if (!selectedPlan?.sid) return
-    sendPlanChoice(selectedPlan.sid, 1)
-    
+    answerPlanChoice(selectedPlan.sid, 1)
     // Resume planning task in progress
     const planTask = Object.values(tasks).find(
       (t) => t.assigned_session_id === selectedPlan.sid && t.status === 'planning'
@@ -397,7 +404,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
   const handleSendPlanFeedback = () => {
     if (!selectedPlan?.sid || !planFeedback.trim()) return
-    sendPlanFeedback(selectedPlan.sid, planFeedback.trim())
+    sendPlanFeedbackGuarded(selectedPlan.sid, planFeedback.trim())
     setPlanFeedback('')
     setSelectedPlan(null)
   }
@@ -451,29 +458,44 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
   // ── Code Review (Git) Data fetching ──
   const fetchGitStatus = useCallback(async () => {
-    if (!workspaceId) return
+    if (!workspaceId) return false
     try {
       const res = await api.getGitStatus(workspaceId)
       setGitStatus(res)
+      return true
     } catch (e) {
       setGitError(e.message)
+      return false
     }
   }, [workspaceId])
 
   const fetchGitDiff = useCallback(async () => {
-    if (!workspaceId) return
+    const requestId = ++gitDiffRequest.current
+    if (!workspaceId) return false
     setGitLoading(true)
+    setGitError(null)
     try {
       const opts = {}
       if (gitScope === 'staged') opts.staged = true
       if (gitSelectedFile) opts.file = gitSelectedFile
       const res = await api.getGitDiff(workspaceId, opts)
+      if (requestId !== gitDiffRequest.current) return false
       setGitDiffText(res.diff || '')
     } catch (e) {
+      if (requestId !== gitDiffRequest.current) return false
       setGitDiffText('')
+      setGitError(e.message || 'Could not load the selected changes.')
+      setGitLoading(false)
+      return false
     }
-    setGitLoading(false)
+    if (requestId === gitDiffRequest.current) setGitLoading(false)
+    return true
   }, [workspaceId, gitScope, gitSelectedFile])
+
+  const refreshReviewMaterial = useCallback(async () => {
+    const results = await Promise.all([fetchGitStatus(), fetchGitDiff()])
+    if (results.some((loaded) => loaded !== true)) throw new Error('Could not refresh the visible changes. Refresh again before requesting an explanation.')
+  }, [fetchGitStatus, fetchGitDiff])
 
   const handleStageFile = useCallback(async (filePath) => {
     if (!workspaceId) return
@@ -715,10 +737,11 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
   }, [gitSelectedFile, parsedDiff, reviewComments, reviewGroups])
 
   const handleSendReviewFeedback = () => {
-    if (!sessionId || reviewGroups.length === 0) return
+    const targetId = activeSession?.id
+    if (!targetId || activeSession?.read_only || reviewGroups.length === 0) return
 
     const message = `I have reviewed the changes. Here is my feedback on specific code blocks:\n\n${buildReviewAnnotationsText()}`
-    sendTerminalCommand(sessionId, message)
+    sendTerminalCommand(targetId, message)
 
     setReviewSelectedLines(new Set())
     setReviewComments({})
@@ -924,7 +947,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                 : 'text-x-muted hover:text-x-ink-secondary'
             }`}
           >
-            Code Review
+            Changes
           </button>
           <button
             onClick={() => selectTab('scratchpad')}
@@ -1229,6 +1252,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
         ) : (
           /* Code Review Panel embedded */
           <div className="p-3.5 flex flex-col h-full min-h-[500px]">
+            {!isFullscreenDiff && <ReviewContextCard session={activeSession} workspace={workspace} scope={gitScope} selectedFile={gitSelectedFile} diffText={gitDiffText} provider={reviewCliType} onProviderChange={setReviewCliType} onRefresh={refreshReviewMaterial} />}
             {/* Scope selectors */}
             <div className="flex gap-1.5 mb-3">
               {['working', 'staged'].map((sc) => (
@@ -1241,7 +1265,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                       : 'border border-x-line-subtle text-x-muted hover:text-x-ink-secondary'
                   }`}
                 >
-                  {sc} Diff
+                  {REVIEW_SCOPES[sc]}
                 </button>
               ))}
             </div>
@@ -1280,7 +1304,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                 <div className="overflow-y-auto scrollbar-thin py-1 min-h-0">
                   {gitFileBuckets.staged.length > 0 && (
                     <SidebarFileSection
-                      label="staged"
+                      label="Selected for commit"
                       color="text-x-good"
                       files={gitFileBuckets.staged}
                       expanded={gitExpandedSections.staged}
@@ -1295,7 +1319,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                   )}
                   {gitFileBuckets.unstaged.length > 0 && (
                     <SidebarFileSection
-                      label="unstaged"
+                      label="Other edits"
                       color="text-x-accent-ink"
                       files={gitFileBuckets.unstaged}
                       expanded={gitExpandedSections.unstaged}
@@ -1310,7 +1334,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                   )}
                   {gitFileBuckets.untracked.length > 0 && (
                     <SidebarFileSection
-                      label="untracked"
+                      label="New files"
                       color="text-x-muted"
                       files={gitFileBuckets.untracked}
                       expanded={gitExpandedSections.untracked}
@@ -1333,6 +1357,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
             )}
 
             {/* Selected File Diff & Annotator */}
+            {gitError && <p role="alert" className="text-xs text-x-danger mb-2">{gitError}</p>}
             {gitLoading ? (
               <div className="flex items-center justify-center py-10 text-x-muted">
                 <Loader2 size={14} className="animate-spin text-x-accent mr-1" />
@@ -1497,92 +1522,19 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                   })}
                 </div>
 
-                {/* "Review →" split-button. Primary action fires the most
-                    likely thing for the current state (send annotations if any,
-                    otherwise spawn agent). The chevron opens a popover with
-                    every option so neither path is hidden. */}
-                {gitDiffText && (
-                  <div className="relative mt-2 select-none">
-                    <div className="flex items-stretch rounded-xl overflow-hidden shadow-x-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (reviewGroups.length > 0) handleSendReviewFeedback()
-                          else { setReviewAgentError(null); setReviewAgentOpen(true) }
-                        }}
-                        className="flex-1 py-2 px-3 bg-x-accent hover:bg-x-accent-ink text-x-on-accent font-mono text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all"
-                        title={reviewGroups.length > 0
-                          ? `Send ${reviewGroups.length} annotation${reviewGroups.length !== 1 ? 's' : ''} into the active session`
-                          : 'Spawn an agent to review this diff'}
-                      >
-                        <span>Review</span>
-                        {reviewGroups.length > 0 && (
-                          <span className="text-x-on-accent/90 font-mono text-[11px]">({reviewGroups.length})</span>
-                        )}
-                        <ArrowRight size={12} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReviewMenuOpen((s) => !s)}
-                        className="px-2 bg-x-accent/80 hover:bg-x-accent text-x-on-accent border-l border-x-on-accent/20 flex items-center"
-                        title="More review options"
-                        aria-expanded={reviewMenuOpen}
-                      >
-                        <ChevronUp size={12} className={`transition-transform ${reviewMenuOpen ? '' : 'rotate-180'}`} />
-                      </button>
-                    </div>
-
-                    {reviewMenuOpen && (
-                      <>
-                        {/* Click-away catcher */}
-                        <div className="fixed inset-0 z-30" onClick={() => setReviewMenuOpen(false)} />
-                        <div className="absolute bottom-full mb-2 right-0 z-40 w-[260px] rounded-xl border border-x-line bg-x-surface shadow-x-1 overflow-hidden">
-                          {reviewGroups.length > 0 && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => { setReviewMenuOpen(false); handleSendReviewFeedback() }}
-                                className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-x-hover transition-colors"
-                              >
-                                <Send size={12} className="text-x-accent mt-0.5 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-[11px] font-mono text-x-ink">Send {reviewGroups.length} to active session</div>
-                                  <div className="text-[11px] text-x-muted">Drops the annotations into the running CLI</div>
-                                </div>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => { setReviewMenuOpen(false); handleCopyReviewText() }}
-                                className="w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-x-hover transition-colors border-t border-x-line-subtle"
-                              >
-                                <Copy size={12} className="text-x-ink-secondary mt-0.5 shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                  <div className="text-[11px] font-mono text-x-ink">Copy selected ({reviewSelectedLines.size})</div>
-                                  <div className="text-[11px] text-x-muted">Plain text on the clipboard</div>
-                                </div>
-                              </button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => { setReviewMenuOpen(false); setReviewAgentError(null); setReviewAgentOpen(true) }}
-                            className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-x-hover transition-colors ${reviewGroups.length > 0 ? 'border-t border-x-line-subtle' : ''}`}
-                          >
-                            <Bot size={12} className="text-x-accent mt-0.5 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[11px] font-mono text-x-ink">Review with Agent…</div>
-                              <div className="text-[11px] text-x-muted">Fresh agent + configurable prompt</div>
-                            </div>
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+                {gitDiffText && <ReviewActions
+                  annotationsCount={reviewGroups.length}
+                  sessionName={activeSession?.name}
+                  providerLabel={reviewProviderLabel(reviewCliType)}
+                  disabled={!!activeSession?.read_only}
+                  onFeedback={handleSendReviewFeedback}
+                  onCopy={handleCopyReviewText}
+                  onStartReview={() => { setReviewAgentMode('new'); setReviewAgentError(null); setReviewAgentOpen(true) }}
+                />}
               </div>
             ) : (
               <div className="py-20 text-center text-x-muted text-[11px] italic">
-                No diff loaded. Select a changed file.
+                No changes in this selection. Choose a different scope or file.
               </div>
             )}
           </div>
@@ -1604,6 +1556,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
           onSubmit={handleRunReviewAgent}
           configuredProvider={configuredReviewProvider}
           resolvedCliType={reviewCliType}
+          onProviderChange={setReviewCliType}
           annotationsCount={reviewGroups.length}
           diffSize={gitDiffText.length}
           sessions={workspaceSessions}
@@ -1623,10 +1576,10 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
             <div>
               <h2 className="text-sm font-semibold font-mono flex items-center gap-2">
                 <GitCompareArrows className="text-x-accent" size={16} />
-                <span>Fullscreen Code Review</span>
+                <span>Review changes</span>
               </h2>
               <p className="text-[11px] text-x-muted font-mono mt-0.5">
-                Workspace: {workspaceId}
+                {workspace?.name || 'Project'} · {activeSession?.name || 'Conversation'} · {REVIEW_SCOPES[gitScope]}
               </p>
             </div>
             
@@ -1645,7 +1598,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                         : 'text-x-muted hover:text-x-ink-secondary'
                     }`}
                   >
-                    {sc}
+                    {REVIEW_SCOPES[sc]}
                   </Button>
                 ))}
               </div>
@@ -1687,6 +1640,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
           <div className="flex-1 flex gap-6 overflow-hidden mt-4 min-h-0">
             {/* Sidebar */}
             <div className="w-[320px] flex-shrink-0 bg-x-surface rounded-xl border border-x-line-subtle flex flex-col p-4 overflow-hidden select-none">
+              <ReviewContextCard session={activeSession} workspace={workspace} scope={gitScope} selectedFile={gitSelectedFile} diffText={gitDiffText} provider={reviewCliType} onProviderChange={setReviewCliType} onRefresh={refreshReviewMaterial} />
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-semibold font-mono text-x-accent uppercase tracking-wide">
                   Files Changed
@@ -1734,7 +1688,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
                 {gitFileBuckets.staged.length > 0 && (
                   <SidebarFileSection
-                    label="staged"
+                    label="Selected for commit"
                     color="text-x-good"
                     files={gitFileBuckets.staged}
                     expanded={gitExpandedSections.staged}
@@ -1749,7 +1703,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                 )}
                 {gitFileBuckets.unstaged.length > 0 && (
                   <SidebarFileSection
-                    label="unstaged"
+                    label="Other edits"
                     color="text-x-accent-ink"
                     files={gitFileBuckets.unstaged}
                     expanded={gitExpandedSections.unstaged}
@@ -1764,7 +1718,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
                 )}
                 {gitFileBuckets.untracked.length > 0 && (
                   <SidebarFileSection
-                    label="untracked"
+                    label="New files"
                     color="text-x-muted"
                     files={gitFileBuckets.untracked}
                     expanded={gitExpandedSections.untracked}
@@ -1837,6 +1791,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
               </div>
 
               {/* Scrollable Viewport */}
+              {gitError && <p role="alert" className="text-xs text-x-danger m-3">{gitError}</p>}
               {gitLoading ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-x-muted">
                   <Loader2 size={24} className="animate-spin text-x-accent mb-2" />
@@ -2068,88 +2023,21 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 
                   </div>
 
-                  {/* Actions footer — same "Review →" split-button as the
-                      sidebar, just larger so it has presence in fullscreen. */}
-                  <div className="p-4 border-t border-x-line-subtle bg-x-bg flex items-center gap-3 select-none shrink-0">
-                    <div className="relative flex-1 max-w-[420px]">
-                      <div className="flex items-stretch rounded-xl overflow-hidden shadow-x-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (reviewGroups.length > 0) handleSendReviewFeedback()
-                            else { setReviewAgentError(null); setReviewAgentOpen(true) }
-                          }}
-                          className="flex-1 py-2 px-4 bg-x-accent hover:bg-x-accent-ink text-x-on-accent font-mono text-xs font-semibold flex items-center justify-center gap-2 transition-all"
-                          title={reviewGroups.length > 0
-                            ? `Send ${reviewGroups.length} annotation${reviewGroups.length !== 1 ? 's' : ''} into the active session`
-                            : 'Spawn an agent to review this diff'}
-                        >
-                          <span>Review</span>
-                          {reviewGroups.length > 0 && (
-                            <span className="text-x-on-accent/90 text-[11px]">({reviewGroups.length})</span>
-                          )}
-                          <ArrowRight size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setReviewMenuOpen((s) => !s)}
-                          className="px-3 bg-x-accent/80 hover:bg-x-accent text-x-on-accent border-l border-x-on-accent/20 flex items-center"
-                          title="More review options"
-                          aria-expanded={reviewMenuOpen}
-                        >
-                          <ChevronUp size={13} className={`transition-transform ${reviewMenuOpen ? '' : 'rotate-180'}`} />
-                        </button>
-                      </div>
-                      {reviewMenuOpen && (
-                        <>
-                          <div className="fixed inset-0 z-30" onClick={() => setReviewMenuOpen(false)} />
-                          <div className="absolute bottom-full mb-2 right-0 z-40 w-[300px] rounded-xl border border-x-line bg-x-surface shadow-x-1 overflow-hidden">
-                            {reviewGroups.length > 0 && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => { setReviewMenuOpen(false); handleSendReviewFeedback() }}
-                                  className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-x-hover transition-colors"
-                                >
-                                  <Send size={13} className="text-x-accent mt-0.5 shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-xs font-mono text-x-ink">Send {reviewGroups.length} to active session</div>
-                                    <div className="text-[11px] text-x-muted">Drops the annotations into the running CLI</div>
-                                  </div>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { setReviewMenuOpen(false); handleCopyReviewText() }}
-                                  className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-x-hover transition-colors border-t border-x-line-subtle"
-                                >
-                                  <Copy size={13} className="text-x-ink-secondary mt-0.5 shrink-0" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="text-xs font-mono text-x-ink">Copy selected ({reviewSelectedLines.size})</div>
-                                    <div className="text-[11px] text-x-muted">Plain text on the clipboard</div>
-                                  </div>
-                                </button>
-                              </>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => { setReviewMenuOpen(false); setReviewAgentError(null); setReviewAgentOpen(true) }}
-                              className={`w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-x-hover transition-colors ${reviewGroups.length > 0 ? 'border-t border-x-line-subtle' : ''}`}
-                            >
-                              <Bot size={13} className="text-x-accent mt-0.5 shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                <div className="text-xs font-mono text-x-ink">Review with Agent…</div>
-                                <div className="text-[11px] text-x-muted">Fresh agent + configurable prompt</div>
-                              </div>
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
+                  <div className="p-4 border-t border-x-line-subtle bg-x-bg shrink-0">
+                    <ReviewActions
+                      annotationsCount={reviewGroups.length}
+                      sessionName={activeSession?.name}
+                      providerLabel={reviewProviderLabel(reviewCliType)}
+                      disabled={!!activeSession?.read_only}
+                      onFeedback={handleSendReviewFeedback}
+                      onCopy={handleCopyReviewText}
+                      onStartReview={() => { setReviewAgentMode('new'); setReviewAgentError(null); setReviewAgentOpen(true) }}
+                    />
                   </div>
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-x-muted italic text-xs">
-                  No diff loaded. Select a changed file from the list.
+                  No changes in this selection. Choose a different scope or file.
                 </div>
               )}
             </div>
@@ -2164,25 +2052,24 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
 function SidebarReviewAgentModal({
   onClose, prompt, setPrompt, onSavePrompt, onResetPrompt, saved,
   mode, setMode, busy, error, onSubmit, configuredProvider, resolvedCliType,
-  annotationsCount, diffSize, sessions, targetSessionId, setTargetSessionId, activeSessionId,
+  annotationsCount, diffSize, sessions, targetSessionId, setTargetSessionId, activeSessionId, onProviderChange,
 }) {
-  const providerText = configuredProvider === 'active'
-    ? `${reviewProviderLabel(configuredProvider)} -> ${reviewProviderLabel(resolvedCliType)}`
-    : reviewProviderLabel(resolvedCliType)
+  const providerText = reviewProviderLabel(resolvedCliType)
 
-  return (
+  return createPortal(
     <div
-      className="absolute inset-0 z-40 flex items-center justify-center bg-x-scrim backdrop-blur-[4px] p-3"
-      onClick={onClose}
+      className="fixed inset-0 z-[1200] flex items-center justify-center bg-x-scrim backdrop-blur-[4px] p-3"
+      onClick={() => { if (!busy) onClose() }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div
-        className="w-full max-h-full flex flex-col rounded-xl border border-x-line bg-x-surface shadow-x-1 overflow-hidden"
+        className="w-full max-w-[560px] max-h-full flex flex-col rounded-xl border border-x-line bg-x-surface shadow-x-1 overflow-hidden"
+        role="dialog" aria-modal="true" aria-label="Start a code review"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-3 py-2 border-b border-x-line bg-x-surface-2 shrink-0">
           <Bot size={13} className="text-x-accent" />
-          <span className="text-[12px] font-mono font-semibold text-x-ink">Review with Agent</span>
+          <span className="text-[12px] font-mono font-semibold text-x-ink">Start a code review</span>
           <span className="text-[11px] font-mono text-x-faint">
             {(diffSize / 1024).toFixed(1)}KB
             {annotationsCount ? ` · ${annotationsCount} note${annotationsCount !== 1 ? 's' : ''}` : ''}
@@ -2194,6 +2081,10 @@ function SidebarReviewAgentModal({
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <p className="text-xs text-x-muted">A separate reviewer checks the selected changes against the original task. Your current conversation keeps running. Feedback alone can be sent to the existing conversation.</p>
+          <label className="flex items-center gap-2 text-xs">Reviewer
+            <select aria-label="Review provider" value={resolvedCliType} disabled={busy} onChange={(event) => onProviderChange(event.target.value)} className="rounded border border-x-line bg-x-surface-2 px-2 py-1 text-x-ink"><option value="claude">Claude</option><option value="codex">Codex</option></select>
+          </label>
           <div>
             <div className="text-[11px] font-mono uppercase tracking-wide text-x-faint mb-1.5">Destination</div>
             <div className="grid grid-cols-2 gap-1.5">
@@ -2206,7 +2097,7 @@ function SidebarReviewAgentModal({
                     : 'bg-x-surface-2 border-x-line text-x-ink-secondary hover:text-x-ink'
                 }`}
               >
-                <div className="text-[11px] font-mono font-semibold">New agent</div>
+                <div className="text-[11px] font-mono font-semibold">Separate reviewer</div>
                 <div className="text-[11px] font-mono text-x-faint truncate">{providerText}</div>
               </button>
               <button
@@ -2302,11 +2193,11 @@ function SidebarReviewAgentModal({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-x-accent/30 bg-x-accent/20 text-[11px] font-mono font-semibold text-x-accent hover:bg-x-accent/30 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {busy ? <Loader2 size={11} className="animate-spin" /> : <Bot size={11} />}
-            {busy ? 'Starting...' : mode === 'new' ? 'Spawn Review' : 'Send Review'}
+            {busy ? 'Starting...' : mode === 'new' ? `Start review with ${reviewProviderLabel(resolvedCliType)}` : 'Send review request to selected chat'}
           </button>
         </div>
       </div>
-    </div>
+    </div>, document.body
   )
 }
 

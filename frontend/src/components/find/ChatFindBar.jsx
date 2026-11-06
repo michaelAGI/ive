@@ -85,7 +85,7 @@ export function collectRanges(root, query) {
   return { ranges, capped }
 }
 
-export default function ChatFindBar({ sessionId, scrollRef, focusComposer }) {
+export default function ChatFindBar({ sessionId, scrollRef, focusComposer, onBeforeNavigate }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [result, setResult] = useState({ ranges: [], capped: false })
@@ -158,9 +158,10 @@ export default function ChatFindBar({ sessionId, scrollRef, focusComposer }) {
     const r = range.getBoundingClientRect()
     const b = box.getBoundingClientRect()
     if (r.top < b.top + 56 || r.bottom > b.bottom - 16) {
+      onBeforeNavigate?.()
       box.scrollTop += r.top - b.top - box.clientHeight / 3
     }
-  }, [scrollRef])
+  }, [scrollRef, onBeforeNavigate])
 
   // Recompute matches. `jump` picks the first match from the viewport on.
   const recompute = useCallback((jump) => {

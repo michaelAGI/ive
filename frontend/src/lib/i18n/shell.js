@@ -7,7 +7,7 @@ registerDictionary('nav', {
   en: {
     newTerminal: 'New terminal',
     work: 'Work', projects: 'Projects', setup: 'Set up',
-    home: 'Home', board: 'Board', review: 'Review', knowledge: 'Knowledge',
+    home: 'Home', board: 'Overview', review: 'Changes', knowledge: 'Knowledge',
     settings: 'Settings', connectors: 'Connectors', phone: 'Phone',
     search: 'Search', searchCommands: 'Search commands', newSession: 'New session', newChat: 'New chat', addProject: 'Add project', projectTools: 'Project tools', withoutProject: 'Without project',
     filterSessions: 'Filter sessions by name or model',
@@ -15,7 +15,7 @@ registerDictionary('nav', {
   de: {
     newTerminal: 'Neues Terminal',
     work: 'Arbeiten', projects: 'Projekte', setup: 'Einrichten',
-    home: 'Home', board: 'Board', review: 'Review', knowledge: 'Wissen',
+    home: 'Home', board: 'Übersicht', review: 'Änderungen', knowledge: 'Wissen',
     settings: 'Einstellungen', connectors: 'Verbindungen', phone: 'Handy',
     search: 'Suchen', searchCommands: 'Befehle suchen', newSession: 'Neue Session', newChat: 'Neuer Chat', addProject: 'Projekt hinzufügen', projectTools: 'Projektwerkzeuge', withoutProject: 'Ohne Projekt',
     filterSessions: 'Sessions nach Name oder Modell filtern',
@@ -26,8 +26,8 @@ registerDictionary('header', {
   en: {
     new: 'New', search: 'Search commands', sideChat: 'Chat with Claude', settings: 'Settings',
     newSession: 'Create a new session', hideSidebar: 'Hide sidebar', showSidebar: 'Show sidebar',
-    home: 'Home', board: 'Board', terminal: 'Terminal', toHide: 'to hide',
-    expandTerminal: 'Expand terminal', restoreTerminal: 'Restore small terminal', hideTerminal: 'Hide terminal — show overview',
+    home: 'Home', board: 'Overview', terminal: 'Terminal', toHide: 'to hide',
+    expandTerminal: 'Expand terminal', restoreTerminal: 'Restore small terminal', hideTerminal: 'Hide terminal, show overview',
     overview: 'Overview', overviewTitle: 'Session overview: status, latest reply, changed files, checks',
     details: 'Details', detailsTitle: 'Show every step the agent takes (tools, results)',
     history: 'History', historyTitle: 'Jump through this conversation',
@@ -38,8 +38,8 @@ registerDictionary('header', {
   de: {
     new: 'Neu', search: 'Befehle suchen', sideChat: 'Mit Claude chatten', settings: 'Einstellungen',
     newSession: 'Neue Session anlegen', hideSidebar: 'Seitenleiste ausblenden', showSidebar: 'Seitenleiste einblenden',
-    home: 'Home', board: 'Board', terminal: 'Terminal', toHide: 'zum Ausblenden',
-    expandTerminal: 'Terminal vergrößern', restoreTerminal: 'Kleines Terminal wiederherstellen', hideTerminal: 'Terminal ausblenden — nur Übersicht',
+    home: 'Home', board: 'Overview', terminal: 'Terminal', toHide: 'zum Ausblenden',
+    expandTerminal: 'Terminal vergrößern', restoreTerminal: 'Kleines Terminal wiederherstellen', hideTerminal: 'Terminal ausblenden, nur Übersicht',
     overview: 'Übersicht', overviewTitle: 'Session-Übersicht: Status, letzte Antwort, geänderte Dateien, Prüfungen',
     details: 'Details', detailsTitle: 'Jeden Schritt des Agenten zeigen (Werkzeuge, Ergebnisse)',
     history: 'Verlauf', historyTitle: 'Durch dieses Gespräch springen',

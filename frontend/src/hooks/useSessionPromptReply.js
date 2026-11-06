@@ -1,17 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { answerPrompt, fetchPromptSnapshot, promptChoices, promptErrorMessage } from '../lib/promptAnswer'
+import { answerPrompt, fetchPromptSnapshot, isTerminalRequiredError, promptChoices, promptErrorMessage } from '../lib/promptAnswer'
+import { menuKey } from '../lib/promptMenu'
 
-// Polls the current native prompt of a session and answers it against that
-// exact screen. Shared by SessionPromptActions, the Home "Needs you" row and
-// the board card. After a 409 (stale prompt) the snapshot is reloaded and the
-// answer is never resent.
+const SENT_NOTICE_MS = 1500
+
+// Polls the current native dialog of a session and answers it against that
+// exact dialog. Shared by SessionPromptActions (chat card, terminal tile band)
+// and the plan buttons. reply() sends {choice, expected_identity} when the
+// snapshot carries the backend's identity, else the legacy {message,
+// expected_screen}. After a 409 (stale prompt) the snapshot is reloaded and
+// the answer is never resent.
+const snapshotKey = (snapshot) => (snapshot?.menu ? menuKey(snapshot.menu) : snapshot?.screen || '')
+
 export default function useSessionPromptReply(sessionId, { active = true, pollMs = 1500 } = {}) {
   const [snapshot, setSnapshot] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [sending, setSending] = useState(false)
-  const [answeredScreen, setAnsweredScreen] = useState('')
+  const [answeredKey, setAnsweredKey] = useState('')
+  const [answeredChoice, setAnsweredChoice] = useState('')
+  const [sentAt, setSentAt] = useState(0)
+  const [justSent, setJustSent] = useState(false)
+  // The guard said terminal_required for this question: it stays "Open terminal" across polls.
+  const [terminalOnlyKey, setTerminalOnlyKey] = useState('')
   const requestRef = useRef(0)
   const generationRef = useRef(0)
   const sendingRef = useRef(false)
@@ -39,7 +51,10 @@ export default function useSessionPromptReply(sessionId, { active = true, pollMs
     setSnapshot(null)
     setError('')
     setLoadError('')
-    setAnsweredScreen('')
+    setAnsweredKey('')
+    setAnsweredChoice('')
+    setSentAt(0)
+    setTerminalOnlyKey('')
     setSending(false)
     sendingRef.current = false
     setLoading(true)
@@ -59,13 +74,23 @@ export default function useSessionPromptReply(sessionId, { active = true, pollMs
     }
   }, [active, sessionId, pollMs, refresh])
 
+  // "Sent, continuing…" stays for a moment after a successful reply.
+  useEffect(() => {
+    if (!sentAt) { setJustSent(false); return undefined }
+    setJustSent(true)
+    const timer = setTimeout(() => setJustSent(false), SENT_NOTICE_MS)
+    return () => clearTimeout(timer)
+  }, [sentAt])
+
   const current = snapshot?.sessionId === sessionId ? snapshot : null
-  const answered = !!current?.screen && answeredScreen === current.screen
-  const unavailable = sending || loading || !current?.screen?.trim() || !!current?.incomplete || answered
+  const terminalOnly = !!current?.menu && !!terminalOnlyKey && terminalOnlyKey === snapshotKey(current)
+  const menu = current?.menu ? (terminalOnly ? { ...current.menu, answerable: false } : current.menu) : null
+  const answered = !!current?.screen && !!answeredKey && answeredKey === snapshotKey(current)
+  const unavailable = sending || loading || !current?.screen?.trim() || !!current?.incomplete || answered || menu?.answerable === false
 
   const reply = useCallback(async (value, { manual = false } = {}) => {
     if (unavailable || sendingRef.current || !current) return false
-    const screen = current.screen
+    const key = snapshotKey(current)
     const generation = generationRef.current
     sendingRef.current = true
     setSending(true)
@@ -73,13 +98,16 @@ export default function useSessionPromptReply(sessionId, { active = true, pollMs
     try {
       await answerPrompt(sessionId, current, value, { manual })
       if (generation !== generationRef.current) return true
-      setAnsweredScreen(screen)
+      setAnsweredKey(key)
+      setAnsweredChoice(manual ? '' : String(value ?? '').trim())
+      setSentAt(Date.now())
       window.dispatchEvent(new CustomEvent('cc-session-messages-refresh', { detail: { sessionId } }))
       await refresh()
       return true
     } catch (err) {
       if (generation !== generationRef.current) return false
       setError(promptErrorMessage(err))
+      if (isTerminalRequiredError(err)) setTerminalOnlyKey(key)
       await refresh()
       return false
     } finally {
@@ -94,11 +122,16 @@ export default function useSessionPromptReply(sessionId, { active = true, pollMs
 
   return {
     snapshot: current,
+    menu,
+    viewState: current?.viewState || null,
     choices: promptChoices(current),
     loading,
     error: error || loadError,
     sending,
     answered,
+    answeredChoice: answered ? answeredChoice : '',
+    justSent,
+    sentAt,
     unavailable,
     refresh,
     reply,

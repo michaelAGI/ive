@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import MobileDrawer from '../layout/MobileDrawer'
 import TerminalKeepAlive from './TerminalKeepAlive'
 import TerminalTabs from './TerminalTabs'
+import useExperienceMode from '../../state/experienceMode'
+import ExperienceSwitch from './ExperienceSwitch'
+import useWorkspaceData from '../../hooks/useWorkspaceData'
 
 // The frame every screen sits in. Desktop: [sidebar 240 px | main: header
 // 44 px › screen › footer 28 px (only when set)] plus the side chat next to
@@ -59,12 +62,15 @@ export default function AppShell({
   mobileView, phoneLevel,
   sidebar, header, mobileHeader, footer, prelude, sideChat, overlays, children,
 }) {
+  useWorkspaceData()
   const { vvHeight, vvTop, keyboardOpen } = useVisualViewport(isMobile)
+  const mode = useExperienceMode(s => s.mode)
 
   return (
     <div
       className="x-app-shell flex flex-col overflow-hidden x-canvas"
       data-mobile-view={isMobile ? mobileView : undefined}
+      data-experience={mode}
       data-phone-level={isMobile ? phoneLevel : undefined}
       data-keyboard-open={keyboardOpen ? '' : undefined}
       style={{
@@ -89,7 +95,8 @@ export default function AppShell({
         )}
         <main className="x-app-main flex-1 flex flex-col min-w-0 min-h-0">
           {isMobile ? mobileHeader : header}
-          {!isMobile && <TerminalTabs />}
+          {isMobile && <ExperienceSwitch className="ive-experience-mobile" />}
+          {!isMobile && mode === 'dev' && <TerminalTabs />}
           <div className="ive-main-body flex-1 flex flex-col min-h-0 min-w-0 relative">
             {children}
           </div>

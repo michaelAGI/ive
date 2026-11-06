@@ -1,0 +1,27 @@
+.ive-review-context { color: var(--x-ink); border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-surface); padding: 12px; margin-bottom: 12px; font-size: 12px; line-height: 1.55; flex-shrink: 0; max-height: 36vh; overflow: auto; }
+.ive-review-context-heading, .ive-review-explain-controls > div, .ive-review-explanation form { display: flex; align-items: center; gap: 8px; }
+.ive-review-context-heading { justify-content: space-between; }
+.ive-review-context h3 { font-size: 13px; font-weight: 650; margin: 0; }
+.ive-review-context p { margin: 6px 0; overflow-wrap: anywhere; }
+.ive-review-context button, .ive-review-context select, .ive-review-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 7px; border: 1px solid var(--x-line); border-radius: 6px; background: var(--x-surface-2); color: var(--x-ink); font: inherit; cursor: pointer; }
+.ive-review-context button:hover, .ive-review-actions button:hover { background: var(--x-hover); }
+.ive-review-context button:disabled, .ive-review-actions button:disabled { opacity: .45; cursor: default; }
+.ive-review-context button:focus-visible, .ive-review-actions button:focus-visible, .ive-review-context input:focus-visible, .ive-review-context select:focus-visible { outline: 2px solid var(--x-accent); outline-offset: 2px; }
+.ive-review-scope, .ive-review-scope-note, .ive-review-target span { color: var(--x-muted); }
+.ive-review-scope-note { font-size: 11px; }
+.ive-review-context details summary { cursor: pointer; }
+.ive-review-original { white-space: pre-wrap; max-height: 110px; overflow: auto; }
+.ive-review-explain-controls { margin-top: 10px; }
+.ive-review-explain-controls label { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.ive-review-explain-controls > div { flex-wrap: wrap; }
+.ive-review-explanation { border-top: 1px solid var(--x-line); margin-top: 10px; padding-top: 6px; }
+.ive-review-explanation-message { padding: 8px 0; }
+.ive-review-explanation-message.is-user { color: var(--x-muted); }
+.ive-review-explanation-message pre { white-space: pre-wrap; }
+.ive-review-explanation-message ul, .ive-review-explanation-message ol { padding-left: 18px; }
+.ive-review-explanation form input { min-width: 0; flex: 1; border: 1px solid var(--x-line); border-radius: 6px; padding: 6px; background: var(--x-bg); color: var(--x-ink); }
+.ive-review-explanation [role=status] { display: flex; gap: 6px; align-items: center; }
+.ive-review-error { color: var(--x-danger, #c34545); }
+.ive-review-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 11px; }
+.ive-review-actions > button:first-child { flex: 1 1 100%; }
+.ive-review-actions > button:nth-child(2) { flex: 1; }
