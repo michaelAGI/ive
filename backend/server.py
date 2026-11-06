@@ -3456,6 +3456,63 @@ async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
         })
 
 
+async def _sync_codex_turn_completion(session_id: str) -> bool:
+    """Reconcile a missed Stop hook using the exact session's native rollout.
+
+    Chat, terminal and queued input share this backend state. Never infer an
+    idle turn from assistant text, silence, or a prompt left in scrollback.
+    """
+    import hooks
+    from codex_turn_state import read_turn_boundary
+    from session_attention import get_attention
+
+    state = hooks._hook_sessions.get(session_id)
+    if not state or state.get("state") != "working" or not pty_mgr.is_alive(session_id):
+        return False
+    config = await get_session_config(session_id)
+    if not config or config.get("cli_type") != "codex" or not config.get("native_session_id"):
+        return False
+    path = _get_native_transcript_path(
+        "codex", config.get("workspace_path"), config["native_session_id"],
+        cli_home=_session_transcript_home(config),
+    )
+    if not path:
+        return False
+    boundary = await asyncio.to_thread(read_turn_boundary, path)
+    if not boundary or boundary[0] != "task_complete":
+        return False
+    # A new Enter can precede UserPromptSubmit and the rollout append. Check
+    # input from every delivery path, including the raw terminal WebSocket.
+    if not pty_mgr.is_alive(session_id) or boundary[2] < pty_mgr.get_last_submit_at(session_id):
+        return False
+    if hooks._hook_sessions.get(session_id) is not state or get_attention(session_id):
+        return False
+    # Only the current emulated screen is evidence. Raw output may contain an
+    # old prompt and must not release a queue into a live approval or tool run.
+    screen = capture_proc.get_screen(session_id) or ""
+    if (not _looks_ready_for_input("codex", screen)
+            or "esc to interrupt" in screen.lower()[-1000:]
+            or _session_permission_menu(screen)
+            or _is_incomplete_permission_screen(screen)):
+        return False
+    return await hooks.mark_transcript_turn_complete(session_id, boundary[2])
+
+
+async def _codex_turn_sync_loop():
+    """Watch even when chat/terminal is hidden or no more PTY output arrives."""
+    import hooks
+    while True:
+        for sid, state in list(hooks._hook_sessions.items()):
+            if state.get("state") != "working" or not pty_mgr.is_alive(sid):
+                continue
+            try:
+                if await _cached_session_cli_type(sid) == "codex":
+                    await _sync_codex_turn_completion(sid)
+            except Exception as exc:
+                logger.debug("Codex turn sync skipped for %s: %s", sid[:8], exc)
+        await asyncio.sleep(0.5)
+
+
 async def _flush_output(session_id: str):
     _output_timers.pop(session_id, None)
     chunks = _output_buffers.pop(session_id, [])
@@ -15427,6 +15484,8 @@ async def _wait_for_cli_input_ready(session_id: str, cli_type: str, timeout: flo
     # do not sit in a queue waiting for an already-visible prompt to reprint.
     if timeout <= 0:
         return _looks_ready_for_input(cli_type, _startup_blocker_text(session_id))
+    if cli_type == "codex":
+        await _sync_codex_turn_completion(session_id)
     loop = _asyncio.get_event_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:
@@ -32248,6 +32307,7 @@ async def on_startup(app: web.Application):
         logger.info("Research scheduler started")
 
     # ── Telemetry (anonymous startup + daily heartbeat) ─────────────
+    app["_codex_turn_sync_task"] = asyncio.create_task(_codex_turn_sync_loop())
     import telemetry
     telemetry.start_background()
 
@@ -32376,6 +32436,13 @@ async def on_shutdown(app: web.Application):
 
 
 async def on_cleanup(app: web.Application):
+    turn_sync_task = app.get("_codex_turn_sync_task")
+    if turn_sync_task is not None:
+        turn_sync_task.cancel()
+        try:
+            await turn_sync_task
+        except asyncio.CancelledError:
+            pass
     await _stop_all_ptys_expected()
     reconcile_task = app.get("_container_reconcile_task")
     if reconcile_task is not None:

@@ -714,6 +714,27 @@ async def mark_answered(session_id: str) -> bool:
     return True
 
 
+async def mark_transcript_turn_complete(session_id: str, completed_at: float) -> bool:
+    """Recover missing Stop state without replaying its automation.
+
+    The caller checks the matching rollout, current PTY prompt and attention.
+    A hook arriving while the rollout was being read wins over older evidence.
+    """
+    s = _hook_sessions.get(session_id)
+    if not s or s.get("state") != "working" or completed_at < (s.get("last_event_at") or 0):
+        return False
+    s["state"] = "idle"
+    s["tool_stack"].clear()
+    s["turns_completed"] = int(s.get("turns_completed") or 0) + 1
+    s["last_event_at"] = completed_at
+    await _broadcast({"type": "prompt_state", "session_id": session_id, "state": "idle"})
+    if _hook_sessions.get(session_id) is not s or s.get("state") != "idle" or s.get("last_event_at") != completed_at:
+        return False
+    await _broadcast({"type": "session_state", "session_id": session_id,
+                      "state": "idle", "source": "codex_transcript"})
+    return True
+
+
 def cleanup_session(session_id: str):
     """Remove all hook state for a session. Called from handle_pty_exit."""
     _hook_sessions.pop(session_id, None)
@@ -1941,6 +1962,7 @@ async def _handle_prompt_submit(session_id: str, payload: dict):
     # A submitted prompt means a turn is running, whether we came from
     # "prompting" or "idle"; live restarts and Esc handling rely on it.
     s["state"] = "working"
+    s["last_event_at"] = time.time()
 
     try:
         from idle_reflection import cancel as _idle_cancel

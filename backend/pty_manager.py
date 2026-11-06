@@ -9,6 +9,7 @@ import signal
 import struct
 import termios
 import threading
+import time
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class PTYSession:
         self.master_fd: Optional[int] = None
         self.pid: Optional[int] = None
         self._alive = False
+        self.last_submit_at = 0.0
         # Egress proxy handle (Wave 5). Started lazily inside
         # wrap_command_for_sandbox (docker tier) only when EGRESS_PROXY_ENFORCE
         # is on; torn down by this session on close. None in the default path.
@@ -303,6 +305,8 @@ class PTYSession:
             return False
         try:
             self._input_queue.put_nowait(bytes(data))
+            if b"\r" in data or b"\n" in data:
+                self.last_submit_at = time.time()
             return True
         except asyncio.QueueFull:
             logger.warning("PTY input queue full: session=%s", self.session_id)
@@ -568,6 +572,10 @@ class PTYManager:
     def write(self, session_id: str, data: bytes):
         s = self._sessions.get(session_id)
         return s.write(data) if s else False
+
+    def get_last_submit_at(self, session_id: str) -> float:
+        s = self._sessions.get(session_id)
+        return s.last_submit_at if s else 0.0
 
     def resize(self, session_id: str, cols: int, rows: int):
         s = self._sessions.get(session_id)
