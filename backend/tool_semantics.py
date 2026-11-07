@@ -150,6 +150,11 @@ def _declared_semantic(
     return _ive_mcp_semantic(normalized)
 
 
+def is_ive_mcp_tool(tool_name: str) -> bool:
+    """True for IVE's own MCP tools (memory, board, canvas, documentor records)."""
+    return _ive_mcp_semantic((tool_name or "").strip().lower()) is not None
+
+
 def _ive_mcp_semantic(normalized: str) -> Mapping[str, Any] | None:
     """IVE's own MCP tools, as the CLIs name them: ``mcp__<server>__<tool>``
     (Claude) or the bare tool name (Codex/Gemini). Their inputs often carry

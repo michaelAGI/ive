@@ -38,5 +38,19 @@ class IveMcpToolTests(unittest.TestCase):
         self.assertEqual((c.operation, c.target_for("file_path")), ("mutate", "/tmp/a.md"))
 
 
+
+class IveToolRecognitionTests(unittest.TestCase):
+    def test_is_ive_mcp_tool(self):
+        from tool_semantics import is_ive_mcp_tool
+        self.assertTrue(is_ive_mcp_tool("mcp__worker-board__search_memory"))
+        self.assertTrue(is_ive_mcp_tool("save_memory"))
+        self.assertFalse(is_ive_mcp_tool("mcp__somebody__search_memory"))
+        self.assertFalse(is_ive_mcp_tool("Bash"))
+
+    def test_memory_call_without_arguments_has_no_target_but_is_declared(self):
+        c = classify_tool_call("mcp__worker-board__search_memory", {}, tool_semantics=COMMON_TOOL_SEMANTICS)
+        self.assertEqual((c.operation, c.declared, c.primary_target), ("read", True, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

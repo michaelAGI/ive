@@ -15877,7 +15877,7 @@ def _dialog_startup_menu(screen: str) -> dict | None:
                for index, label in enumerate(trust["labels"])]
     parts = [question] + [f"{o['key']}. {o['label']}" for o in options] + [excerpt]
     return {
-        "kind": "question", "question": question, "options": options, "excerpt": excerpt,
+        "kind": "question", "startup": True, "question": question, "options": options, "excerpt": excerpt,
         "identity": "\n".join(re.sub(r"\s+", " ", part).strip() for part in parts if part),
         "answerable": True,
         "choices": tuple(o["key"] for o in options),
@@ -16086,6 +16086,9 @@ async def _session_prompt_answered(session_id: str, menu: dict) -> None:
         logger.debug("Attention clear after reply skipped for %s: %s", session_id[:8], exc)
 
 
+_STARTUP_MENU_WAIT_S = 10.0  # auto-accept of a folder-trust prompt usually takes under a second
+
+
 async def send_session_input(request: web.Request) -> web.Response:
     """Type text into a running session's PTY. Used by MCP server's send_message tool."""
     import shell_session as _shell_session  # plain terminals (cli_type "shell")
@@ -16153,6 +16156,16 @@ async def send_session_input(request: web.Request) -> web.Response:
         # digit selects and confirms) or become a new instruction.
         screen = capture_proc.get_screen(session_id) or ""
         menu = _session_permission_menu(screen)
+        if menu and menu.get("startup"):
+            # A folder-trust prompt that IVE confirms by itself: the first
+            # message of a new project arrives while it is still on screen.
+            # Give the auto-accept a moment instead of refusing the message.
+            deadline = _STARTUP_MENU_WAIT_S / 0.25
+            while menu and menu.get("startup") and deadline > 0:
+                deadline -= 1
+                await _asyncio.sleep(0.25)
+                screen = capture_proc.get_screen(session_id) or ""
+                menu = _session_permission_menu(screen)
         if menu or _is_incomplete_permission_screen(screen):
             return web.json_response({"error": "A question is open in this session. Answer it first.",
                                       "code": "question_open", "session_id": session_id, "menu": menu,

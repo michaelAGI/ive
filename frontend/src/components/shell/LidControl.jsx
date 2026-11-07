@@ -137,7 +137,7 @@ export default function LidControl({ onOpenSettings }) {
           <div className="ive-lid-row ive-lid-head">
             <div className="min-w-0">
               <div className="ive-lid-title">Close the lid, agents keep working</div>
-              <p className="ive-lid-sub" role="status">{active ? `On until ${endsAt(status.expires_at)} · ${remaining(status.expires_at, now)} left` : title}</p>
+              <p className="ive-lid-sub" role="status">{active ? `On until ${endsAt(status.expires_at)} · ${remaining(status.expires_at, now)} left` : (status.message || title)}</p>
             </div>
             <button
               type="button"

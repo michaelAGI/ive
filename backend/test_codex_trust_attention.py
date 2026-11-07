@@ -194,6 +194,7 @@ class TrustReplyTests(unittest.IsolatedAsyncioTestCase):
         self.answered = AsyncMock()
         self.ready = AsyncMock(return_value=True)
         self.ns = load(
+            _STARTUP_MENU_WAIT_S=0.5,  # the composer waits briefly for IVE's own auto-accept
             _terminal_streams={"session": object()}, _session_prompt_replies={},
             capture_proc=SimpleNamespace(get_screen=lambda _: self.screen),
             pty_mgr=SimpleNamespace(is_alive=lambda _: True, write=self.write),

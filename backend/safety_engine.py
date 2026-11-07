@@ -1415,7 +1415,11 @@ async def evaluate(
         # information and only train click-through, which is worse for safety
         # than not asking. ASK is kept only where a target was EXPECTED and is
         # missing, which is genuinely malformed.
-        if classification.operation in {"read", "mutate", "execute"}:
+        # IVE's own MCP tools read and write IVE records; a call without its
+        # argument (Claude sometimes probes search_memory with none) is
+        # rejected by the tool itself, so asking the operator adds nothing.
+        from tool_semantics import is_ive_mcp_tool
+        if classification.operation in {"read", "mutate", "execute"} and not is_ive_mcp_tool(tool_name):
             return SafetyDecision(
                 action="ask",
                 reason="operation has no analyzable target (fail-closed)",
