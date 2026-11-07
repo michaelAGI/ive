@@ -255,7 +255,7 @@ fn main() {
                 loop {
                     let exited = handle.state::<Backend>().0.lock().unwrap().as_mut().and_then(|p| p.try_wait().ok().flatten());
                     if let Some(status) = exited { show_failure(&window, &failure, format!("The local service stopped ({status}).\nDiagnostics: {}", log.display())); return; }
-                    if ready(port, &nonce) { break; }
+                    if ready(port, &nonce) { tray::set_backend_ready(true); break; }
                     if Instant::now() > deadline {
                         handle.state::<Backend>().stop();
                         show_failure(&window, &failure, format!("The local service is not responding.\nDiagnostics: {}", log.display())); return;
@@ -273,6 +273,7 @@ fn main() {
                     let Some(child) = guard.as_mut() else { return; };
                     if let Ok(Some(status)) = child.try_wait() {
                         drop(guard);
+                        tray::set_backend_ready(false);
                         show_failure(&window, &failure, format!("The local service stopped ({status}).\nDiagnostics: {}", log.display())); return;
                     }
                 }
@@ -281,7 +282,7 @@ fn main() {
         })
         .build(tauri::generate_context!()).expect("IVE could not start");
     app.run(|handle, event| {
-        if matches!(event, tauri::RunEvent::Exit) { handle.state::<Backend>().stop(); }
+        if matches!(event, tauri::RunEvent::Exit) { tray::set_backend_ready(false); handle.state::<Backend>().stop(); }
         // Closing the window keeps IVE, its agents and the menu bar item running;
         // the Dock icon or the menu bar brings the window back. Quit ends everything.
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event {

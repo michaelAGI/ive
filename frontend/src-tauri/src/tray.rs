@@ -23,6 +23,15 @@ const DURATIONS: [(u64, &str); 6] = [
     (7200, "2 hours"), (14400, "4 hours"), (28800, "8 hours"),
 ];
 const POLL_SECONDS: u64 = 20;
+
+/// Set by the shell once its own backend answered /ready with this launch's
+/// nonce, cleared when that backend stops. Until then the eye never touches
+/// the port: another process may be listening there, and it must not receive
+/// the owner token.
+static BACKEND_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_backend_ready(ready: bool) { BACKEND_READY.store(ready, std::sync::atomic::Ordering::SeqCst); }
+fn backend_ready() -> bool { BACKEND_READY.load(std::sync::atomic::Ordering::SeqCst) }
 const OPTIONS_KEY: &str = "mac_power_options";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,6 +174,7 @@ impl Backend {
 
     /// One HTTP/1.0 request on the loopback interface; returns (status, body).
     fn request(&self, method: &str, path: &str, body: Option<&serde_json::Value>) -> Result<(u16, String), String> {
+        if !backend_ready() { return Err("IVE's backend is not running".into()); }
         let tokens = self.tokens();
         if tokens.is_empty() { return Err("no owner token".into()); }
         let mut last = Err("no owner token".to_string());
@@ -486,6 +496,20 @@ mod tests {
         let (status, body) = parse_response(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"state\":\"ready\"}").unwrap();
         assert_eq!((status, body.as_str()), (200, "{\"state\":\"ready\"}"));
         assert!(parse_response(b"garbage").is_err());
+    }
+
+    #[test]
+    fn nothing_is_sent_before_the_own_backend_is_confirmed() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("token"), "secret-owner-token").unwrap();
+        let backend = Backend { port, data_dir: dir.path().to_path_buf() };
+        set_backend_ready(false);
+        assert!(backend.request("GET", "/api/mac-power", None).is_err());
+        assert_eq!(backend.status().get("state").and_then(|v| v.as_str()), Some("offline"));
+        assert!(listener.accept().is_err(), "a foreign listener on the port must not be contacted");
     }
 
     #[test]
