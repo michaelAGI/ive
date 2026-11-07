@@ -256,7 +256,7 @@ function EntriesTab({ workspaceId, ws }) {
           const Icon = meta.icon
           return (
             <div key={type}>
-              <div className={`flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider mb-1.5 ${meta.color}`}>
+              <div className={`flex items-center gap-1.5 text-[12px] font-semibold mb-1.5 ${meta.color}`}>
                 <Icon size={11} />
                 {meta.label}
                 <span className="opacity-50">({group.length})</span>
@@ -414,7 +414,7 @@ function PromptTab({ workspaceId }) {
   const providerContents = files?.provider_contents || {}
 
   const statRows = surfaces ? [
-    ['Memory files', surfaces.workspace_memory?.chars || 0, `${Object.keys(surfaces.workspace_memory?.providers || {}).length} files · characters`],
+    ['Memory files', Object.keys(surfaces.workspace_memory?.providers || {}).length, `${surfaces.workspace_memory?.chars || 0} characters`],
     ['Memories', surfaces.memory_entries?.total || 0, byCountLabel(surfaces.memory_entries?.by_type, 'type')],
   ] : []
 
