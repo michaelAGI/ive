@@ -1,0 +1,51 @@
+/* The eyelid in the header and its popover. Colors and radii come from the
+   app tokens; motion follows the shared press and pop rules in index.css. */
+.ive-lid { position: relative; display: inline-flex; }
+.ive-lid-btn { gap: 5px; }
+.ive-lid-btn.is-on { color: var(--x-accent); background: var(--x-tint); border-color: var(--x-tint-line); }
+.ive-lid-btn-label { font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .ive-lid-btn-label { display: none; } }
+
+.ive-lid-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: min(340px, calc(100vw - 24px));
+  padding: 12px; border: 1px solid var(--x-line); border-radius: 14px; background: var(--x-bg);
+  box-shadow: 0 18px 48px -18px rgba(0, 0, 0, .35), 0 2px 8px -2px rgba(0, 0, 0, .18);
+  color: var(--x-ink); font-size: 12px; transform-origin: top right;
+}
+.ive-lid-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; }
+.ive-lid-head { align-items: flex-start; padding-bottom: 10px; border-bottom: 1px solid var(--x-line); }
+.ive-lid-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.ive-lid-sub { margin: 3px 0 0; color: var(--x-muted); font-size: 11.5px; line-height: 1.45; }
+.ive-lid-label { display: inline-flex; align-items: center; gap: 7px; color: var(--x-ink); font-weight: 500; }
+.ive-lid-label svg { color: var(--x-muted); }
+.ive-lid-conditions { display: grid; gap: 2px; padding-top: 8px; }
+.ive-lid-conditions.is-locked { opacity: .6; }
+.ive-lid-select { height: 26px; padding: 0 22px 0 8px; border: 1px solid var(--x-line-strong); border-radius: 8px; background: var(--x-surface-2); color: var(--x-ink); font: inherit; font-size: 12px; }
+.ive-lid-check input { width: 15px; height: 15px; accent-color: var(--x-accent); }
+.ive-lid-apps { align-items: flex-start; flex-direction: column; gap: 6px; padding-top: 4px; }
+.ive-lid-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ive-lid-chip { height: 24px; padding: 0 9px; border: 1px solid var(--x-line); border-radius: 999px; background: var(--x-surface); color: var(--x-ink-secondary); font: inherit; font-size: 11.5px; cursor: pointer; }
+.ive-lid-chip.is-on { border-color: var(--x-tint-line); background: var(--x-tint); color: var(--x-accent); }
+.ive-lid-chip:disabled { cursor: default; }
+.ive-lid-alert { margin-top: 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--x-accent) 30%, transparent); border-radius: 10px; background: var(--x-tint); display: grid; gap: 6px; }
+.ive-lid-alert p { margin: 0; line-height: 1.45; }
+.ive-lid-hint { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--x-muted); font-size: 11.5px; line-height: 1.4; }
+.ive-lid-action { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 1px solid var(--x-line-strong); border-radius: 8px; background: var(--x-surface); color: var(--x-ink); font: inherit; font-size: 11.5px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.ive-lid-action:hover { background: var(--x-hover); }
+.ive-lid-action:disabled { opacity: .5; cursor: default; }
+.ive-lid-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--x-line); }
+.ive-lid-foot .ive-lid-hint { margin: 0; }
+
+/* Apple-style switch: 36×22, knob slides with a short ease-out. */
+.ive-switch { position: relative; flex: none; width: 36px; height: 22px; padding: 0; border: 0; border-radius: 999px; background: var(--x-line-strong); cursor: pointer; transition: background .18s var(--x-ease-out, ease-out); }
+.ive-switch-knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .18s var(--x-ease-out, ease-out); }
+.ive-switch.is-on { background: var(--x-accent); }
+.ive-switch.is-on .ive-switch-knob { transform: translateX(14px); }
+.ive-switch:disabled { opacity: .5; cursor: default; }
+.ive-switch.is-busy .ive-switch-knob { animation: ive-switch-pulse .9s ease-in-out infinite; }
+.ive-switch:focus-visible { outline: 2px solid var(--x-focus); outline-offset: 2px; }
+@keyframes ive-switch-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) {
+  .ive-switch, .ive-switch-knob { transition: none; }
+  .ive-switch.is-busy .ive-switch-knob { animation: none; }
+}

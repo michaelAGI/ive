@@ -46,6 +46,7 @@ export async function createTourFixture(browser, options = {}) {
   })
   const writes = [], reads = [], errors = [], unexpected = [], sockets = new Set(), timers = new Set()
   const data = {
+    macPower: options.macPower || { state: 'ready', battery_floor: 20, battery_percent: 100, lid_closed: false, lid_saver_active: false, lid_saver_supported: true, low_power_active: false, on_battery: false, paused_processes: 0, reason: null },
     settings: { ...(options.settings || {}) }, project,
     workspaces: clone(options.workspaces || []), sessions: clone(options.sessions || []),
     tasks: clone(options.tasks || []), runs: clone(options.runs || []), pipelines: clone(options.pipelines || []),
@@ -90,6 +91,8 @@ export async function createTourFixture(browser, options = {}) {
     return clone(message)
   }
   const controls = {
+    macPowerRefusal: null,
+    setMacPower(patch) { data.macPower = { ...data.macPower, ...patch } },
     emit(event) { broadcast(event) },
     disconnect() { for (const socket of sockets) socket.close({ code: 1001, reason: 'Isolated reconnect test' }) },
     failSave: Boolean(options.failSave), failInput: false, failExecute: false, failAccept: false, failChanges: false,
@@ -265,6 +268,15 @@ export async function createTourFixture(browser, options = {}) {
         data.settings[decodeURIComponent(path.slice('/settings/'.length))] = body?.value
         return reply({ ok: true })
       }
+      // Lid-closed mode: the header control and Mac & Power talk to the helper through these.
+      if (path === '/mac-power/start' && method === 'POST') {
+        if (controls.macPowerRefusal) return reply(controls.macPowerRefusal, 409)
+        data.macPower = { ...data.macPower, state: 'active', expires_at: new Date(Date.now() + 1000 * (body?.duration_seconds || 3600)).toISOString(),
+          allow_battery: !!body?.allow_battery, lid_low_power: !!body?.lid_low_power, pause_apps: body?.pause_apps || [], lid_closed: false, paused_processes: 0, mode_source: 'app' }
+        return reply(data.macPower)
+      }
+      if (path === '/mac-power/stop' && method === 'POST') { data.macPower = { ...data.macPower, state: 'ready', expires_at: undefined }; return reply(data.macPower) }
+      if (path === '/mac-power/approval' && method === 'POST') return reply(data.macPower)
       if (path === '/browse-folder' && method === 'POST') return reply({ path: project.path })
       if (path === '/workspaces' && method === 'POST') {
         const existing = data.workspaces.find((item) => item.path === body?.path)
@@ -446,6 +458,7 @@ export async function createTourFixture(browser, options = {}) {
     if (/\/files$/.test(path)) return reply({ items: [] })
     if (/\/capabilities$/.test(path)) return reply({ force_send: true, cli_type: 'claude' })
     if (/\/runtime-model$/.test(path)) return reply({ model: 'sonnet', source: 'fixture' })
+    if (path === '/mac-power') return reply(data.macPower)
     if (/\/(brainstormer|project-hint|runtime-env)$/.test(path)) return reply({})
     if (/\/(captures|events|queue|test-queue|git\/log)$/.test(path) || emptyLists.has(path)) return reply([])
     unexpected.push(call)

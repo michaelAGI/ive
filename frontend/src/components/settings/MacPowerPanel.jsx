@@ -4,14 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Battery, ExternalLink, Laptop, Leaf, Pause, Play, RotateCw, Settings2, Square, Timer } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
 import { Button } from '../ui'
+import { APPS, DURATIONS, DEFAULTS, LOGIN_ITEMS_REASONS, loadOptions, saveOptions, remaining } from '../../lib/macPower'
 
-const APPS = [
-  ['com.tinyspeck.slackmacgap', 'Slack'], ['com.hnc.Discord', 'Discord'],
-  ['net.whatsapp.WhatsApp', 'WhatsApp'], ['com.spotify.client', 'Spotify'],
-]
-const DURATIONS = [[900, '15 minutes'], [1800, '30 minutes'], [3600, '1 hour'], [7200, '2 hours'], [14400, '4 hours'], [28800, '8 hours']]
-const PREF_KEY = 'ive:mac-power-options:v1'
-const DEFAULTS = { duration_seconds: 3600, allow_battery: false, lid_low_power: true, pause_apps: [] }
 const LABELS = {
   loading: 'Checking status', unknown: 'Status not confirmed', unavailable: 'IVE Mac app required',
   not_found: 'Mac helper missing', not_registered: 'One-time setup required', unregistered: 'One-time setup required',
@@ -19,8 +13,6 @@ const LABELS = {
   restoring: 'Restoring settings', restore_failed: 'Restore still pending', blocked: 'Mode not available',
 }
 const LOGIN_ITEMS_PATH = 'System Settings → General → Login Items & Extensions → Allow in the Background → IVE (administrator)'
-// Refusals that the Login Items pane resolves. helper_outdated gets the button only.
-const LOGIN_ITEMS_REASONS = ['macos_helper_approval_required', 'macos_helper_not_registered', 'helper_connection_failed', 'helper_outdated']
 const RESTORE_COMMAND = 'sudo pmset -a disablesleep 0'
 const BATTERY_SENTENCE = 'Keeps the Mac awake with the lid closed until the battery reaches 20 %.'
 const OUTDATED_SENTENCE = 'Update the IVE Mac app. If it is already current, turn the IVE item off and on in Login Items & Extensions, or restart the Mac.'
@@ -31,20 +23,6 @@ const PANE_LABELS = {
 }
 const paneLabel = pane => PANE_LABELS[pane] || (pane?.startsWith('privacy_') ? 'Open Privacy & Security settings' : 'Open System Settings')
 
-function loadOptions() {
-  try {
-    const value = JSON.parse(localStorage.getItem(PREF_KEY))
-    if (value && DURATIONS.some(([n]) => n === value.duration_seconds)
-      && typeof value.allow_battery === 'boolean' && typeof value.lid_low_power === 'boolean'
-      && Array.isArray(value.pause_apps) && value.pause_apps.every(id => APPS.some(([key]) => key === id))) return value
-  } catch { /* use defaults */ }
-  return DEFAULTS
-}
-function remaining(expires, now) {
-  const seconds = Math.max(0, Math.ceil((Date.parse(expires) - now) / 1000))
-  if (!Number.isFinite(seconds)) return '--:--'
-  return `${Math.floor(seconds / 3600).toString().padStart(2, '0')}:${Math.floor(seconds / 60 % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
-}
 // The subtitle always states power facts; unknown facts are named, never faked.
 function powerLine(status, noBattery) {
   if (status.state === 'loading') return 'Reading power status…'
@@ -111,7 +89,7 @@ export default function MacPowerPanel() {
   const update = (change) => {
     const value = { ...options, ...change }
     setOptions(value)
-    try { localStorage.setItem(PREF_KEY, JSON.stringify(value)) } catch { /* mode still works without saved preferences */ }
+    saveOptions(value)
   }
   const act = async (action, overrides) => {
     if (busyRef.current) return

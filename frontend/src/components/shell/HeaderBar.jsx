@@ -10,6 +10,7 @@ import { formatKeyCombo } from '../../lib/keybindings'
 import { useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
 import ExperienceSwitch from './ExperienceSwitch'
+import LidControl from './LidControl'
 import useExperienceMode from '../../state/experienceMode'
 
 // 44 px header: sidebar toggle, breadcrumb (Home / Overview / project › session),
@@ -74,6 +75,7 @@ export default function HeaderBar({ view, onGoHome, onGoBoard, onNewSession, onO
       {mode === 'dev' && <NewTerminalButton />}
       <div data-header-slot="actions" className="ive-header-slot ive-header-slot--actions" ref={(el) => registerHeaderSlot('actions', el)} />
       <div className="ive-header-global">
+        <LidControl onOpenSettings={(section) => onOpenPanel?.(section)} />
         {mode === 'chat' && inSession && session && <button type="button" className="ive-header-btn" aria-label="Review changes" title={`Review changes in ${session.name || 'this chat'}`} onClick={() => onOpenPanel?.('review')}><FileCheck2 size={15} aria-hidden="true" /><span className="ive-header-btn-label">Review changes</span></button>}
         {mode === 'dev' && (inSession || view === 'board') && session && session.cli_type !== 'shell' && <SessionContextActions sessionId={session.id} readOnly={!!session.read_only} phone />}
         {!inSession && (
