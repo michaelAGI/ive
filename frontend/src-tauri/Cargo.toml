@@ -1,6 +1,6 @@
 [package]
 name = "ive"
-version = "1.0.26"
+version = "1.0.27"
 description = "IVE — local agent-orchestration desktop shell"
 authors = ["AIFOREU GmbH"]
 license = "Apache-2.0"
