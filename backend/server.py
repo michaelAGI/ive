@@ -5445,6 +5445,9 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                             mem_prompt, _mem_info = await _session_memory_prompt(
                                 config, session_id, _mem_settings, _mem_max, _compact_memory,
                             )
+                            _mem_guide = _memory_tool_guidance(config, _compact_memory)
+                            if _mem_guide:
+                                system_prompt_parts.append(_mem_guide)
                             if mem_prompt:
                                 system_prompt_parts.append(mem_prompt)
                         except Exception as mem_exc:
@@ -33640,6 +33643,32 @@ async def get_demo_log(request: web.Request) -> web.Response:
 # Owned source contributions are selected after host services are defined.
 def _core_memory_metadata(entries, prompt):
     return json.dumps({"count": len(entries) if entries else 0, "chars": len(prompt)}) if prompt else None
+
+
+_MEMORY_TOOL_GUIDANCE = (
+    "## Memory\n"
+    "IVE keeps notes for this project; people see and edit them under Knowledge. "
+    "\"Remembered Context\" below is the index of what is already known: call "
+    "recall_memory(name) for the details of an entry, and search_memory(query) before "
+    "you start on something that may have history. When the person asks you to remember "
+    "something, or you learn a durable fact, decision or preference, save it with "
+    "save_memory(name, type, description, content): type user for who they are and what "
+    "they prefer, feedback for how they want you to work, project for facts and decisions, "
+    "reference for links and external sources. Keep notes short, give them a clear name, "
+    "and reuse the name to update a note instead of adding a duplicate.\n"
+)
+_MEMORY_TOOL_GUIDANCE_COMPACT = (
+    "**memory**: index below; recall_memory(name) for details, search_memory(query) first; "
+    "save_memory(name, type in user|feedback|project|reference, description, content) when asked "
+    "to remember or when a durable fact/decision appears; reuse names to update.\n"
+)
+
+
+def _memory_tool_guidance(config, compact):
+    """Tell workers how IVE memory works. The Commander has its own prompt."""
+    if (config.get("session_type") or "worker") == "commander":
+        return ""
+    return _MEMORY_TOOL_GUIDANCE_COMPACT if compact else _MEMORY_TOOL_GUIDANCE
 
 
 async def _session_memory_prompt(config, session_id, settings, max_chars, compact):
