@@ -1,6 +1,6 @@
 {
   "name": "ive-frontend",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "private": true,
   "type": "module",
   "description": "IVE frontend — React + Vite + xterm.js UI for the Integrated Vibecoding Environment",

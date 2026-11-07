@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../../lib/api'
 import useStore from '../../state/store'
 import { continueSession } from '../../lib/sessionActions'
+import useContextWarnings from '../../state/contextWarnings'
+import { X } from 'lucide-react'
 
 export function TerminalContextNotice({ sessionId }) {
   const session = useStore((s) => s.sessions[sessionId])
@@ -23,7 +25,9 @@ export function TerminalContextNotice({ sessionId }) {
 export default function SessionContextNotice({ session, runtime }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
-  const context = runtime?.context
+  const warningsEnabled = useContextWarnings((s) => s.enabled)
+  const setWarnings = useContextWarnings((s) => s.setEnabled)
+  const context = warningsEnabled ? runtime?.context : null
   const observed = runtime?.observed?.model || runtime?.launched
   const configured = session?.model
   const mismatch = observed && configured && observed !== configured && !observed.includes(configured)
@@ -50,6 +54,8 @@ export default function SessionContextNotice({ session, runtime }) {
         </p>
         <button type="button" onClick={() => fresh('handoff')} disabled={session?.read_only || pending || (session?.pty_alive && !idle)} className="rounded border border-x-line bg-x-surface px-2 py-1 disabled:opacity-50">Continue in fresh session</button>
         <button type="button" onClick={() => fresh('empty')} disabled={session?.read_only || pending} className="rounded border border-x-line bg-x-surface px-2 py-1 disabled:opacity-50">New topic</button>
+        <button type="button" onClick={() => { setWarnings(false); useStore.getState().addNotification({ type: 'info', message: 'Context warnings are off. Settings → General turns them back on.' }) }}
+          aria-label="Hide context warnings" title="Hide context warnings. Settings → General turns them back on." className="rounded border border-transparent p-1 text-x-muted hover:bg-x-hover hover:text-x-ink"><X size={13} aria-hidden="true" /></button>
         {['claude', 'codex'].includes(session?.cli_type || 'claude') && <button type="button" onClick={compact} disabled={!idle || pending} title={!idle ? 'Start the session and wait until it is idle.' : 'Summarize the active context; saved chat history remains available.'} className="rounded border border-x-line bg-x-surface px-2 py-1 disabled:opacity-50">{pending ? 'Requesting…' : 'Compact context'}</button>}
       </div>}
       {error && <p role="alert" className="mt-1 text-red-600">{error}</p>}

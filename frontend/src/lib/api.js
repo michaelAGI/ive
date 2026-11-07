@@ -650,6 +650,9 @@ export const api = {
     })
   }),
   getExperimentalFeatures: () => request('/settings/experimental'),
+  // One app-wide setting the desktop shell shares with the web UI (lid-closed options).
+  getAppSetting: key => request(`/settings/${encodeURIComponent(key)}`),
+  setAppSetting: (key, value) => request(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   getModelProviders: () => request('/model-providers'),
   setModelProviders: providers => request('/model-providers', {
     method: 'PUT',

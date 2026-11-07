@@ -14,6 +14,7 @@ use std::{
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 mod updates;
+mod tray;
 
 #[derive(Default)]
 struct Backend(Mutex<Option<Child>>, AtomicBool);
@@ -259,6 +260,12 @@ fn main() {
                     thread::sleep(Duration::from_millis(200));
                 }
                 if let Err(error) = window.navigate(origin.parse().unwrap()) { show_failure(&window, &failure, error.to_string()); }
+                // The eyelid in the menu bar needs the backend; menu bar items live on the main thread.
+                let tray_handle = handle.clone();
+                let tray_dir = data_dir.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    if let Err(error) = tray::install(&tray_handle, port, tray_dir) { eprintln!("menu bar item unavailable: {error}"); }
+                });
                 // Detect failures after startup as well, rather than leaving a
                 // disconnected workspace looking ready forever.
                 loop {

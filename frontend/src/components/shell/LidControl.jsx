@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Battery, Eye, EyeClosed, Leaf, Lock, Pause, Settings2, Timer } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
-import { APPS, DURATIONS, LOGIN_ITEMS_REASONS, canStart, headline, loadOptions, remaining, remainingShort, saveOptions } from '../../lib/macPower'
+import { APPS, DURATIONS, LOGIN_ITEMS_REASONS, canStart, fetchSharedOptions, headline, loadOptions, pushSharedOptions, remaining, remainingShort, saveOptions } from '../../lib/macPower'
 import './lid-control.css'
 
 // The eyelid in the header: one glance shows whether the Mac keeps working
@@ -78,7 +78,14 @@ export default function LidControl({ onOpenSettings }) {
     return () => { document.removeEventListener('pointerdown', down); document.removeEventListener('keydown', key, true) }
   }, [open])
 
-  const update = (change) => { const value = { ...options, ...change }; setOptions(value); saveOptions(value) }
+  const update = (change) => { const value = { ...options, ...change }; setOptions(value); saveOptions(value); pushSharedOptions(api, value) }
+  // The menu bar item may have changed the conditions: take the shared copy when the popover opens.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    fetchSharedOptions(api).then((shared) => { if (!cancelled && shared) { setOptions(shared); saveOptions(shared) } })
+    return () => { cancelled = true }
+  }, [open])
   const act = async (action, overrides) => {
     if (busyRef.current) return
     const payload = { ...options, ...overrides }

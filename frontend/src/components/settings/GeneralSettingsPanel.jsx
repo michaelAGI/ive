@@ -8,6 +8,7 @@ import { Button, ThemeToggle } from '../ui'
 import { LANGUAGES, getLanguage, setLanguage, useT } from '../../lib/i18n'
 import '../../lib/i18n/shell'
 import { NEEDS_YOU_MODES, needsYouModeHelp, requestNeedsYouNotifications } from '../../lib/needsYou'
+import useContextWarnings from '../../state/contextWarnings'
 
 function Toggle({ value, onChange, label, disabled = false }) {
   return (
@@ -50,6 +51,8 @@ const NEEDS_YOU_LABELS = { off: 'Off', popup: 'Pop-up', popup_macos: 'Pop-up and
 
 
 export default function GeneralSettingsPanel() {
+  const contextWarnings = useContextWarnings((s) => s.enabled)
+  const setContextWarnings = useContextWarnings((s) => s.setEnabled)
   const t = useT()
   const language = getLanguage()
   const [autoUpdateCli, setAutoUpdateCli] = useState(false)
@@ -331,6 +334,14 @@ export default function GeneralSettingsPanel() {
                   </div></HelpDetails>
                 </div>
                 <Toggle value={autoSessionTitles} onChange={handleTitleToggle} label="Auto session titles" disabled={savingTitle} />
+              </div>
+              {/* Context size warnings */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs text-x-ink font-medium">Context size warnings</div>
+                  <p className="mt-1 text-[11px] text-x-muted">The "Large context" banner in a session and the context-low toast. Turn off if your plan has no context limit you care about; the compaction indicator stays.</p>
+                </div>
+                <Toggle value={contextWarnings} onChange={setContextWarnings} label="Context size warnings" />
               </div>
             </div>
           )}

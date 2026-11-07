@@ -8,6 +8,7 @@ export const APPS = [
 ]
 export const DURATIONS = [[900, '15 minutes'], [1800, '30 minutes'], [3600, '1 hour'], [7200, '2 hours'], [14400, '4 hours'], [28800, '8 hours']]
 export const PREF_KEY = 'ive:mac-power-options:v1'
+export const SHARED_KEY = 'mac_power_options' // app setting the menu bar item reads and writes too
 export const DEFAULTS = { duration_seconds: 3600, allow_battery: false, lid_low_power: true, pause_apps: [] }
 // Refusals that the Login Items pane resolves. helper_outdated gets the button only.
 export const LOGIN_ITEMS_REASONS = ['macos_helper_approval_required', 'macos_helper_not_registered', 'helper_connection_failed', 'helper_outdated']
@@ -61,4 +62,30 @@ export function headline(status, now) {
     case 'unknown': return 'Lid-closed mode: status not confirmed'
     default: return 'Off. Turn on, then close the lid; the agents keep working.'
   }
+}
+
+// The conditions live in one app setting so the menu bar item, the header
+// eyelid and Settings → Mac & Power agree. localStorage keeps a copy for the
+// first paint and for browsers without the setting.
+export function normalizeOptions(value) {
+  if (value && typeof value === 'string') { try { value = JSON.parse(value) } catch { return null } }
+  if (!value || typeof value !== 'object') return null
+  if (!DURATIONS.some(([n]) => n === value.duration_seconds)) return null
+  return {
+    duration_seconds: value.duration_seconds,
+    allow_battery: !!value.allow_battery,
+    lid_low_power: value.lid_low_power !== false,
+    pause_apps: Array.isArray(value.pause_apps) ? value.pause_apps.filter(id => APPS.some(([key]) => key === id)) : [],
+  }
+}
+
+export async function fetchSharedOptions(api) {
+  try {
+    const data = await api.getAppSetting(SHARED_KEY)
+    return normalizeOptions(data?.value)
+  } catch { return null }
+}
+
+export function pushSharedOptions(api, value) {
+  api.setAppSetting(SHARED_KEY, value).catch(() => { /* the local copy still applies */ })
 }

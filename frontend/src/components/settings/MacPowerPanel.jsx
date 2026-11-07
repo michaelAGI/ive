@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Battery, ExternalLink, Laptop, Leaf, Pause, Play, RotateCw, Settings2, Square, Timer } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
 import { Button } from '../ui'
-import { APPS, DURATIONS, DEFAULTS, LOGIN_ITEMS_REASONS, loadOptions, saveOptions, remaining } from '../../lib/macPower'
+import { APPS, DURATIONS, DEFAULTS, LOGIN_ITEMS_REASONS, fetchSharedOptions, loadOptions, pushSharedOptions, saveOptions, remaining } from '../../lib/macPower'
 
 const LABELS = {
   loading: 'Checking status', unknown: 'Status not confirmed', unavailable: 'IVE Mac app required',
@@ -74,6 +74,10 @@ export default function MacPowerPanel() {
     }
   }, [])
   useEffect(() => {
+    // The header eyelid and the menu bar item share these conditions.
+    fetchSharedOptions(api).then((shared) => { if (mounted.current && shared) { setOptions(shared); saveOptions(shared) } })
+  }, [])
+  useEffect(() => {
     mounted.current = true
     refresh()
     const interval = setInterval(() => { if (!document.hidden) refresh() }, 5000)
@@ -90,6 +94,7 @@ export default function MacPowerPanel() {
     const value = { ...options, ...change }
     setOptions(value)
     saveOptions(value)
+    pushSharedOptions(api, value)
   }
   const act = async (action, overrides) => {
     if (busyRef.current) return

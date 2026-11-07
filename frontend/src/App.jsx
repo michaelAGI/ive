@@ -747,6 +747,21 @@ export default function App() {
     return () => window.removeEventListener('open-onboarding', showGuide)
   }, [closeExclusivePanels, onboarding.show])
 
+  // The menu bar item (desktop shell) asks for a panel, e.g. Mac & Power.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !(window.__TAURI__ || window.__TAURI_INTERNALS__)) return undefined
+    let unlisten = null
+    let cancelled = false
+    import(/* @vite-ignore */ '@tauri-apps/api/event')
+      .then(({ listen }) => listen('ive://open-panel', (event) => {
+        const panel = typeof event.payload === 'string' ? event.payload : event.payload?.panel
+        if (panel) panelActionsRef.current?.(panel)
+      }))
+      .then((fn) => { if (cancelled) fn(); else unlisten = fn })
+      .catch(() => { /* not inside the desktop shell */ })
+    return () => { cancelled = true; unlisten?.() }
+  }, [])
+
   useEffect(() => {
     const handler = (e) => {
       const detail = e.detail

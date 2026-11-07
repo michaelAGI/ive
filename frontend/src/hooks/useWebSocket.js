@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { readContextWarnings } from '../state/contextWarnings'
 import useStore from '../state/store'
 import { terminalWriters } from '../lib/terminalWriters'
 import { startedSessions, lastOutputAt } from '../lib/terminalWriters'
@@ -962,7 +963,7 @@ export default function useWebSocket() {
               startedAt: Date.now(),
             })
 
-            if (!store.notifications.some((n) => n.sessionId === sid && n.type === 'context_warning')) {
+            if (readContextWarnings() && !store.notifications.some((n) => n.sessionId === sid && n.type === 'context_warning')) {
               store.addNotification({
                 sessionId: sid,
                 type: 'context_warning',
