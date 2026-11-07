@@ -1558,6 +1558,12 @@ pre {
 .ive-sidebar-resizing, .ive-sidebar-resizing * { cursor: col-resize !important; }
 .ive-sidebar-resizing { user-select: none; -webkit-user-select: none; }
 .ive-sidebar-resizing iframe { pointer-events: none; }
+/* Past the minimum the sidebar snaps shut; the cursor says so. */
+.ive-sidebar-collapsing, .ive-sidebar-collapsing * { cursor: w-resize !important; }
+/* With the sidebar hidden, the left window edge pulls it back out. */
+.ive-sidebar-edge { position: absolute; top: 0; bottom: 0; left: 0; z-index: 6; width: 6px; cursor: e-resize; touch-action: none; }
+.ive-sidebar-edge::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--x-line-strong); opacity: 0; transition: opacity .12s ease .1s; }
+.ive-sidebar-edge:hover::after { opacity: 1; }
 .ive-sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: var(--ive-header-h); padding: 0 10px 0 14px; flex: none; }
 .ive-sidebar-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ive-brand-mark { width: 20px; height: 20px; flex: none; }

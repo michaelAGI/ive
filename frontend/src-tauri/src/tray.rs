@@ -96,6 +96,15 @@ pub fn view_for(status: &serde_json::Value, now_ms: i64) -> View {
     }
 }
 
+/// The text next to the eye while the mode runs: "1h 29m", "12m", "<1m".
+pub fn title_for(status: &serde_json::Value, now_ms: i64) -> Option<String> {
+    let end = status.get("expires_at").and_then(|v| v.as_str()).and_then(parse_rfc3339_ms)?;
+    let seconds = ((end - now_ms).max(0) / 1000) as u64;
+    if seconds < 60 { return Some("<1m".into()); }
+    let (h, m) = (seconds / 3600, seconds / 60 % 60);
+    Some(if h > 0 { format!("{h}h {m}m") } else { format!("{m}m") })
+}
+
 pub fn short(seconds: u64) -> String {
     if seconds < 60 { return "under a minute".into(); }
     let h = seconds / 3600;
@@ -230,8 +239,10 @@ struct Tray {
     icon: TrayIcon<Wry>,
     items: Items,
     options: Mutex<Options>,
-    open_eye: Image<'static>,
-    closed_eye: Image<'static>,
+    /// open, lid lowering, lid nearly shut, closed with lashes
+    frames: [Image<'static>; 4],
+    /// The eye state on screen; None until the first status.
+    shown_closed: Mutex<Option<bool>>,
 }
 
 impl Tray {
@@ -240,7 +251,8 @@ impl Tray {
         let _ = self.items.status.set_text(&view.status_line);
         let _ = self.items.toggle.set_text(&view.toggle_label);
         let _ = self.items.toggle.set_enabled(view.toggle_enabled);
-        let _ = self.icon.set_icon(Some(if view.active { self.closed_eye.clone() } else { self.open_eye.clone() }));
+        self.show_eye(view.active);
+        let _ = self.icon.set_title(if view.active { title_for(status, now_ms()) } else { None });
         let _ = self.icon.set_tooltip(Some(&view.status_line));
         let locked = view.active || matches!(status.get("state").and_then(|v| v.as_str()), Some("restoring") | Some("restore_failed"));
         let options = self.options.lock().unwrap().clone();
@@ -256,7 +268,29 @@ impl Tray {
 
     fn refresh(&self) { let status = self.backend.status(); self.apply(&status); }
 
+    /// The eye closes or opens through the four frames, ~70 ms each, like a lid.
+    fn show_eye(&self, closed: bool) {
+        let mut shown = self.shown_closed.lock().unwrap();
+        if *shown == Some(closed) { return; }
+        let first = shown.is_none();
+        *shown = Some(closed);
+        drop(shown);
+        let order: [usize; 4] = if closed { [0, 1, 2, 3] } else { [3, 2, 1, 0] };
+        if first {
+            let _ = self.icon.set_icon(Some(self.frames[order[3]].clone()));
+            let _ = self.icon.set_icon_as_template(true);
+            return;
+        }
+        for (step, index) in order.iter().enumerate() {
+            if step > 0 { thread::sleep(Duration::from_millis(70)); }
+            let _ = self.icon.set_icon(Some(self.frames[*index].clone()));
+            let _ = self.icon.set_icon_as_template(true);
+        }
+    }
+
     fn toggle(&self, app: &AppHandle) {
+        let _ = self.items.toggle.set_enabled(false);
+        let _ = self.items.status.set_text("Lid closed: changing…");
         let status = self.backend.status();
         let active = matches!(status.get("state").and_then(|v| v.as_str()), Some("active") | Some("restoring") | Some("restore_failed"));
         let result = if active {
@@ -327,8 +361,14 @@ pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), Stri
         &open, &settings, &PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?, &quit,
     ]).map_err(|e| e.to_string())?;
 
-    let open_eye = Image::from_bytes(include_bytes!("../icons/tray-eye-open.png")).map_err(|e| e.to_string())?.to_owned();
-    let closed_eye = Image::from_bytes(include_bytes!("../icons/tray-eye-closed.png")).map_err(|e| e.to_string())?.to_owned();
+    let image = |bytes: &'static [u8]| Image::from_bytes(bytes).map(|i| i.to_owned()).map_err(|e| e.to_string());
+    let frames = [
+        image(include_bytes!("../icons/tray-eye-open.png"))?,
+        image(include_bytes!("../icons/tray-eye-lid1.png"))?,
+        image(include_bytes!("../icons/tray-eye-lid2.png"))?,
+        image(include_bytes!("../icons/tray-eye-closed.png"))?,
+    ];
+    let open_eye = frames[0].clone();
     log(&data_dir, "install: menu and images ready");
     // Menu bar managers such as Hidden Bar tuck new items into their hidden
     // area; the item is still there and can be dragged out with the Command key.
@@ -343,26 +383,36 @@ pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), Stri
 
     let tray = Arc::new(Tray {
         backend, icon, items: Items { status, toggle, durations, battery, low_power },
-        options: Mutex::new(options), open_eye, closed_eye,
+        options: Mutex::new(options), frames, shown_closed: Mutex::new(None),
     });
     let handler = tray.clone();
     app.on_menu_event(move |app, event| {
-        let id = event.id().as_ref();
-        match id {
-            "lid-toggle" => handler.toggle(app),
-            "lid-battery" => { let next = handler.items.battery.is_checked().unwrap_or(false); handler.update_options(|o| o.allow_battery = next) }
-            "lid-low-power" => { let next = handler.items.low_power.is_checked().unwrap_or(true); handler.update_options(|o| o.lid_low_power = next) }
+        let id = event.id().as_ref().to_string();
+        match id.as_str() {
             "lid-open" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); } }
             "lid-quit" => app.exit(0),
             "lid-settings" => {
                 if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); }
                 let _ = app.emit("ive://open-panel", "mac-power");
             }
-            other => {
-                if let Some(seconds) = other.strip_prefix("lid-duration-").and_then(|s| s.parse::<u64>().ok()) {
-                    handler.update_options(|o| o.duration_seconds = seconds);
-                }
+            other if other == "lid-toggle" || other == "lid-battery" || other == "lid-low-power" || other.starts_with("lid-duration-") => {
+                // Backend calls can take a while (turning on registers and asks
+                // the helper); never block the main thread, so the menu bar keeps
+                // drawing the eye animation.
+                let handler = handler.clone();
+                let app = app.clone();
+                thread::spawn(move || match id.as_str() {
+                    "lid-toggle" => handler.toggle(&app),
+                    "lid-battery" => { let next = handler.items.battery.is_checked().unwrap_or(false); handler.update_options(|o| o.allow_battery = next) }
+                    "lid-low-power" => { let next = handler.items.low_power.is_checked().unwrap_or(true); handler.update_options(|o| o.lid_low_power = next) }
+                    other => {
+                        if let Some(seconds) = other.strip_prefix("lid-duration-").and_then(|s| s.parse::<u64>().ok()) {
+                            handler.update_options(|o| o.duration_seconds = seconds);
+                        }
+                    }
+                });
             }
+            _ => {}
         }
     });
     // The backend may still be starting: poll quickly until it answers, then every 20 s.
@@ -436,6 +486,16 @@ mod tests {
         let (status, body) = parse_response(b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n\r\n{\"state\":\"ready\"}").unwrap();
         assert_eq!((status, body.as_str()), (200, "{\"state\":\"ready\"}"));
         assert!(parse_response(b"garbage").is_err());
+    }
+
+    #[test]
+    fn menu_bar_title_is_compact() {
+        let now = parse_rfc3339_ms("2026-11-07T19:30:30Z").unwrap();
+        let at = |end: &str| title_for(&serde_json::json!({ "expires_at": end }), now);
+        assert_eq!(at("2026-11-07T21:00:00+00:00").as_deref(), Some("1h 29m"));
+        assert_eq!(at("2026-11-07T19:42:31Z").as_deref(), Some("12m"));
+        assert_eq!(at("2026-11-07T19:30:50Z").as_deref(), Some("<1m"));
+        assert_eq!(title_for(&serde_json::json!({}), now), None);
     }
 
     #[test]

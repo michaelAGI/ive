@@ -108,7 +108,8 @@ test('dragging the right edge resizes the sidebar, keeps the width across reload
     await page.mouse.down()
     await page.mouse.move(x + 600, y, { steps: 3 })
     await untilWidth(sidebar, 440, 'the sidebar stops at 440px')
-    await page.mouse.move(x - 300, y, { steps: 3 })
+    // Just past the minimum the edge holds at 200px; further left would close it.
+    await page.mouse.move(x - 100, y, { steps: 3 })
     await untilWidth(sidebar, 200, 'the sidebar stops at 200px')
     await page.mouse.move(x + 80, y, { steps: 2 })
     await untilWidth(sidebar, 320, 'back at 320px before release')
@@ -175,6 +176,49 @@ test('the phone layout has no resize handle', async () => {
     await drawer.waitFor({ state: 'visible' })
     assert.equal(await drawer.getByRole('separator').count(), 0, 'the drawer sidebar is full width and not resizable')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.context.close() }
+})
+
+test('dragging the edge far to the left closes the sidebar; the left window edge pulls it back at its width', async () => {
+  const f = await fixture({ storage: { [KEY]: '300' } })
+  try {
+    const { page } = f
+    const sidebar = page.locator('#ive-project-sidebar')
+    const handle = sidebar.getByRole('separator', { name: 'Resize sidebar', exact: true })
+    await handle.waitFor({ state: 'visible' })
+    await untilWidth(sidebar, 300, 'the stored width applies')
+    const hit = await handle.boundingBox()
+    const x = hit.x + hit.width / 2, y = hit.y + hit.height / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x - 120, y, { steps: 3 })
+    await untilWidth(sidebar, 200, 'first the edge holds at the minimum')
+    await page.mouse.move(x - 260, y, { steps: 4 })
+    await page.waitForFunction(() => document.body.classList.contains('ive-sidebar-collapsing'))
+    // Change of mind: back above the threshold reopens the preview.
+    await page.mouse.move(x - 60, y, { steps: 3 })
+    await page.waitForFunction(() => !document.body.classList.contains('ive-sidebar-collapsing'))
+    await page.mouse.move(x - 280, y, { steps: 4 })
+    await page.waitForFunction(() => document.body.classList.contains('ive-sidebar-collapsing'))
+    await page.mouse.up()
+    await sidebar.waitFor({ state: 'detached' })
+    assert.equal(await page.evaluate(() => localStorage.getItem('ive.sidebar-visible')), 'false', 'the hidden sidebar is remembered')
+    assert.equal(await stored(page), '300', 'closing keeps the width for next time')
+    assert.ok((await page.locator('main.x-app-main').boundingBox()).x <= 1, 'the main area takes the full width')
+    assert.equal(await page.getByRole('button', { name: /Show sidebar/ }).count() > 0, true, 'the header offers Show sidebar')
+
+    const edge = page.locator('.ive-sidebar-edge')
+    await edge.waitFor()
+    const e = await edge.boundingBox()
+    await page.mouse.move(e.x + 2, e.y + 300)
+    await page.mouse.down()
+    await page.mouse.move(e.x + 80, e.y + 300, { steps: 5 })
+    await page.mouse.up()
+    await sidebar.waitFor({ state: 'visible' })
+    await untilWidth(sidebar, 300, 'it comes back at the width it had')
+    assert.equal(await page.locator('.ive-sidebar-edge').count(), 0, 'the edge handle leaves with the sidebar shown')
+    assert.equal(await page.evaluate(() => localStorage.getItem('ive.sidebar-visible')), 'true')
     assert.deepEqual(f.errors, [])
   } finally { await f.context.close() }
 })

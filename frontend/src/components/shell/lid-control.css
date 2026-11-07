@@ -53,17 +53,18 @@
 /* The animated eye: the lid slides down to close, the outline swaps to the
    closed curve with lashes, a blink now and then while the mode runs. */
 .ive-eyelid { display: block; overflow: visible; }
-.ive-eyelid-lid { transform: translateY(-24px); transition: transform .34s var(--x-ease-out, cubic-bezier(.2,.8,.2,1)); }
+.ive-eyelid-lid { transform: translateY(-24px); transition: transform .34s var(--x-ease-out, cubic-bezier(.2,.8,.2,1)), opacity .16s ease; }
 .ive-eyelid-iris, .ive-eyelid-glint { transition: opacity .2s ease; }
 .ive-eyelid-outline { transition: opacity .2s ease; }
 .ive-eyelid-closed { opacity: 0; transition: opacity .2s ease .18s; }
-.ive-eyelid.is-closed .ive-eyelid-lid { transform: translateY(0); }
-.ive-eyelid.is-closed .ive-eyelid-iris, .ive-eyelid.is-closed .ive-eyelid-glint, .ive-eyelid.is-closed .ive-eyelid-outline { opacity: 0; transition-delay: .16s; }
-.ive-eyelid.is-closed .ive-eyelid-closed { opacity: 1; }
-.ive-eyelid.is-blinking:not(.is-closed) .ive-eyelid-lid { animation: ive-eyelid-blink 6s ease-in-out infinite; }
+/* The dark lid slides down over the iris, then gives way to the closed eye with lashes. */
+.ive-eyelid.is-closed .ive-eyelid-lid { transform: translateY(0); opacity: 0; transition: transform .3s cubic-bezier(.4,0,.6,1), opacity .14s ease .3s; }
+.ive-eyelid.is-closed .ive-eyelid-iris, .ive-eyelid.is-closed .ive-eyelid-glint, .ive-eyelid.is-closed .ive-eyelid-outline { opacity: 0; transition-duration: .12s; transition-delay: .27s; }
+.ive-eyelid.is-closed .ive-eyelid-closed { opacity: 1; transition-duration: .14s; transition-delay: .28s; }
+.ive-eyelid.is-blinking:not(.is-closed) .ive-eyelid-lid { animation: ive-eyelid-blink 9s ease-in-out infinite; }
 @keyframes ive-eyelid-blink {
-  0%, 92%, 100% { transform: translateY(-24px); }
-  95%, 97% { transform: translateY(-2px); }
+  0%, 95%, 100% { transform: translateY(-24px); }
+  96.5%, 97.5% { transform: translateY(-2px); }
 }
 .ive-lid-btn .ive-eyelid { color: var(--x-ink); }
 .ive-lid-btn.is-on .ive-eyelid { color: var(--x-accent); }

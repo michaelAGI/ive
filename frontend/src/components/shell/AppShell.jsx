@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import useStore from '../../state/store'
+import { requestTerminalRefit, slideSidebar } from '../../lib/sidebarMotion'
 import MobileDrawer from '../layout/MobileDrawer'
 import TerminalKeepAlive from './TerminalKeepAlive'
 import TerminalTabs from './TerminalTabs'
@@ -57,6 +59,63 @@ function useVisualViewport(isMobile) {
   return { vvHeight, vvTop, keyboardOpen: isMobile && keyboardOpen }
 }
 
+// Keeps the sidebar mounted while it slides out, and slides it in when it
+// comes back. The first paint never animates. A sidebar the drag handle has
+// already slid out (data-collapsed) unmounts at once.
+function AnimatedSidebar({ visible, children }) {
+  const host = useRef(null)
+  const [phase, setPhase] = useState(visible ? 'open' : 'hidden')
+  useLayoutEffect(() => {
+    if (visible && (phase === 'hidden' || phase === 'closing')) setPhase('opening')
+    else if (!visible && (phase === 'open' || phase === 'opening')) setPhase('closing')
+  }, [visible, phase])
+  useLayoutEffect(() => {
+    const aside = host.current?.firstElementChild
+    if (phase !== 'opening' && phase !== 'closing') return undefined
+    const opening = phase === 'opening'
+    const draggedShut = aside?.dataset.collapsedByDrag === '1'
+    if (aside) delete aside.dataset.collapsedByDrag
+    if (!opening && (!aside || draggedShut)) { setPhase('hidden'); requestTerminalRefit(); return undefined }
+    const slide = slideSidebar(aside, { hidden: !opening, duration: opening ? 240 : 200 })
+    const done = () => {
+      setPhase((current) => (current === phase ? (opening ? 'open' : 'hidden') : current))
+      if (opening && aside) { slide?.cancel(); aside.style.removeProperty('margin-left') }
+      requestTerminalRefit()
+    }
+    if (!slide) { done(); return undefined }
+    slide.finished.then(done, () => {})
+    return () => slide.cancel()
+  }, [phase])
+  if (phase === 'hidden') return null
+  return <div ref={host} className="contents" data-sidebar-phase={phase}>{children}</div>
+}
+
+// With the sidebar hidden, the left window edge pulls it back out.
+function SidebarEdge() {
+  const start = useRef(null)
+  const show = () => useStore.setState({ sidebarVisible: true })
+  return (
+    <div
+      className="ive-sidebar-edge"
+      aria-hidden="true"
+      title="Drag to show the sidebar"
+      onPointerDown={(event) => {
+        if (event.button !== 0) return
+        start.current = { id: event.pointerId, x: event.clientX }
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* moves still arrive over the edge */ }
+      }}
+      onPointerMove={(event) => {
+        const s = start.current
+        if (!s || s.id !== event.pointerId) return
+        if (event.clientX - s.x > 24) { start.current = null; show() }
+      }}
+      onPointerUp={() => { start.current = null }}
+      onPointerCancel={() => { start.current = null }}
+      onDoubleClick={show}
+    />
+  )
+}
+
 export default function AppShell({
   isMobile = false, sidebarVisible = true, mobileDrawerOpen = false, onMobileDrawerClose,
   mobileView, phoneLevel,
@@ -86,8 +145,9 @@ export default function AppShell({
       }}
     >
       {prelude}
-      <div className="flex flex-1 min-h-0">
-        {!isMobile && sidebarVisible && sidebar}
+      <div className="relative flex flex-1 min-h-0">
+        {!isMobile && <AnimatedSidebar visible={sidebarVisible}>{sidebar}</AnimatedSidebar>}
+        {!isMobile && !sidebarVisible && <SidebarEdge />}
         {isMobile && (
           <MobileDrawer open={mobileDrawerOpen} onClose={onMobileDrawerClose}>
             {sidebar}

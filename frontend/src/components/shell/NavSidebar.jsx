@@ -3,6 +3,7 @@ import { sessionNeedsAttention } from '../../lib/sessionAttention'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Command, Plus, SquarePen, Search, X, House, Columns3, GitCompareArrows, BookOpen, Settings, Plug, Smartphone, PanelLeftClose } from 'lucide-react'
 import useStore from '../../state/store'
+import { requestTerminalRefit, slideSidebar } from '../../lib/sidebarMotion'
 import useView from '../../hooks/useView'
 import { selectCounts } from '../../state/selectors'
 import { isSurfaceAvailable } from '../../lib/extensionRegistry'
@@ -68,9 +69,9 @@ function writeSidebarWidth(width) {
   } catch { /* privacy mode */ }
 }
 
-function requestTerminalRefit() {
-  for (const delay of [0, 150, 350]) setTimeout(() => window.dispatchEvent(new Event('cc-terminal-refit')), delay)
-}
+// Dragging the edge this far below the minimum width closes the sidebar, the
+// way a Finder or Mail sidebar snaps shut; dragging back out reopens it.
+const COLLAPSE_AT = SIDEBAR_WIDTH.min - 72
 
 const RESIZE_KEYS = { ArrowLeft: -SIDEBAR_WIDTH.step, ArrowRight: SIDEBAR_WIDTH.step }
 
@@ -101,10 +102,30 @@ function SidebarResizeHandle() {
     const d = drag.current
     if (!d || event.pointerId !== d.pointerId) return
     drag.current = null
-    document.body.classList.remove('ive-sidebar-resizing')
+    document.body.classList.remove('ive-sidebar-resizing', 'ive-sidebar-collapsing')
     setDragging(false)
     try { if (event.currentTarget.hasPointerCapture(d.pointerId)) event.currentTarget.releasePointerCapture(d.pointerId) } catch { /* already released */ }
+    if (d.collapsed) {
+      // Already slid out: mark it so the shell unmounts it without a second
+      // animation, keep the stored width for the next time it opens.
+      const aside = handleRef.current?.closest('.x-sidebar')
+      if (aside) aside.dataset.collapsedByDrag = '1'
+      useStore.setState({ sidebarVisible: false })
+      requestTerminalRefit()
+      return
+    }
+    d.slide?.cancel()
+    handleRef.current?.closest('.x-sidebar')?.style.removeProperty('margin-left')
     commit(d.width)
+  }
+
+  const preview = (d, collapsed) => {
+    d.collapsed = collapsed
+    d.slide?.cancel()
+    const aside = handleRef.current?.closest('.x-sidebar')
+    if (!collapsed) aside?.style.removeProperty('margin-left')
+    d.slide = slideSidebar(aside, { hidden: collapsed, duration: 180 })
+    document.body.classList.toggle('ive-sidebar-collapsing', collapsed)
   }
 
   return (
@@ -113,6 +134,7 @@ function SidebarResizeHandle() {
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize sidebar"
+      title="Drag to resize. Drag to the left to close the sidebar. Double-click resets the width."
       aria-controls="ive-project-sidebar"
       aria-valuemin={SIDEBAR_WIDTH.min}
       aria-valuemax={SIDEBAR_WIDTH.max}
@@ -122,7 +144,7 @@ function SidebarResizeHandle() {
       className={`ive-sidebar-resize${dragging ? ' is-dragging' : ''}`}
       onPointerDown={(event) => {
         if (event.button !== 0 || drag.current) return
-        drag.current = { pointerId: event.pointerId, x: event.clientX, start: width, width }
+        drag.current = { pointerId: event.pointerId, x: event.clientX, start: width, width, collapsed: false, slide: null }
         try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* moves still arrive while over the handle */ }
         document.body.classList.add('ive-sidebar-resizing')
         setDragging(true)
@@ -130,7 +152,10 @@ function SidebarResizeHandle() {
       onPointerMove={(event) => {
         const d = drag.current
         if (!d || event.pointerId !== d.pointerId) return
-        const next = clampSidebarWidth(d.start + event.clientX - d.x)
+        const raw = d.start + event.clientX - d.x
+        if (raw < COLLAPSE_AT) { if (!d.collapsed) preview(d, true); return }
+        if (d.collapsed) preview(d, false)
+        const next = clampSidebarWidth(raw)
         if (next === d.width) return
         d.width = next
         apply(next)
