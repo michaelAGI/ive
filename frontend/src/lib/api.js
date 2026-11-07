@@ -1,4 +1,5 @@
 import { apiBase } from './platform';
+import { beginSessionSnapshot, tagSessionSnapshot } from './sessionSnapshots';
 export class ApiError extends Error {
   constructor(message, {
     status,
@@ -108,7 +109,10 @@ export const api = {
       file
     })
   }),
-  getSessions: workspaceId => request(workspaceId ? `/sessions?workspace=${workspaceId}` : '/sessions'),
+  getSessions: async (workspaceId, opts = {}) => {
+    const stamp = beginSessionSnapshot()
+    return tagSessionSnapshot(await request(workspaceId ? `/sessions?workspace=${workspaceId}` : '/sessions', opts), stamp)
+  },
   getSessionCapabilities: id => request(`/sessions/${encodeURIComponent(id)}/capabilities`),
   getSessionRuntimeModel: id => request(`/sessions/${encodeURIComponent(id)}/runtime-model`),
   createSession: (workspaceId, opts = {}) => request('/sessions', {

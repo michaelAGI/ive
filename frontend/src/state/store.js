@@ -11,6 +11,7 @@ import { readSidebarVisibility, persistSidebarVisibility } from '../lib/sidebarP
 import { normalizeNeedsYouMode } from '../lib/needsYou'
 import { isHelperSession } from '../lib/visibleSessions'
 import { beginReplyWait, hasNewReply } from '../lib/replyPending'
+import { touchSession, staleSessionSnapshot, acceptSessionSnapshot } from '../lib/sessionSnapshots'
 
 const OVERVIEW_MODE_KEY = 'ive.overview-mode'
 const BOARD_FILTERS_KEY = 'ive.board-filters'
@@ -628,6 +629,7 @@ const useStore = create((set, get) => ({
   setSessionAttention: (id, attention) => set((s) => {
     const session = s.sessions[id]
     if (!session) return {}
+    touchSession(id)
     const wasWaiting = ['waiting', 'prompting', 'input_needed', 'needs_input'].includes(session.status)
     if (!attention && !session.attention && !session.resolvedAttentionContext && !wasWaiting && !s.planWaiting[id]) {
       attentionTouches.set(id, (attentionTouches.get(id) || 0) + 1)
@@ -959,6 +961,8 @@ const useStore = create((set, get) => ({
       const workStartedAt = { ...s.sessionWorkStartedAt }
       const planWaiting = { ...s.planWaiting }
       for (const sess of sessions) {
+        if (staleSessionSnapshot(sess)) continue
+        acceptSessionSnapshot(sess)
         const existing = map[sess.id] || {}
         map[sess.id] = {
           ...existing,
@@ -1041,6 +1045,7 @@ const useStore = create((set, get) => ({
 
   removeSession: (id) =>
     set((s) => {
+      touchSession(id)
       const { [id]: _, ...rest } = s.sessions
       const { [id]: _pty, ...ptyRest } = s.sessionPtyStartedAt
       const { [id]: _work, ...workRest } = s.sessionWorkStartedAt
@@ -1145,7 +1150,11 @@ const useStore = create((set, get) => ({
   resyncSessions: (rows, { knownSessionIdsAtRequest = null } = {}) =>
     set((s) => {
       if (!Array.isArray(rows)) return {}
-      const validIds = new Set(rows.filter((row) => row?.id).map((row) => row.id))
+      const validIds = new Set(rows.filter((row) => row?.id && (!staleSessionSnapshot(row) || s.sessions[row.id])).map((row) => row.id))
+      for (const id of Object.keys(s.sessions)) {
+        if (staleSessionSnapshot(rows, id)) validIds.add(id)
+        else if (!validIds.has(id)) acceptSessionSnapshot(rows, id)
+      }
       // A session created while this GET was in flight is newer than its
       // snapshot. Keep it until a later authoritative response can assess it.
       if (Array.isArray(knownSessionIdsAtRequest)) {
@@ -1154,6 +1163,7 @@ const useStore = create((set, get) => ({
       }
       const isAvailable = (id) => validIds.has(id)
       const references = reconcileSessionReferences(s, isAvailable)
+      const planWaiting = { ...references.planWaiting }
       const referencedIds = new Set([
         ...references.openTabs,
         references.activeSessionId,
@@ -1172,9 +1182,11 @@ const useStore = create((set, get) => ({
       const sessionLastTool = { ...s.sessionLastTool }
       for (const id of Object.keys(sessionLastTool)) if (!isAvailable(id)) delete sessionLastTool[id]
       for (const row of rows) {
+        if (staleSessionSnapshot(row)) continue
         // Restore valid cached tabs/notices before workspace lists arrive,
         // without opening every archived/background session in the snapshot.
         if (!row?.id || (!sessions[row.id] && !referencedIds.has(row.id))) continue
+        acceptSessionSnapshot(row)
         // What the agent was doing survives a reload via `last_activity`.
         if (row.last_activity?.tool_name && !sessionLastTool[row.id]) {
           const { tool_name, summary, at } = row.last_activity
@@ -1193,6 +1205,7 @@ const useStore = create((set, get) => ({
         const status = row.status || 'idle'
         const agentState = row.agentState || (WORKING.has(status) ? 'working' : status)
         sessions[row.id] = { ...existing, ...row, status, agentState, pty_alive: !!row.pty_alive }
+        if (Object.hasOwn(row, 'attention')) planWaiting[row.id] = row.attention?.menu?.kind === 'plan'
         if (row.pty_alive) {
           if (!ptyStartedAt[row.id]) ptyStartedAt[row.id] = Date.now()
         } else {
@@ -1205,7 +1218,7 @@ const useStore = create((set, get) => ({
           delete workStartedAt[row.id]
         }
       }
-      return { ...references, sessionSnapshotIds: [...validIds], sessions, sessionStarted, sessionPtyStartedAt: ptyStartedAt, sessionWorkStartedAt: workStartedAt, restartInterrupted, sessionLastTool }
+      return { ...references, planWaiting, sessionSnapshotIds: [...validIds], sessions, sessionStarted, sessionPtyStartedAt: ptyStartedAt, sessionWorkStartedAt: workStartedAt, restartInterrupted, sessionLastTool }
     }),
 
   clearSessionStarted: () =>
@@ -1220,6 +1233,7 @@ const useStore = create((set, get) => ({
   setSessionStatus: (id, status, extra = {}) =>
     set((s) => {
       if (!s.sessions[id]) return {}
+      touchSession(id)
       const normalized = String(status || '').toLowerCase()
       const clearsWorking = normalized && normalized !== 'running' && normalized !== 'working' && normalized !== 'executing'
       const priorAgentState = String(s.sessions[id].agentState || '').toLowerCase()
@@ -1279,6 +1293,7 @@ const useStore = create((set, get) => ({
   setSessionAgentState: (id, agentState) =>
     set((s) => {
       if (!s.sessions[id]) return {}
+      touchSession(id)
       const normalized = String(agentState || '').toLowerCase()
       const nextWorkStartedAt = { ...s.sessionWorkStartedAt }
       if (normalized === 'working' || normalized === 'executing' || normalized === 'running') {
@@ -1340,6 +1355,7 @@ const useStore = create((set, get) => ({
   // ─── WebSocket ──────────────────────────────
   ws: null,
   connected: false,
+  sessionStateSynced: false,
 
   setWs: (ws) => set({ ws }),
   setConnected: (connected) => set({ connected }),

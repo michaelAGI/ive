@@ -3009,6 +3009,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const showSessionRecovery = !!deliveryIssue || (!chatActivity && ['error', 'auth', 'offline'].includes(sessionDisplayMeta.tone))
   const canSendWhileBusy = cliType === 'antigravity'
   const wsConnected = useStore((store) => store.connected)
+  const sessionStateSynced = useStore((store) => store.sessionStateSynced)
   // Nothing typed here may vanish: before the session row is loaded or while
   // the socket reconnects a send could not be delivered. Typing stays
   // possible (the draft is kept), sending waits.
@@ -3020,7 +3021,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   // message for this session (lib/composerQueue.js, shown by ComposerQueue).
   const queueEnabled = queueSupported(session)
   const composerQueue = useComposerQueue(sessionId)
-  const willQueue = queueEnabled && (isAgentBusy || isMessagePending || !wsConnected ||
+  const willQueue = queueEnabled && (isAgentBusy || isMessagePending || !wsConnected || sessionStateSynced === false ||
     composerQueue.items.some((item) => ['queued', 'sending', 'failed'].includes(item.state)))
   const agentLabel = cliType === 'codex' ? 'Codex' : 'Claude'
   const composerDisabled = sessionStatus === 'exited' || (!queueEnabled && (isMessagePending || (isAgentBusy && !canSendWhileBusy)))

@@ -45,7 +45,7 @@ class InterruptIdleTests(unittest.IsolatedAsyncioTestCase):
     async def test_mark_interrupted_broadcasts_idle_once(self):
         self.assertTrue(await hooks.mark_interrupted("int-test", "interrupt_input"))
         self.assertEqual(hooks.get_session_logical_status("int-test", True, "running"), "idle")
-        self.assertEqual(self.states(), [{"type": "session_state", "session_id": "int-test", "state": "idle", "source": "interrupt_input"}])
+        self.assertEqual(self.states(), [{"type": "session_state", "session_id": "int-test", "state": "idle", "source": "interrupt_input", "interrupted": True}])
         self.assertFalse(await hooks.mark_interrupted("int-test"), "already idle: no second broadcast")
 
     async def test_server_checks_after_esc_input(self):

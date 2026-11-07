@@ -76,18 +76,33 @@ export default function useWebSocket() {
     let cancelled = false
     let currentWs = null
     let reconnectTimer = null
+    let resyncTimer = null
+    let resyncController = null
     let hasConnected = false
     let resyncSeq = 0
 
     async function resyncSessionsFromBackend() {
       const seq = ++resyncSeq
+      const socket = currentWs
       const knownSessionIdsAtRequest = Object.keys(useStore.getState().sessions)
+      const controller = resyncController = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 10000)
       try {
-        const rows = await api.getSessions()
-        if (cancelled || seq !== resyncSeq || !Array.isArray(rows)) return
+        const rows = await api.getSessions(undefined, { signal: controller.signal })
+        if (cancelled || seq !== resyncSeq || currentWs !== socket || socket.readyState !== WebSocket.OPEN) return
+        if (!Array.isArray(rows)) throw new Error('Invalid session snapshot')
         useStore.getState().resyncSessions(rows, { knownSessionIdsAtRequest })
-      } catch {
-        // The next reconnect tries again; live events keep flowing meanwhile.
+        useStore.setState({ sessionStateSynced: true })
+      } catch (error) {
+        console.warn('Session state synchronization failed; retrying.', error)
+        // A connected socket alone does not prove the cached idle status is
+        // current. Retry the read; queued input waits for a valid snapshot.
+        if (!cancelled && currentWs === socket && socket.readyState === WebSocket.OPEN) {
+          resyncTimer = setTimeout(() => { resyncTimer = null; resyncSessionsFromBackend() }, 2000)
+        }
+      } finally {
+        clearTimeout(timeout)
+        if (resyncController === controller) resyncController = null
       }
     }
 
@@ -113,9 +128,10 @@ export default function useWebSocket() {
       currentWs = ws
 
       ws.onopen = () => {
-        if (cancelled) { ws.close(); return }
+        if (cancelled || currentWs !== ws) { ws.close(); return }
         const isReconnect = hasConnected
         hasConnected = true
+        useStore.setState({ sessionStateSynced: false })
         useStore.getState().setWs(ws)
         useStore.getState().setConnected(true)
         if (reconnectTimer) {
@@ -141,7 +157,11 @@ export default function useWebSocket() {
       }
 
       ws.onclose = () => {
-        if (cancelled) return
+        if (cancelled || currentWs !== ws) return
+        resyncSeq++
+        resyncController?.abort()
+        if (resyncTimer) { clearTimeout(resyncTimer); resyncTimer = null }
+        useStore.setState({ sessionStateSynced: false })
         useStore.getState().setWs(null)
         useStore.getState().setConnected(false)
         useStore.setState({ peers: {} })
@@ -151,7 +171,7 @@ export default function useWebSocket() {
       ws.onerror = () => ws.close()
 
       ws.onmessage = (e) => {
-        if (cancelled) return
+        if (cancelled || currentWs !== ws) return
         let data
         try {
           data = JSON.parse(e.data)
@@ -688,6 +708,10 @@ export default function useWebSocket() {
             // lifecycle hook from that dying process must not resurrect the
             // session as Working/Idle over the blocking Auth state.
             if (store.sessions[sid]?.status === 'auth_failed') break
+            if (data.interrupted) {
+              store.clearReplyWait(sid)
+              window.dispatchEvent(new CustomEvent('cc-session-interrupted', { detail: { sessionId: sid } }))
+            }
             handleAttentionEvent(store, sid, data)
             store.setSessionStarted?.(sid, true)
             if (typeof store.setSessionAgentState === 'function') {
@@ -1003,6 +1027,8 @@ export default function useWebSocket() {
 
     return () => {
       cancelled = true
+      resyncController?.abort()
+      if (resyncTimer) clearTimeout(resyncTimer)
       if (reconnectTimer) {
         clearTimeout(reconnectTimer)
         reconnectTimer = null
