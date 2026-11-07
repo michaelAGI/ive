@@ -3470,8 +3470,12 @@ async def _codex_turn_end_check(session_id: str) -> None:
         from session_attention import get_attention
         if get_attention(session_id):
             return
-        screen = capture_proc.get_screen(session_id) or capture_proc.get_buffer(session_id, 80)
+        # Only the current emulated screen is evidence: raw output can still
+        # hold an old prompt in scrollback while a tool or approval is live.
+        screen = capture_proc.get_screen(session_id) or ""
         if not _codex_screen_shows_turn_end(screen):
+            return
+        if _session_permission_menu(screen) or _is_incomplete_permission_screen(screen):
             return
         from hooks import mark_turn_ended_from_screen
         if await mark_turn_ended_from_screen(session_id):
