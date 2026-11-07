@@ -18,7 +18,11 @@ from typing import Any, Mapping
 
 logger = logging.getLogger(__name__)
 
-CANONICAL_OPERATIONS = frozenset({"read", "mutate", "execute", "delegate"})
+# "store" writes to IVE's own records (memory notes, board tasks, canvas
+# annotations) through IVE's MCP servers: no file on disk, no shell. Guards
+# that protect files or commands (plan mode, file locks, confirmation prompts)
+# treat it like a read.
+CANONICAL_OPERATIONS = frozenset({"read", "mutate", "execute", "delegate", "store"})
 
 _COMMAND_KEYS = (
     "command", "cmd", "shell_command", "command_line", "script", "script_body",
@@ -143,7 +147,20 @@ def _declared_semantic(
     for native_name, semantic in (tool_semantics or {}).items():
         if str(native_name).strip().lower() == normalized and isinstance(semantic, Mapping):
             return semantic
-    return None
+    return _ive_mcp_semantic(normalized)
+
+
+def _ive_mcp_semantic(normalized: str) -> Mapping[str, Any] | None:
+    """IVE's own MCP tools, as the CLIs name them: ``mcp__<server>__<tool>``
+    (Claude) or the bare tool name (Codex/Gemini). Their inputs often carry
+    file paths inside free text (a note that mentions ``labels.py``), which
+    the shape heuristics would read as a file write and fail closed."""
+    if normalized.startswith("mcp__"):
+        parts = normalized.split("__", 2)
+        if len(parts) != 3 or parts[1] not in IVE_MCP_SERVERS:
+            return None
+        return IVE_MCP_TOOL_SEMANTICS.get(parts[2])
+    return IVE_MCP_TOOL_SEMANTICS.get(normalized)
 
 
 def _audit_unknown_shape(tool_name: str, classification: ToolClassification) -> None:
@@ -278,6 +295,40 @@ def classify_tool_call(
 def semantic(operation: str, *target_keys: str) -> dict[str, Any]:
     """Small helper for readable built-in CLI profile declarations."""
     return {"operation": operation, "target_keys": list(target_keys)}
+
+
+# IVE's bundled MCP servers (backend/mcp_server.py, backend/documentor_mcp_server.py).
+IVE_MCP_SERVERS = frozenset({"worker-board", "documentor", "ive", "builtin-worker-board", "builtin-documentor"})
+
+IVE_MCP_TOOL_SEMANTICS: dict[str, dict[str, Any]] = {
+    # Memory: notes live in IVE's database, never in the project files.
+    "save_memory": semantic("store", "name"),
+    "search_memory": semantic("read", "query"),
+    "recall_memory": semantic("read", "name", "id"),
+    # Board, digests and canvas: IVE records only.
+    "list_worker_digests": semantic("read", "workspace_id"),
+    "get_session_digest": semantic("read", "session_id"),
+    "list_workflow_runs": semantic("read", "workspace_id"),
+    "canvas_get_context": semantic("read", "canvas_id"),
+    "headsup": semantic("store", "message"),
+    "record_run": semantic("store", "run_id"),
+    "run_sweep": semantic("store", "workspace_id"),
+    "tag_session": semantic("store", "session_id"),
+    "queue_task_for_worker": semantic("store", "task_id"),
+    "assign_task_to_worker": semantic("store", "task_id"),
+    "request_capability_handoff": semantic("store", "capability"),
+    "start_task_pipeline": semantic("store", "task_id"),
+    "request_docs_update": semantic("store", "task_id"),
+    "canvas_annotate": semantic("store", "canvas_id"),
+    "canvas_highlight": semantic("store", "canvas_id"),
+    # Documentor records (its file writes stay undeclared and keep the path guard).
+    "get_knowledge_base": semantic("read", "workspace_id"),
+    "get_changes_since": semantic("read", "since"),
+    "get_completed_features": semantic("read", "workspace_id"),
+    "get_doc_tree": semantic("read", "path"),
+    "get_docs_manifest": semantic("read", "path"),
+    "update_docs_manifest": semantic("store", "pages"),
+}
 
 
 COMMON_TOOL_SEMANTICS: dict[str, dict[str, Any]] = {

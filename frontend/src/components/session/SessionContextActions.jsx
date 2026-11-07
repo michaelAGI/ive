@@ -169,7 +169,7 @@ function AddContextPanel({ sessionId, anchor, onClose }) {
       <div className="px-3.5 pt-3 pb-2">
         <div className="text-[13px] font-semibold text-x-ink">Add context</div>
         <p className="mt-0.5 text-[11px] leading-relaxed text-x-muted">Send background, requirements, or guidelines to <strong>{sessionName}</strong> as one message. Other sessions do not receive it.</p>
-        <p className="mt-1 text-[11px] leading-relaxed text-x-muted">For reusable project knowledge, use Know → Context Hub.</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-x-muted">For things every chat should know, save a memory under Knowledge.</p>
       </div>
       <div className="px-3.5">
         {guidelines === null ? (

@@ -3,7 +3,7 @@ import { X, Search, Brain, FileText, BookOpen, Plus, Pencil, Trash2, RefreshCw,
   Check, ChevronDown, Download, AlertTriangle, GitBranch, Database } from 'lucide-react'
 import { api } from '../../lib/api'
 import { isExtensionAvailable, resolveExtensionPanel } from '../../lib/extensionRegistry'
-import { ENTRY_TYPE_META } from '../../lib/memoryEntryTypes'
+import { ENTRY_TYPE_META, ENTRY_TYPE_HINT } from '../../lib/memoryEntryTypes'
 import useStore from '../../state/store'
 import { Button } from '../ui'
 
@@ -23,15 +23,17 @@ export default function MemoryWindow({ onClose, initialTab = 'entries' }) {
   const [tab, setTab] = useState(initialTab) // 'entries' | 'knowledge' | 'search' | 'sync'
 
   useEffect(() => {
-    setTab(initialTab || 'entries')
-  }, [initialTab])
+    // The sidebar opens "Knowledge"; without the Myelin extension that tab
+    // does not exist, so the memories are the first thing people see.
+    setTab(initialTab === 'knowledge' && !myelinAvailable ? 'entries' : (initialTab || 'entries'))
+  }, [initialTab, myelinAvailable])
 
   const tabs = [
     { id: 'entries', label: 'Memories', icon: Brain },
-    { id: 'knowledge', label: 'Knowledge', icon: BookOpen },
-    { id: 'prompt', label: 'Prompt', icon: FileText },
+    ...(myelinAvailable ? [{ id: 'knowledge', label: 'Knowledge', icon: BookOpen }] : []),
+    { id: 'prompt', label: 'What the agent sees', icon: FileText },
     { id: 'search', label: 'Search', icon: Search },
-    { id: 'sync', label: 'Sync', icon: GitBranch },
+    { id: 'sync', label: 'Memory files', icon: GitBranch },
   ]
 
   return (
@@ -43,7 +45,7 @@ export default function MemoryWindow({ onClose, initialTab = 'entries' }) {
             <Database size={15} className="text-x-accent" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-x-ink">Context</h2>
+            <h2 className="text-sm font-semibold text-x-ink">Knowledge</h2>
             <div className="truncate text-[11px] text-x-muted">{workspace?.name || 'No workspace selected'}</div>
           </div>
           <div className="ml-2 flex max-w-[58vw] gap-1 overflow-x-auto rounded-lg border border-x-line bg-x-surface-2 p-1 tab-scroll-hide">
@@ -67,23 +69,37 @@ export default function MemoryWindow({ onClose, initialTab = 'entries' }) {
         </div>
 
         {!workspace ? (
-          <div role="status" className="p-4 text-[12px] text-x-muted">Select or add a workspace in the sidebar to view and save its memories. No global memory is created here.</div>
+          <div role="status" className="p-4 text-[12px] text-x-muted">Pick a project first. Memories belong to a project, so Claude and Codex only see what matters there.</div>
         ) : (
           // A scope change discards editors, previews, and pending results from
           // the previous workspace, including optional extension panels.
           <Fragment key={workspace.id}>
-            {tab === 'entries' && <EntriesTab workspaceId={workspace.id} ws={ws} />}
-            {tab === 'knowledge' && (myelinAvailable
-              ? <KnowledgeInlineTab workspaceId={workspace.id} />
-              : <div role="status" className="p-4 text-[12px] text-x-muted">Workspace knowledge requires the Myelin extension. Ordinary memories and file sync remain available in their tabs.</div>)}
-            {tab === 'prompt' && (myelinAvailable ? <IntelligencePromptTab workspaceId={workspace.id} /> : <PromptTab workspaceId={workspace.id} />)}
-            {tab === 'search' && (myelinAvailable ? <IntelligenceSearchTab workspaceId={workspace.id} onClose={onClose} /> : <SearchTab workspaceId={workspace.id} onClose={onClose} />)}
-            {tab === 'sync' && <MemorySyncTab workspaceId={workspace.id} />}
+            {tab === 'entries' && <>
+              <Lead>What Claude and Codex remember about this project. They read it when a chat starts, can save notes themselves, and you can add or edit notes here.</Lead>
+              <EntriesTab workspaceId={workspace.id} ws={ws} />
+            </>}
+            {tab === 'knowledge' && myelinAvailable && <KnowledgeInlineTab workspaceId={workspace.id} />}
+            {tab === 'prompt' && (myelinAvailable ? <IntelligencePromptTab workspaceId={workspace.id} /> : <>
+              <Lead>The context IVE adds to every new chat in this project: a short index of the memories plus the project's memory files. When the agent needs details, it expands an entry with recall_memory.</Lead>
+              <PromptTab workspaceId={workspace.id} />
+            </>)}
+            {tab === 'search' && (myelinAvailable ? <IntelligenceSearchTab workspaceId={workspace.id} onClose={onClose} /> : <>
+              <Lead>Find a memory of this project by keyword.</Lead>
+              <SearchTab workspaceId={workspace.id} onClose={onClose} />
+            </>)}
+            {tab === 'sync' && <>
+              <Lead>Claude and Codex also keep memory files in the project folder, such as CLAUDE.md and AGENTS.md. Import them here as memories, or write the memories back so every agent sees the same notes.</Lead>
+              <MemorySyncTab workspaceId={workspace.id} />
+            </>}
           </Fragment>
         )}
       </div>
     </div>
   )
+}
+
+function Lead({ children }) {
+  return <p className="px-4 pt-3 pb-1 text-[12px] leading-relaxed text-x-ink-secondary">{children}</p>
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -177,10 +193,9 @@ function EntriesTab({ workspaceId, ws }) {
           <MemoryEntryActions workspaceId={workspaceId} entries={entries} onUpdated={loadEntries} onReport={setActionStatus} />
           <Button type="submit" onClick={() => { if (workspaceId) setEditing('new') }} disabled={!workspaceId}
             className="inline-flex items-center gap-1.5 bg-x-accent px-2.5 py-1.5 text-[11px] font-medium text-x-on-accent transition-colors hover:bg-x-accent-ink active:scale-[.98]">
-            <Plus size={11} />New
+            <Plus size={11} />New memory
           </Button>
         </div>
-        {!myelinAvailable && <p role="status" className="mb-2 text-[11px] text-x-muted">Compaction requires Myelin. Adding, editing, searching, and syncing ordinary memories remain available.</p>}
         {/* Type filter pills */}
         <div className="flex flex-wrap items-center gap-1.5">
           <Button type="submit" onClick={() => setFilterType(null)}
@@ -191,7 +206,7 @@ function EntriesTab({ workspaceId, ws }) {
             const count = entries.filter(e => e.type === type).length
             const Icon = meta.icon
             return (
-              <Button type="submit" key={type} onClick={() => setFilterType(filterType === type ? null : type)}
+              <Button type="submit" key={type} title={ENTRY_TYPE_HINT[type]} onClick={() => setFilterType(filterType === type ? null : type)}
                 className={`inline-flex items-center gap-1 border px-2 py-0.5 text-[11px] font-medium transition-colors ${
                   filterType === type ? `border-x-tint-line ${meta.color} bg-x-tint` : 'border-transparent text-x-muted hover:bg-x-hover hover:text-x-ink-secondary'
                 }`}>
@@ -225,8 +240,7 @@ function EntriesTab({ workspaceId, ws }) {
 
         {!loading && entries.length === 0 && (
           <div className="text-center text-x-faint text-[11px] py-8">
-            No memory entries yet. Click <span className="text-x-accent">+ New</span> to create one,
-            or <span className="text-x-muted">Import</span> from CLI memory files.
+            No memories yet. Tell the agent to remember something, or add a note with <span className="text-x-accent">New memory</span>.
           </div>
         )}
 
@@ -322,17 +336,17 @@ function EntryEditor({ entry, workspaceId, onSaved, onCancel }) {
           <select value={type} onChange={e => setType(e.target.value)}
             className="appearance-none bg-x-surface-2 text-x-ink text-[11px] pl-2.5 pr-6 py-1.5 rounded-md border border-x-line focus:border-x-accent focus:ring-[3px] focus:ring-x-focus outline-none">
             {Object.entries(ENTRY_TYPE_META).map(([t, meta]) => (
-              <option key={t} value={t}>{meta.label}</option>
+              <option key={t} value={t} title={ENTRY_TYPE_HINT[t]}>{meta.label}</option>
             ))}
           </select>
           <ChevronDown size={10} className="absolute right-2 top-1/2 -translate-y-1/2 text-x-faint pointer-events-none" />
         </div>
       </div>
       <input value={description} onChange={e => setDescription(e.target.value)}
-        placeholder="Short description (used for relevance matching)"
+        placeholder="One line the agent sees in its index: what is this note about?"
         className="w-full bg-x-surface-2 text-x-ink text-[11px] px-2.5 py-1.5 rounded-md border border-x-line focus:border-x-accent focus:ring-[3px] focus:ring-x-focus outline-none" />
       <textarea value={content} onChange={e => setContent(e.target.value)}
-        placeholder="Memory content..."
+        placeholder="What should the agent remember?"
         rows={4}
         className="w-full bg-x-surface-2 text-x-ink text-[11px] px-2.5 py-1.5 rounded-md border border-x-line focus:border-x-accent focus:ring-[3px] focus:ring-x-focus outline-none resize-y font-mono" />
       <div className="flex justify-end gap-2">
@@ -392,24 +406,24 @@ function PromptTab({ workspaceId }) {
 
   const prompts = surfaces?.prompts || {}
   const previewOptions = [
-    ['preview', 'Combined'],
-    ['project_memory', 'Project'],
-    ['memory_entries', 'Entries'],
+    ['preview', 'Everything'],
+    ['project_memory', 'Memory files'],
+    ['memory_entries', 'Memories'],
   ]
   const activeText = prompts[activePreview] || ''
   const providerContents = files?.provider_contents || {}
 
   const statRows = surfaces ? [
-    ['Project file', surfaces.workspace_memory?.chars || 0, `${Object.keys(surfaces.workspace_memory?.providers || {}).length} providers`],
-    ['Entries', surfaces.memory_entries?.total || 0, byCountLabel(surfaces.memory_entries?.by_type, 'type')],
+    ['Memory files', surfaces.workspace_memory?.chars || 0, `${Object.keys(surfaces.workspace_memory?.providers || {}).length} files · characters`],
+    ['Memories', surfaces.memory_entries?.total || 0, byCountLabel(surfaces.memory_entries?.by_type, 'type')],
   ] : []
 
   return (
     <div className="flex-1 overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
         <div className="relative min-w-[220px] flex-1">
-          <div className="font-mono text-[11px] uppercase tracking-wide text-x-faint">Context surfaces</div>
-          <div className="font-mono text-[11px] text-x-muted">Prompt budget: {surfaces?.settings?.memory_max_chars || 4000} chars</div>
+          <div className="text-[12px] font-medium text-x-ink">Preview of the start context</div>
+          <div className="text-[11px] text-x-muted">Up to {surfaces?.settings?.memory_max_chars || 4000} characters go into each new chat.</div>
         </div>
         <Button type="submit"
           onClick={load}
@@ -427,7 +441,7 @@ function PromptTab({ workspaceId }) {
           <div className="mb-3 grid gap-2 md:grid-cols-3">
             {statRows.map(([label, count, meta]) => (
               <div key={label} className="rounded-md border border-x-line bg-x-surface p-3">
-                <div className="font-mono text-[11px] uppercase tracking-wide text-x-faint">{label}</div>
+                <div className="text-[11px] text-x-muted">{label}</div>
                 <div className="mt-1 text-lg font-semibold text-x-ink">{count}</div>
                 <div className="mt-0.5 truncate font-mono text-[11px] text-x-muted">{meta || '-'}</div>
               </div>
@@ -478,7 +492,7 @@ function byCountLabel(rows, key) {
   if (!Array.isArray(rows) || !rows.length) return '-'
   return rows
     .slice(0, 3)
-    .map((row) => `${row[key] || 'other'}:${row.n || 0}`)
+    .map((row) => `${ENTRY_TYPE_META[row[key]]?.label || row[key] || 'other'} ${row.n || 0}`)
     .join(' · ')
 }
 
@@ -564,7 +578,7 @@ function MemorySyncTab({ workspaceId }) {
           disabled={importing || syncing}
           className="inline-flex items-center gap-1.5 border border-x-line px-2.5 py-1.5 text-[11px] font-medium text-x-ink-secondary transition-colors hover:border-x-line-strong hover:bg-x-hover hover:text-x-ink disabled:opacity-50"
         >
-          <Download size={11} />{importing ? 'Importing' : 'Import CLI'}
+          <Download size={11} />{importing ? 'Importing' : 'Import from files'}
         </Button>
         <Button type="submit"
           onClick={handleSync}
@@ -601,7 +615,7 @@ function MemorySyncTab({ workspaceId }) {
 
       {resolving && (
         <div className="mb-3 space-y-2 rounded-md border border-x-line bg-x-surface-2 p-3">
-          <div className="font-mono text-[11px] uppercase tracking-wide text-x-accent-ink">Resolve conflicts</div>
+          <div className="text-[12px] font-medium text-x-accent-ink">Resolve conflicts</div>
           {Array.isArray(syncResult?.conflicts) && syncResult.conflicts.length > 0 && (
             <div className="space-y-1">
               {syncResult.conflicts.map((hunk) => (
@@ -641,7 +655,7 @@ function MemorySyncTab({ workspaceId }) {
       <div className="grid gap-2 md:grid-cols-2">
         {Object.keys(providers).length === 0 && (
           <div className="rounded-md border border-x-line bg-x-surface p-4 text-center font-mono text-[11px] text-x-faint md:col-span-2">
-            No CLI memory providers reported.
+            No memory files found for this project yet.
           </div>
         )}
         {Object.entries(providers).map(([cli, info]) => (
@@ -655,7 +669,7 @@ function MemorySyncTab({ workspaceId }) {
               }`} />
               <span className="font-mono text-[11px] font-semibold uppercase text-x-ink">{cli}</span>
               <span className="ml-auto font-mono text-[11px] text-x-faint">
-                {info.file_exists ? (info.synced ? 'synced' : 'changed') : 'missing'}
+                {info.file_exists ? (info.synced ? 'up to date' : 'changed') : 'no file'}
               </span>
             </div>
             <div className="truncate font-mono text-[11px] text-x-muted">{info.filename || '-'}</div>
@@ -701,15 +715,14 @@ function SearchTab({ workspaceId, onClose }) {
         <div className="flex items-center gap-2 rounded-md border border-x-line bg-x-surface-2 px-3 py-2 focus-within:border-x-accent focus-within:ring-[3px] focus-within:ring-x-focus">
           <Search size={14} className="text-x-faint" />
           <input ref={inputRef} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={handleKey}
-            placeholder="Search memory entries..."
+            placeholder="Search memories…"
             className="flex-1 bg-transparent font-mono text-[12px] text-x-ink outline-none placeholder:text-x-muted" />
           {loading && <span className="text-[11px] text-x-muted animate-pulse">searching...</span>}
           {results && <span className="text-[11px] text-x-muted">{results.entries.length} results</span>}
         </div>
-        <p role="status" className="mt-2 text-[11px] text-x-muted">Search ordinary memory entries. Additional search providers appear when installed.</p>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {!results && !loading && <div className="py-8 text-center font-mono text-[11px] text-x-faint">Search ordinary memory entries in this workspace.<br />Press Enter to search.</div>}
+        {!results && !loading && <div className="py-8 text-center font-mono text-[11px] text-x-faint">Type a keyword and press Enter.</div>}
         {results && results.entries.length === 0 && <div className="py-8 text-center font-mono text-[11px] text-x-faint">No results for &ldquo;{query}&rdquo;</div>}
         {/* Memory entries */}
         {results?.entries?.length > 0 && (

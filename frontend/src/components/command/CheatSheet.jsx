@@ -15,7 +15,7 @@ const EVERYDAY = [
   { id: 'code-review', icon: GitCompareArrows, label: 'Review changes', how: '“Review” in the sidebar, on the open session', binding: 'codeReview' },
   { id: 'switch-project', icon: FolderOpen, label: 'Switch project', how: 'Click a project in the left list, or search it', binding: 'commandPalette' },
   { id: 'guidelines', icon: BookOpen, label: 'Save reusable instructions', how: 'Guidelines are saved rules. Send selected rules and a note with “context” in a session' },
-  { id: 'memory', icon: BookOpen, label: 'Find project context', how: 'Context Hub stores knowledge. Check what is included in your current task', surface: 'memory' },
+  { id: 'memory', icon: BookOpen, label: 'See what the agent remembers', how: 'Knowledge shows the memories of this project and what every new chat is told', surface: 'memory' },
   { id: 'pipeline-editor', icon: GitBranch, label: 'Explore automated workflows', how: 'Pipelines arrange planning, work and checks. Start a guided task for your first try', surface: 'pipeline-editor' },
   { id: 'toggle-terminal', icon: SquareTerminal, label: 'Show or hide the terminal', how: 'Terminal drawer at the bottom of the session', binding: 'toggleTerminal' },
   { id: 'command-palette', icon: Search, label: 'Find any tool', how: 'The search icon in the header, or ⌘ in the sidebar', binding: 'commandPalette' },

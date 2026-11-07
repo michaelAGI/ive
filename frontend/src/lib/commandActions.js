@@ -37,7 +37,7 @@ export const ACTIONS = [{
   label: 'Knowledge',
   icon: Brain,
   section: 'Navigation',
-  hint: 'Guidelines, memory and project context (Context Hub)',
+  hint: 'Memories, guidelines and project context (Knowledge)',
   keywords: 'memory context hub guidelines docs'
 }, {
   id: 'toggle-terminal',
@@ -499,12 +499,12 @@ export const ACTIONS = [{
   hideFromPanel: true
 }, {
   id: 'memory',
-  label: 'Context Hub',
+  label: 'Knowledge',
   icon: Brain,
   section: 'Context'
 }, {
   id: 'memory-search',
-  label: 'Context Search',
+  label: 'Search knowledge',
   icon: Search,
   section: 'Context',
   hideFromPanel: true

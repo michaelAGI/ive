@@ -66,12 +66,12 @@ export const IA_GROUPS = [{
     description: 'Browse project documentation and see what is missing.'
   }, {
     id: 'memory',
-    label: 'Context Hub',
-    description: 'Manage saved project knowledge and how context is shared.'
+    label: 'Knowledge',
+    description: 'What your agents remember about this project and what they are told at the start of a chat.'
   }, {
     id: 'memory-search',
-    label: 'Context Search',
-    description: 'Find facts and notes in saved context.'
+    label: 'Search knowledge',
+    description: 'Find a saved memory by keyword.'
   }, {
     id: 'prompt-library',
     label: 'Prompt Library',
