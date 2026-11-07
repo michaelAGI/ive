@@ -29,7 +29,7 @@ export default function ChatHistory({ filter = '', compact = false }) {
           <MessageSquare size={14} aria-hidden="true" />
           <span><strong>{session.name || 'Untitled chat'}</strong><small>{session.cli_type === 'codex' ? 'Codex' : session.cli_type === 'claude' ? 'Claude' : session.cli_type} · {status.state === 'waiting' ? 'Needs your reply' : status.label}</small></span>
         </button>
-        <button type="button" className="ive-chat-history-more" aria-label={`More actions for ${session.name || 'chat'}`} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ session, x: r.right, y: r.bottom }) }}><MoreHorizontal size={15} /></button>
+        <button type="button" className="ive-chat-history-more" aria-label={`More actions for ${session.name || 'chat'}`} onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ session, x: r.right, y: r.bottom }) }}><MoreHorizontal size={15} /></button>
       </div>
     })}
     {rows.length > limit && !compact && <button type="button" className="ive-chat-history-load" onClick={() => setLimit(n => n + 40)}>Show more chats</button>}

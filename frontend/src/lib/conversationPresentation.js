@@ -123,3 +123,12 @@ export function hasVisibleMessage(content) {
   if (content.type === 'text') return Boolean(String(content.text || '').trim())
   return true // Images, files and other rich content must remain visible.
 }
+
+// The empty conversation greets instead of explaining the chat; the composer
+// below it is cue enough. 5-11 morning, 12-17 afternoon, otherwise evening.
+export function emptyChatGreeting(date = new Date()) {
+  const hour = date.getHours()
+  if (hour >= 5 && hour < 12) return 'Good morning.'
+  if (hour >= 12 && hour < 18) return 'Good afternoon.'
+  return 'Good evening.'
+}

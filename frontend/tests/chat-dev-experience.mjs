@@ -205,6 +205,7 @@ test('the left sidebar fully collapses on Chat home and session, with persistent
     const initialMain = await main.boundingBox()
     await homeComposer.fill('Keep my home draft while I make more room.')
     const before = structuredClone(processMutations(f))
+    assert.equal(await page.getByRole('button', { name: /^(?:Hide|Show) sidebar$/ }).count(), 1, 'one sidebar control while navigation is open, in the sidebar head')
     await sidebar.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
     await sidebar.waitFor({ state: 'detached' })
     const reopen = header.getByRole('button', { name: 'Show sidebar', exact: true })
@@ -238,8 +239,9 @@ test('the left sidebar fully collapses on Chat home and session, with persistent
     await reopen.click()
     await sidebar.waitFor({ state: 'visible' })
     assert.equal(await composer.inputValue(), 'Keep this session draft when the navigation closes.')
-    // Exercise the existing header entry point as well as the new nav control.
-    await header.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
+    // The header carries no second hide control; the keyboard shortcut is the other entry point.
+    assert.equal(await header.getByRole('button', { name: /^(?:Hide|Show) sidebar$/ }).count(), 0, 'no duplicate sidebar control in the header while navigation is open')
+    await page.keyboard.press('Meta+Backslash')
     await sidebar.waitFor({ state: 'detached' })
     await page.reload()
     await reopen.waitFor({ state: 'visible' })
@@ -350,5 +352,25 @@ test('Dev remains usable with 100 saved sessions and mode switches do not launch
     assert.equal(f.data.sessions.every((item) => item.pty_alive === false && item.archived === 0), true)
     await assertNoErrorsOrOverflow(f)
     await page.screenshot({ path: `${shots}/${engineName}-dev-100-sessions.png` })
+  } finally { await f.context.close() }
+})
+
+test('the chat list menu opens from its … button and offers Archive and Delete', async () => {
+  const f = await fixture({ workspaces: [workspace], sessions: [session('menu'), session('other')] })
+  try {
+    const { page } = f
+    const sidebar = page.locator('#ive-project-sidebar')
+    await sidebar.getByRole('button', { name: 'More actions for Conversation menu', exact: true }).click()
+    const menu = page.getByRole('menu')
+    await menu.waitFor({ state: 'visible' })
+    assert.equal(await menu.getByRole('menuitem', { name: 'Delete', exact: true }).count(), 1, 'the chat can be deleted from its menu')
+    assert.equal(await menu.getByRole('menuitem', { name: 'Archive chat', exact: true }).count(), 1)
+    await page.keyboard.press('Escape')
+    await menu.waitFor({ state: 'detached' })
+    await sidebar.getByRole('button', { name: 'More actions for Conversation other', exact: true }).click()
+    await page.getByRole('menu').waitFor({ state: 'visible' })
+    await page.locator('main.x-app-main').click({ position: { x: 20, y: 20 } })
+    await page.getByRole('menu').waitFor({ state: 'detached' })
+    await assertNoErrorsOrOverflow(f)
   } finally { await f.context.close() }
 })

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { activityLabel, choiceTone, excerptWithRules, hasVisibleMessage, permissionPresentation, promptNotice } from '../src/lib/conversationPresentation.js'
+import { activityLabel, choiceTone, emptyChatGreeting, excerptWithRules, hasVisibleMessage, permissionPresentation, promptNotice } from '../src/lib/conversationPresentation.js'
 import { parseSessionPermissionPrompt, submitSessionPromptReply } from '../src/lib/sessionPrompt.js'
 import { promptChoices } from '../src/lib/sessionPrompt.js'
 import { menuFromPrompt } from '../src/lib/promptMenu.js'
@@ -65,4 +65,11 @@ test('activity summaries do not expose shell commands or tool payloads', () => {
 test('empty thinking disappears while user content and attachments remain', () => {
   for(const content of [[{type:'thinking',thinking:''}],JSON.stringify([{type:'thinking',thinking:''}]),'']) assert.equal(hasVisibleMessage(content),false)
   for(const content of ['0','false','null','Hello',[{type:'image',source:{url:'/image.png'}}],[{type:'thinking',thinking:''},{type:'text',text:'Ready'}]]) assert.equal(hasVisibleMessage(content),true)
+})
+
+test('the empty conversation greets by time of day', () => {
+  assert.equal(emptyChatGreeting(new Date(2026, 10, 6, 8)), 'Good morning.')
+  assert.equal(emptyChatGreeting(new Date(2026, 10, 6, 14)), 'Good afternoon.')
+  assert.equal(emptyChatGreeting(new Date(2026, 10, 6, 23)), 'Good evening.')
+  assert.equal(emptyChatGreeting(new Date(2026, 10, 6, 2)), 'Good evening.')
 })
