@@ -44,6 +44,19 @@ import { useChatContext, useContextSearch } from '../../hooks/useChatContext'
 const EMPTY_MESSAGES = Object.freeze([])
 const BTW_COMMAND = { cmd: '/btw', desc: 'Ask on the side with this task’s context' }
 
+// The composer's text was refused (409 question_open) while no question card
+// is on screen yet, e.g. Codex's folder-trust menu right after the session
+// started: name the open question so the refusal is not silent.
+function questionOpenIssue(sessionId) {
+  const session = useStore.getState().sessions[sessionId]
+  const agent = session?.cli_type === 'codex' ? 'Codex' : session?.cli_type === 'gemini' ? 'Gemini' : 'Claude'
+  const question = String(session?.attention?.menu?.question || session?.attention?.message || '').replace(/\s+/g, ' ').trim()
+  const shown = question.length > 140 ? `${question.slice(0, 139).trimEnd()}…` : question
+  return shown
+    ? `${agent} is asking: “${shown}” Answer that question first (in the card above or in the terminal), then send your message again.`
+    : `${agent} is waiting for your answer to a question in the terminal. Answer it there first, then send your message again.`
+}
+
 // Long sessions: the first request asks only for the newest rows; older ones
 // load page by page when the user scrolls back ("Show earlier"). The panel
 // renders only the newest groups of what is loaded.
@@ -3289,8 +3302,13 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       }
       setMessages((prev) => prev.filter((msg) => !failed(msg)))
       setIsAgentExecuting(false)
-      if (e.detail?.code === 'question_open') setPromptHint(QUESTION_OPEN_HINT)
-      else setDeliveryIssue(e.detail?.reason || 'The assistant could not accept your message.')
+      if (e.detail?.code === 'question_open') {
+        setPromptHint(QUESTION_OPEN_HINT)
+        // The hint sits in the question card. With no card on screen yet (a
+        // startup menu such as Codex's folder trust before its first poll, or
+        // a cut-off dialog) the refusal would be silent: say it here instead.
+        if (!promptActionsRef.current?.menu) setDeliveryIssue(questionOpenIssue(sessionId))
+      } else setDeliveryIssue(e.detail?.reason || 'The assistant could not accept your message.')
       optimisticBusyStartedAtRef.current = null
     }
     window.addEventListener('cc-terminal-send-failed', handleSendFailed)

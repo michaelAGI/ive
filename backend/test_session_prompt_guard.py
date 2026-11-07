@@ -35,7 +35,8 @@ class SessionPromptGuardTests(unittest.IsolatedAsyncioTestCase):
             '_session_cli_type': AsyncMock(return_value='claude'), '_is_auth_recovery_input': Mock(return_value=False),
             '_session_prompt_answered': AsyncMock(),
         }
-        names = {'_canonical_prompt_screen','_session_permission_menu','_is_incomplete_permission_screen','_send_guarded_session_prompt','send_session_input'}
+        names = {'_canonical_prompt_screen','_session_permission_menu','_is_incomplete_permission_screen','_send_guarded_session_prompt','send_session_input',
+                 '_trust_prompt_selection','_strip_pty_control_bytes','_compact_cli_text'}
         tree = ast.parse(Path(__file__).with_name('server.py').read_text())
         nodes = [n for n in tree.body if (isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and (n.name in names or n.name.startswith('_dialog_')))
                  or (isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id.startswith('_DIALOG_') for t in n.targets))]

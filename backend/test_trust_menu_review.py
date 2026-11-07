@@ -34,6 +34,9 @@ permission settings. Continue only if you trust these files.
 › 1. Trust and continue
   2. Open restricted
 """
+# Codex 0.164+ as captured (fixtures/permission_dialogs/codex-trust): the
+# decline row is "2. Back to Agent Command Center", Codex's own start screen.
+CODEX_BACK = (Path(__file__).with_name("fixtures") / "permission_dialogs" / "codex-trust.screen.txt").read_text()
 
 
 def load_handlers(**dependencies):
@@ -75,6 +78,23 @@ class TrustMenuDetectionTests(unittest.TestCase):
         self.assertEqual(self.ns["_detect_cli_startup_blocker"]("codex", CODEX_RESTRICTED)["type"], "trust_required")
         self.assertFalse(self.ns["_looks_ready_for_input"]("codex", CODEX_RESTRICTED))
         self.assertTrue(self.ns["_looks_ready_for_input"]("codex", CODEX_RESTRICTED + "\n› "))
+
+    def test_codex_back_to_agent_command_center_menu_is_recognized(self):
+        # Unrecognized until now: Codex 0.164-0.167 kept this prompt on screen
+        # and the session looked idle.
+        menu = self.ns["_trust_prompt_selection"](CODEX_BACK)
+        self.assertEqual(menu["cli_type"], "codex")
+        self.assertEqual(menu["options"], ("trustandcontinue", "backtoagentcommandcenter"))
+        self.assertEqual(menu["labels"], ("Trust and continue", "Back to Agent Command Center"))
+        self.assertEqual(menu["selected"], menu["target"])
+        self.assertEqual(self.ns["_detect_cli_startup_blocker"]("codex", CODEX_BACK)["type"], "trust_required")
+        self.assertFalse(self.ns["_looks_ready_for_input"]("codex", CODEX_BACK))
+        self.assertIsNone(self.ns["_trust_prompt_selection"](CODEX_BACK.rstrip("\n") + "\n› "))
+
+    def test_back_to_row_counts_only_when_numbered(self):
+        # A text line that merely starts with "Back to" is not the decline option.
+        unnumbered = CODEX_BACK.replace("  2. Back to Agent Command Center", "  Back to Agent Command Center")
+        self.assertIsNone(self.ns["_trust_prompt_selection"](unnumbered))
 
     def test_old_menu_above_returned_prompt_is_ignored(self):
         for cli, screen, prompt in (("claude", CLAUDE, "❯ "), ("codex", CODEX, "› ")):
@@ -132,6 +152,9 @@ class TrustMenuAcceptanceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_codex_open_restricted_default_is_confirmed_with_enter(self):
         self.assertEqual(await self.run_check(CODEX_RESTRICTED), [b"\r"])
+
+    async def test_codex_back_to_menu_default_is_confirmed_with_enter(self):
+        self.assertEqual(await self.run_check(CODEX_BACK), [b"\r"])
 
     async def test_stale_menu_before_delay_never_submits_prompt(self):
         def changed(delay, capture, *_):

@@ -3496,9 +3496,10 @@ async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
     if cli_type in {"claude", "codex"}:
         from session_attention import get_attention, observe_terminal
         screen = capture_proc.get_screen(session_id) or capture_proc.get_buffer(session_id, 80)
+        # A folder-trust menu is a dialog like any other (_dialog_startup_menu):
+        # pushed as attention so the chat shows and answers it. Login, setup
+        # and update screens give no menu and stay startup blockers only.
         menu = _session_permission_menu(screen)
-        if menu and _detect_cli_startup_blocker(cli_type, screen):
-            menu = None
         if observe_terminal(session_id, screen, menu):
             attention = get_attention(session_id)
             await broadcast({"type": "session_attention", "session_id": session_id, "attention": attention})
@@ -3829,38 +3830,58 @@ def _trust_prompt_selection(text: str) -> dict | None:
 
     A quoted old menu above a returned input prompt is not an active menu.
     Missing/ambiguous selection is safe to display as blocked, never to accept.
+    ``labels`` are the options as the CLI prints them and ``rows`` their line
+    numbers on the screen, for the dialog contract (_dialog_startup_menu).
     """
     text = _strip_pty_control_bytes((text or "").encode("utf-8")).decode("utf-8", errors="replace")
     # CLI menus use NBSP too; preserve line boundaries and normalize only
     # horizontal spacing before recognizing the selected trust option.
     text = re.sub(r"[^\S\r\n\v\f\x85\u2028\u2029]", " ", text)
     compact = _compact_cli_text(text)
+    # Codex's decline row names the screen it returns to ("Back to Agent
+    # Command Center" since 0.164): only a numbered row counts as that option.
+    numbered_prefix = None
     if "yes,itrustthisfolder" in compact and "no,exit" in compact:
         cli, wanted, labels = "claude", "yes,itrustthisfolder", {"yes,itrustthisfolder", "no,exit"}
-    elif ("trustandcontinue" in compact and ("quit" in compact or "openrestricted" in compact)
+    elif ("trustandcontinue" in compact
+          and ("quit" in compact or "openrestricted" in compact or "backto" in compact)
           and ("folderaccess" in compact or "trustthisfolder" in compact)):
-        # Codex 0.16x: "› 1. Trust and continue" plus either "2. Quit" or
-        # "2. Open restricted" (tui/src/onboarding/directory_trust.rs).
+        # Codex 0.16x: "› 1. Trust and continue" plus "2. Quit", "2. Open
+        # restricted" or "2. Back to Agent Command Center"
+        # (tui/src/onboarding/directory_trust.rs).
         cli, wanted, labels = "codex", "trustandcontinue", {"trustandcontinue", "quit", "openrestricted"}
+        numbered_prefix = "backto"
     elif "trustfolder" in compact and "trustparentfolder" in compact:
         cli, wanted, labels = "gemini", "trustfolder", {"trustfolder", "trustparentfolder", "donottrust", "don'ttrust"}
     else:
         return None
     pattern = re.compile(
-        r"(?m)^[ \t]*(?P<cursor>[❯›>●])?[ \t]*(?:\d+[.)]\s*)?"
+        r"(?m)^[ \t]*(?P<cursor>[❯›>●])?[ \t]*(?P<number>\d+[.)]\s*)?"
         r"(?P<label>Yes,\s*I\s*trust\s*this\s*folder|No,\s*exit|"
-        r"Trust\s+and\s+continue|Quit|Open\s+restricted|Trust\s+parent\s+folder|Trust\s+folder|Do\s+not\s+trust|Don't\s+trust)[ \t]*(?=\n|$)",
+        r"Trust\s+and\s+continue|Quit|Open\s+restricted|Back\s+to\s+\S[^\n]*?|"
+        r"Trust\s+parent\s+folder|Trust\s+folder|Do\s+not\s+trust|Don't\s+trust)[ \t]*(?=\n|$)",
         re.IGNORECASE,
     )
-    options = [match for match in pattern.finditer(text) if _compact_cli_text(match["label"]) in labels]
+
+    def is_option(match) -> bool:
+        value = _compact_cli_text(match["label"])
+        if value in labels:
+            return True
+        return bool(numbered_prefix and match["number"] and value.startswith(numbered_prefix))
+
+    options = [match for match in pattern.finditer(text) if is_option(match)]
     values = [_compact_cli_text(match["label"]) for match in options]
     if len(options) < 2 or values.count(wanted) != 1 or len(set(values)) != len(values):
         return None
-    if re.search(r"(?m)^[ \t]*[❯›>][ \t]*(?:$|try\b|type\b)", text[options[-1].end():], re.IGNORECASE):
+    # The composer under the options (empty, or with Claude's "Try ..." /
+    # Codex's "Ask Codex ..." placeholder) makes the menu above it history.
+    if re.search(r"(?m)^[ \t]*[❯›>][ \t]*(?:$|try\b|type\b|ask\s+codex\b)", text[options[-1].end():], re.IGNORECASE):
         return None
     selected = [index for index, match in enumerate(options) if match["cursor"]]
     return {"cli_type": cli, "options": tuple(values), "target": values.index(wanted),
-            "selected": selected[0] if len(selected) == 1 else None}
+            "selected": selected[0] if len(selected) == 1 else None,
+            "labels": tuple(re.sub(r"\s+", " ", match["label"]).strip() for match in options),
+            "rows": tuple(text.count("\n", 0, match.start()) for match in options)}
 
 
 def _check_auto_trust(session_id: str, data: bytes):
@@ -15041,8 +15062,9 @@ async def get_session_output(request: web.Request) -> web.Response:
         "permission_view_state": permission_view_state,
     }
     if permission_view:
-        # The CLI's dialog as data (menu contract); a startup screen is never one.
-        payload["menu"] = None if startup_blocker else _session_permission_menu(screen)
+        # The CLI's dialog as data (menu contract). A folder-trust menu is one
+        # (answered like a question); login, setup and update screens are not.
+        payload["menu"] = _session_permission_menu(screen)
     return web.json_response(payload)
 
 
@@ -15630,8 +15652,10 @@ def _canonical_prompt_screen(screen: str) -> str:
 #   AskUserQuestion     the question, "❯ 1. Red" with description lines, "Type something.",
 #                       a rule, "Chat about this", "Enter to select · ... · Esc to cancel";
 #                       multi-select rows carry "[ ]" checkboxes.
-# Folder trust, /model, /permissions, login, theme and update screens and numbered lists
-# inside a reply are never a menu: no allowlisted question, no cursor, or options missing.
+# /model, /permissions, login, theme and update screens and numbered lists inside a
+# reply are never a menu: no allowlisted question, no cursor, or options missing. The
+# folder-trust menu is recognised separately (_dialog_startup_menu, via the trust
+# prompt recognizer that also confirms it).
 _DIALOG_QUESTION_RE = re.compile(r"(?:Do you want to|Would you like to) .{1,240}\?")
 _DIALOG_PLAN_QUESTION_RE = re.compile(r"Would you like to proceed\?|Ready to code\?")
 _DIALOG_PLAN_OPTION_RE = re.compile(r"keep planning|what to change|auto mode", re.IGNORECASE)
@@ -15732,8 +15756,8 @@ def _dialog_question_above(lines: list[str], below: int) -> int | None:
     return None
 
 
-def _session_permission_menu(screen: str) -> dict | None:
-    """The dialog a CLI shows right now, as data, or None.
+def _dialog_menu(screen: str) -> dict | None:
+    """An allowlisted permission, plan or AskUserQuestion dialog as data, or None.
 
     Only the allowlisted forms above count, anchored at the last "1." row on
     screen: a permission question with "Yes..." first and "No..." last and
@@ -15809,6 +15833,63 @@ def _session_permission_menu(screen: str) -> dict | None:
         "choices": tuple(o["key"] for o in options),
         "selected": next(o["key"] for o in options if o["selected"]),
     }
+
+
+def _dialog_startup_menu(screen: str) -> dict | None:
+    """A CLI's folder-trust menu as the dialog contract, kind "question".
+
+    Codex ("Trust this folder? ...", "› 1. Trust and continue", "2. Back to
+    Agent Command Center" / "2. Open restricted" / "2. Quit"), Claude ("❯ No,
+    exit", "Yes, I trust this folder") and Gemini draw it before any hook
+    runs. IVE confirms it itself when it can (_check_auto_trust); while it is
+    on screen the chat shows it as a question and a reply walks the CLI's
+    cursor like for any other dialog. Keys are positional ("1", "2"): Claude
+    prints no numbers. The question is the paragraph above the options that
+    mentions trust, the excerpt the rest of the text above them (Codex: the
+    "Folder access" path). Login, setup and update screens are never a menu.
+    """
+    trust = _trust_prompt_selection(screen)
+    if not trust or trust["selected"] is None:
+        return None
+    lines = _dialog_screen_lines(screen)
+    first = min(trust["rows"])
+    if first > len(lines):
+        return None
+    # Paragraphs above the options, below the last rule (Claude's top rule).
+    paragraphs, current = [], []
+    for line in lines[:first]:
+        if line.strip() and not _DIALOG_RULE_RE.fullmatch(line.strip()):
+            current.append(line)
+            continue
+        if current:
+            paragraphs.append(current)
+            current = []
+        if _DIALOG_RULE_RE.fullmatch(line.strip()):
+            paragraphs = []
+    if current:
+        paragraphs.append(current)
+    if not paragraphs:
+        return None
+    asked = next((p for p in reversed(paragraphs) if "trust" in _compact_cli_text(" ".join(p))), paragraphs[-1])
+    question = " ".join(line.strip() for line in asked)
+    excerpt = _dialog_excerpt([line for p in paragraphs if p is not asked for line in p + [""]])
+    options = [{"key": str(index + 1), "label": label, "selected": index == trust["selected"]}
+               for index, label in enumerate(trust["labels"])]
+    parts = [question] + [f"{o['key']}. {o['label']}" for o in options] + [excerpt]
+    return {
+        "kind": "question", "question": question, "options": options, "excerpt": excerpt,
+        "identity": "\n".join(re.sub(r"\s+", " ", part).strip() for part in parts if part),
+        "answerable": True,
+        "choices": tuple(o["key"] for o in options),
+        "selected": str(trust["selected"] + 1),
+    }
+
+
+def _session_permission_menu(screen: str) -> dict | None:
+    """The dialog a CLI shows right now, as data, or None: an allowlisted
+    permission, plan or AskUserQuestion dialog (_dialog_menu), else the
+    folder-trust menu a CLI draws at startup (_dialog_startup_menu)."""
+    return _dialog_menu(screen) or _dialog_startup_menu(screen)
 
 
 def _is_incomplete_permission_screen(screen: str) -> bool:

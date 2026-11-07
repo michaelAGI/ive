@@ -1,5 +1,6 @@
 """The CLIs' dialogs as data: every captured fixture in both rendered forms,
-and no menu where there is none (pickers, trust, replies, cut-off screens)."""
+the folder-trust screens as a question menu, and no menu where there is none
+(pickers, replies, cut-off screens)."""
 import ast
 import json
 from pathlib import Path
@@ -33,7 +34,8 @@ FIRST_LINE = {
 
 def load_parser():
     tree = ast.parse((BACKEND / "server.py").read_text())
-    names = {"_canonical_prompt_screen", "_session_permission_menu", "_is_incomplete_permission_screen"}
+    names = {"_canonical_prompt_screen", "_session_permission_menu", "_is_incomplete_permission_screen",
+             "_trust_prompt_selection", "_strip_pty_control_bytes", "_compact_cli_text"}
     nodes = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and (n.name in names or n.name.startswith("_dialog_")))
              or (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id.startswith("_DIALOG_") for t in n.targets))]
     ns = {"re": re}
@@ -190,16 +192,45 @@ class FixtureTests(unittest.TestCase):
         self.assertTrue(self.menu(fixture_screen("claude-ask-multi"))["answerable"])
 
     def test_negative_fixtures_are_never_a_menu(self):
-        blocker = load_startup_blocker()["_detect_cli_startup_blocker"]
         for entry in manifest():
-            if entry["kind"] not in {"startup_blocker", "negative", "probe"}:
+            if entry["kind"] not in {"negative", "probe"}:
                 continue
             for form, screen in screens_of(entry):
                 with self.subTest(fixture=entry["name"], form=form):
                     self.assertIsNone(self.menu(screen))
                     self.assertFalse(self.incomplete(screen))
-                    if entry["kind"] == "startup_blocker":
-                        self.assertEqual(blocker(entry["cli"], screen)["type"], "trust_required")
+
+    def test_trust_fixtures_are_startup_blockers_and_question_menus(self):
+        """Folder trust blocks startup and, while on screen, is a question the
+        chat shows and answers: the CLI's labels, its cursor, positional keys."""
+        blocker = load_startup_blocker()["_detect_cli_startup_blocker"]
+        for entry in manifest():
+            if entry["kind"] != "startup_blocker":
+                continue
+            results = []
+            for form, screen in screens_of(entry):
+                with self.subTest(fixture=entry["name"], form=form):
+                    self.assertEqual(blocker(entry["cli"], screen)["type"], "trust_required")
+                    menu = self.menu(screen)
+                    self.assertIsNotNone(menu)
+                    self.assertEqual(menu["kind"], "question")
+                    self.assertTrue(menu["answerable"])
+                    self.assertTrue(menu["question"].startswith(entry["question"]), menu["question"])
+                    self.assertEqual([o["label"] for o in menu["options"]], entry["options"])
+                    self.assertEqual([o["key"] for o in menu["options"]], [str(n) for n in range(1, len(entry["options"]) + 1)])
+                    self.assertEqual([o["selected"] for o in menu["options"]].index(True), entry["selected_index"])
+                    self.assertEqual(menu["selected"], menu["options"][entry["selected_index"]]["key"])
+                    self.assertIn(menu["question"], menu["identity"])
+                    self.assertFalse(self.incomplete(screen))
+                    results.append(menu)
+            self.assertTrue(all(result == results[0] for result in results), entry["name"])
+        codex = fixture_screen("codex-trust")
+        moved = self.menu(move_cursor(codex, 2))
+        self.assertEqual(moved["identity"], self.menu(codex)["identity"])
+        self.assertEqual(moved["selected"], "2")
+        self.assertEqual(self.menu(codex)["excerpt"].splitlines()[0], "Folder access")
+        # Accepted: the composer under the old text makes it history.
+        self.assertIsNone(self.menu(codex.rstrip("\n") + "\n› "))
 
     def test_redraw_sample_keeps_one_identity(self):
         sample = json.loads((FIXTURES / "legacy-2.1.299" / "claude-tool-use-redraw.json").read_text())
@@ -313,8 +344,9 @@ class AdversarialTests(unittest.TestCase):
         wrapped = framed.replace("Which framework should the tests use?", "Which framework should the tests use,\ngiven the repo already has fixtures?")
         self.assertEqual(self.menu(wrapped)["question"], "Which framework should the tests use, given the repo already has fixtures?")
 
-    def test_pickers_and_trust_are_never_menus(self):
-        for name in ("claude-model-picker", "claude-permissions", "codex-model-picker", "claude-trust", "codex-trust"):
+    def test_pickers_are_never_menus(self):
+        # Folder trust is a question menu now: FixtureTests.test_trust_fixtures_...
+        for name in ("claude-model-picker", "claude-permissions", "codex-model-picker"):
             with self.subTest(fixture=name):
                 self.assertIsNone(self.menu(fixture_screen(name)))
 

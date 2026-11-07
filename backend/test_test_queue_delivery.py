@@ -142,9 +142,10 @@ class TestQueueDeliveryTests(unittest.IsolatedAsyncioTestCase):
         def schedule(coro):
             job = asyncio.create_task(coro); jobs.append(job); return job
         session = dict(await (await self.db.execute("SELECT * FROM sessions WHERE id='tester'")).fetchone())
-        notify = load_functions('server.py', {'broadcast'}, json=json, ws_clients=set(),
-            get_session_config=AsyncMock(return_value=session),
-            asyncio=SimpleNamespace(create_task=schedule), _process_test_queue=self.ns['_process_test_queue'])['broadcast']
+        # broadcast serializes per session (PR #12): load its helper and give it a lock table.
+        notify = load_functions('server.py', {'broadcast', '_broadcast_ordered'}, json=json, ws_clients=set(),
+            get_session_config=AsyncMock(return_value=session), _session_broadcast_locks={},
+            asyncio=SimpleNamespace(create_task=schedule, Lock=asyncio.Lock), _process_test_queue=self.ns['_process_test_queue'])['broadcast']
         await notify({'type':'session_state','session_id':'tester','state':'working'})
         self.assertEqual(jobs, [])
         self.logical.return_value = 'idle'

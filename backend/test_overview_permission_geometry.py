@@ -34,7 +34,8 @@ class PermissionGeometryTests(unittest.IsolatedAsyncioTestCase):
             if self.pending_frame:
                 self.pending_frame=False
                 await self.capture.process('session',('\x1b[2J\x1b[H'+LONG_MENU.replace('\n','\r\n')).encode())
-        names={'_session_permission_menu','_is_incomplete_permission_screen','_expand_overview_permission_screen','get_session_output'}
+        names={'_session_permission_menu','_is_incomplete_permission_screen','_expand_overview_permission_screen','get_session_output',
+               '_trust_prompt_selection','_strip_pty_control_bytes','_compact_cli_text'}
         tree=ast.parse(Path(__file__).with_name('server.py').read_text())
         self.ns={'re':re,'web':web,'pty_mgr':self.manager,'capture_proc':self.capture,
             '_terminal_streams':self.streams,'_asyncio':SimpleNamespace(sleep=sleep),
@@ -160,11 +161,22 @@ class CodexPermissionViewTests(PermissionGeometryTests):
         result=await self.output();self.resize.assert_not_called()
         self.assertIsNone(result['permission_view_state']);self.assertEqual(result['menu']['kind'],'permission')
 
-    async def test_composer_has_no_menu_and_a_startup_screen_never_one(self):
+    async def test_composer_and_login_have_no_menu_and_folder_trust_is_a_question(self):
         await self.capture.process('session',b'>_ OpenAI Codex\r\n\xe2\x80\xba Ask Codex to do anything')
         self.assertIsNone((await self.output())['menu'])
-        await self.capture.process('session',('\x1b[2J\x1b[H'+CODEX_LONG.replace("\n".join(f"  line {i}" for i in range(70)),'  line 0').replace('\n','\r\n')).encode())
-        self.ns['_detect_cli_startup_blocker']=lambda *_:{'type':'trust_required'}
+        # Startup screens: the parser alone decides. Login has no dialog; the
+        # folder-trust menu (fixture codex-trust, 120 columns) is a question
+        # the chat answers, blocker or not.
+        self.ns['_detect_cli_startup_blocker']=lambda *_:{'type':'auth_required'}
+        await self.capture.process('session','\x1b[2J\x1b[H>_ OpenAI Codex\r\nWelcome to Codex\r\n› 1. Sign in with ChatGPT\r\n  2. Provide your own API key\r\n'.encode())
         self.assertIsNone((await self.output())['menu'])
+        self.ns['_detect_cli_startup_blocker']=lambda *_:{'type':'trust_required'}
+        trust=(Path(__file__).with_name('fixtures')/'permission_dialogs'/'codex-trust.screen.txt').read_text()
+        await self.capture.process('session',('\x1b[2J\x1b[H'+trust.replace('\n','\r\n')).encode())
+        result=await self.output()
+        self.assertEqual(result['startup_blocker'],{'type':'trust_required'})
+        self.assertEqual(result['menu']['kind'],'question')
+        self.assertEqual([o['label'] for o in result['menu']['options']],['Trust and continue','Back to Agent Command Center'])
+        self.assertEqual(result['menu']['selected'],'1')
 
 if __name__=='__main__':unittest.main()

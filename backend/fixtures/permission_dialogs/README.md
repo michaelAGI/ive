@@ -21,7 +21,7 @@ screens). A capture needs a logged-in Claude / Codex on this machine and runs th
 real: the scratch projects are created and deleted by the tool, nothing else is touched.
 Keep the old files when a dialog changes shape; the parser must read both.
 
-- `claude-trust`: first-run folder trust (unnumbered). Startup blocker, never a menu.
+- `claude-trust`: first-run folder trust (unnumbered). Startup blocker; also a question menu (positional keys) so the chat can show it when auto-accept does not clear it.
 - `claude-bash`: Bash permission with four options, option 2 wraps over three lines.
 - `claude-bash-after-digit-2`: the screen 0.5 s after pressing `2`: the digit selected and confirmed at once. Probe.
 - `claude-create-file`: Write tool, "Do you want to create notes.txt?".
@@ -32,7 +32,7 @@ Keep the old files when a dialog changes shape; the parser must read both.
 - `claude-ask-multi-q2`: second tab, multi-select with `[ ]` checkboxes. Recognised, `answerable` false.
 - `claude-model-picker`, `claude-permissions`: `/model` and `/permissions`. Never a menu.
 - `claude-plan-approval`: ExitPlanMode in `--permission-mode plan`, footer "ctrl+g to edit in Vim".
-- `codex-trust`: Codex folder trust (numbered, `›` cursor). Startup blocker, never a menu.
+- `codex-trust`: Codex folder trust (numbered, `›` cursor). Startup blocker; also a question menu with Codex's labels ("Trust and continue", "Back to …"), auto-accepted when confirmed.
 - `codex-command`, `codex-network`, `codex-patch`: Codex approvals (command, network, file change); labels carry hotkeys, "Environment" and "Reason" lines sit between question and command.
 - `codex-command-after-digit-2`: the screen after pressing `2`: approved and ran at once. Probe.
 - `codex-model-picker`: Codex `/model`, cursor on the current model. Never a menu.
