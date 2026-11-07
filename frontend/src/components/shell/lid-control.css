@@ -49,3 +49,25 @@
   .ive-switch, .ive-switch-knob { transition: none; }
   .ive-switch.is-busy .ive-switch-knob { animation: none; }
 }
+
+/* The animated eye: the lid slides down to close, the outline swaps to the
+   closed curve with lashes, a blink now and then while the mode runs. */
+.ive-eyelid { display: block; overflow: visible; }
+.ive-eyelid-lid { transform: translateY(-24px); transition: transform .34s var(--x-ease-out, cubic-bezier(.2,.8,.2,1)); }
+.ive-eyelid-iris, .ive-eyelid-glint { transition: opacity .2s ease; }
+.ive-eyelid-outline { transition: opacity .2s ease; }
+.ive-eyelid-closed { opacity: 0; transition: opacity .2s ease .18s; }
+.ive-eyelid.is-closed .ive-eyelid-lid { transform: translateY(0); }
+.ive-eyelid.is-closed .ive-eyelid-iris, .ive-eyelid.is-closed .ive-eyelid-glint, .ive-eyelid.is-closed .ive-eyelid-outline { opacity: 0; transition-delay: .16s; }
+.ive-eyelid.is-closed .ive-eyelid-closed { opacity: 1; }
+.ive-eyelid.is-blinking:not(.is-closed) .ive-eyelid-lid { animation: ive-eyelid-blink 6s ease-in-out infinite; }
+@keyframes ive-eyelid-blink {
+  0%, 92%, 100% { transform: translateY(-24px); }
+  95%, 97% { transform: translateY(-2px); }
+}
+.ive-lid-btn .ive-eyelid { color: var(--x-ink); }
+.ive-lid-btn.is-on .ive-eyelid { color: var(--x-accent); }
+@media (prefers-reduced-motion: reduce) {
+  .ive-eyelid-lid, .ive-eyelid-iris, .ive-eyelid-glint, .ive-eyelid-outline, .ive-eyelid-closed { transition: none; }
+  .ive-eyelid.is-blinking:not(.is-closed) .ive-eyelid-lid { animation: none; }
+}

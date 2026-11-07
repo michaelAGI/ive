@@ -204,6 +204,9 @@ fn main() {
             let window_receipt = data_dir.join("desktop-window.json");
             let origin = format!("http://127.0.0.1:{port}");
             updates::configure(app.handle(), &data_dir, origin.clone())?;
+            // The eyelid in the menu bar: created here on the main thread, it shows
+            // "checking" until the backend answers and then follows its status.
+            if let Err(error) = tray::install(app.handle(), port, data_dir.clone()) { eprintln!("menu bar item unavailable: {error}"); }
             let own_origin = origin.clone();
             let current_failure = failure.clone();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("desktop-startup.html".into()))
@@ -260,12 +263,7 @@ fn main() {
                     thread::sleep(Duration::from_millis(200));
                 }
                 if let Err(error) = window.navigate(origin.parse().unwrap()) { show_failure(&window, &failure, error.to_string()); }
-                // The eyelid in the menu bar needs the backend; menu bar items live on the main thread.
-                let tray_handle = handle.clone();
-                let tray_dir = data_dir.clone();
-                let _ = handle.run_on_main_thread(move || {
-                    if let Err(error) = tray::install(&tray_handle, port, tray_dir) { eprintln!("menu bar item unavailable: {error}"); }
-                });
+
                 // Detect failures after startup as well, rather than leaving a
                 // disconnected workspace looking ready forever.
                 loop {
@@ -284,6 +282,17 @@ fn main() {
         .build(tauri::generate_context!()).expect("IVE could not start");
     app.run(|handle, event| {
         if matches!(event, tauri::RunEvent::Exit) { handle.state::<Backend>().stop(); }
-        if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { .. }, .. } = event { handle.exit(0); }
+        // Closing the window keeps IVE, its agents and the menu bar item running;
+        // the Dock icon or the menu bar brings the window back. Quit ends everything.
+        if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } = &event {
+            if label == "main" {
+                api.prevent_close();
+                if let Some(window) = handle.get_webview_window("main") { let _ = window.hide(); }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = &event {
+            if let Some(window) = handle.get_webview_window("main") { let _ = bring_to_front(&window); }
+        }
     });
 }

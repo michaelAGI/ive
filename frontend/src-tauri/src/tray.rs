@@ -294,10 +294,19 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
-/// Installs the menu bar item once the backend answers. Safe to call once per launch.
+fn log(data_dir: &std::path::Path, line: &str) {
+    use std::io::Write as _;
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(data_dir.join("desktop-tray.log")) {
+        let _ = writeln!(file, "{} {line}", now_ms());
+    }
+}
+
+/// Installs the menu bar item; it follows the backend once that answers.
 pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), String> {
-    let backend = Backend { port, data_dir };
-    let options = backend.options();
+    log(&data_dir, "install: start");
+    let backend = Backend { port, data_dir: data_dir.clone() };
+    // Defaults until the backend is up; the poller loads the shared conditions then.
+    let options = Options::default();
     let status = MenuItem::with_id(app, "lid-status", "Lid closed: checking", false, None::<&str>).map_err(|e| e.to_string())?;
     let toggle = MenuItem::with_id(app, "lid-toggle", "Turn on", false, None::<&str>).map_err(|e| e.to_string())?;
     let mut durations = Vec::new();
@@ -311,21 +320,26 @@ pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), Stri
     let low_power = CheckMenuItem::with_id(app, "lid-low-power", "Low Power Mode while closed", true, options.lid_low_power, None::<&str>).map_err(|e| e.to_string())?;
     let open = MenuItem::with_id(app, "lid-open", "Open IVE", true, None::<&str>).map_err(|e| e.to_string())?;
     let settings = MenuItem::with_id(app, "lid-settings", "Mac & Power settings…", true, None::<&str>).map_err(|e| e.to_string())?;
+    let quit = MenuItem::with_id(app, "lid-quit", "Quit IVE", true, None::<&str>).map_err(|e| e.to_string())?;
     let menu = Menu::with_items(app, &[
         &status, &toggle, &PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?,
         &duration_menu, &battery, &low_power, &PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?,
-        &open, &settings,
+        &open, &settings, &PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?, &quit,
     ]).map_err(|e| e.to_string())?;
 
     let open_eye = Image::from_bytes(include_bytes!("../icons/tray-eye-open.png")).map_err(|e| e.to_string())?.to_owned();
     let closed_eye = Image::from_bytes(include_bytes!("../icons/tray-eye-closed.png")).map_err(|e| e.to_string())?.to_owned();
+    log(&data_dir, "install: menu and images ready");
+    // Menu bar managers such as Hidden Bar tuck new items into their hidden
+    // area; the item is still there and can be dragged out with the Command key.
     let icon = TrayIconBuilder::with_id("ive-lid")
         .icon(open_eye.clone())
         .icon_as_template(true)
         .tooltip("Lid closed: checking")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .build(app).map_err(|e| e.to_string())?;
+        .build(app).map_err(|e| { log(&data_dir, &format!("install: tray build failed: {e}")); e.to_string() })?;
+    log(&data_dir, "install: tray built");
 
     let tray = Arc::new(Tray {
         backend, icon, items: Items { status, toggle, durations, battery, low_power },
@@ -339,6 +353,7 @@ pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), Stri
             "lid-battery" => { let next = handler.items.battery.is_checked().unwrap_or(false); handler.update_options(|o| o.allow_battery = next) }
             "lid-low-power" => { let next = handler.items.low_power.is_checked().unwrap_or(true); handler.update_options(|o| o.lid_low_power = next) }
             "lid-open" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); } }
+            "lid-quit" => app.exit(0),
             "lid-settings" => {
                 if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.unminimize(); let _ = window.set_focus(); }
                 let _ = app.emit("ive://open-panel", "mac-power");
@@ -350,11 +365,21 @@ pub fn install(app: &AppHandle, port: u16, data_dir: PathBuf) -> Result<(), Stri
             }
         }
     });
-    tray.refresh();
+    // The backend may still be starting: poll quickly until it answers, then every 20 s.
     let poller = tray.clone();
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(POLL_SECONDS));
-        poller.refresh();
+    thread::spawn(move || {
+        let mut options_loaded = false;
+        loop {
+            let status = poller.backend.status();
+            let offline = status.get("state").and_then(|v| v.as_str()) == Some("offline");
+            if !offline && !options_loaded {
+                let shared = poller.backend.options();
+                *poller.options.lock().unwrap() = shared;
+                options_loaded = true;
+            }
+            poller.apply(&status);
+            thread::sleep(Duration::from_secs(if offline { 3 } else { POLL_SECONDS }));
+        }
     });
     Ok(())
 }

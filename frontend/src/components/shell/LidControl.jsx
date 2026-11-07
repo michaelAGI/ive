@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Battery, Eye, EyeClosed, Leaf, Lock, Pause, Settings2, Timer } from 'lucide-react'
+import { Battery, Leaf, Lock, Pause, Settings2, Timer } from 'lucide-react'
+import EyelidIcon from './EyelidIcon'
 import { api, ApiError } from '../../lib/api'
 import { APPS, DURATIONS, LOGIN_ITEMS_REASONS, canStart, fetchSharedOptions, headline, loadOptions, pushSharedOptions, remaining, remainingShort, saveOptions } from '../../lib/macPower'
 import './lid-control.css'
@@ -120,7 +121,6 @@ export default function LidControl({ onOpenSettings }) {
     return act('start', batteryFirst ? { allow_battery: true } : undefined)
   }
   const title = headline(status, now)
-  const Icon = active ? EyeClosed : Eye
 
   return (
     <div ref={root} className="ive-lid" data-lid-control="" data-lid-state={status.state}>
@@ -135,7 +135,7 @@ export default function LidControl({ onOpenSettings }) {
         title={title}
         onClick={() => setOpen(v => !v)}
       >
-        <Icon size={16} aria-hidden="true" />
+        <EyelidIcon closed={active} blink={!active && !busy} size={20} />
         {active && <span className="ive-lid-btn-label" aria-hidden="true">{remainingShort(status.expires_at, now)}</span>}
       </button>
 
