@@ -17,7 +17,8 @@ const SHAPES = {
   tile: 'rounded-md',
 }
 
-const DISABLED = 'disabled:cursor-not-allowed disabled:border-dashed disabled:border-x-line-strong disabled:bg-x-surface-2 disabled:text-x-muted disabled:opacity-100 disabled:shadow-none disabled:active:scale-100'
+// Press feedback (scale + spring back) comes from the shared `x-press` recipe in index.css.
+const DISABLED = 'disabled:cursor-not-allowed disabled:border-dashed disabled:border-x-line-strong disabled:bg-x-surface-2 disabled:text-x-muted disabled:opacity-100 disabled:shadow-none'
 
 const SIZES = {
   sm: 'min-h-[26px] px-2.5 py-1 text-[11px]',
@@ -58,7 +59,7 @@ export const Button = forwardRef(function Button(
       type={type}
       role={typeof toggleState === 'boolean' ? 'switch' : undefined}
       aria-checked={typeof toggleState === 'boolean' ? toggleState : undefined}
-      className={mergeClasses(`group inline-flex items-center justify-center gap-1.5 border font-medium ${shape === 'card' ? 'whitespace-normal' : 'whitespace-nowrap'} transition-colors duration-[80ms] ease-x active:scale-[.98] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-x-focus ${SHAPES[shape] || SHAPES.pill} ${DISABLED} ${SIZES[size]} ${selected ? SELECTED : VARIANTS[resolvedVariant]}`, className)}
+      className={mergeClasses(`group x-press inline-flex items-center justify-center gap-1.5 border font-medium ${shape === 'card' ? 'whitespace-normal' : 'whitespace-nowrap'} focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-x-focus ${SHAPES[shape] || SHAPES.pill} ${DISABLED} ${SIZES[size]} ${selected ? SELECTED : VARIANTS[resolvedVariant]}`, className)}
       {...props}
     >
       {loading ? <LoadingIcon size={iconSize} className="animate-spin" /> : Icon ? <Icon size={iconSize} /> : null}
@@ -106,7 +107,7 @@ export const IconButton = forwardRef(function IconButton(
       type={type}
       aria-label={label}
       title={props.title || label}
-      className={mergeClasses(`relative inline-flex shrink-0 items-center justify-center border transition-colors duration-[80ms] ease-x active:scale-[.98] focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-x-focus ${SHAPES[shape] || SHAPES.tile} ${DISABLED} ${ICON_SIZES[size]} ${selected ? SELECTED : VARIANTS[variant]}`, className)}
+      className={mergeClasses(`relative x-press inline-flex shrink-0 items-center justify-center border focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-x-focus ${SHAPES[shape] || SHAPES.tile} ${DISABLED} ${ICON_SIZES[size]} ${selected ? SELECTED : VARIANTS[variant]}`, className)}
       {...props}
     >
       <Icon size={iconSize} />

@@ -1,5 +1,5 @@
 import useDialogDrag from '../../hooks/useDialogDrag'
-import { useEffect, useId, useRef } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { cx } from './cx'
 import { IconButton } from './Button'
@@ -8,6 +8,9 @@ import { IconButton } from './Button'
 // Replaces the copy-pasted backdrop + x-panel + header pattern. Header shows
 // an icon tile + title + subtitle + close. Body is a flex column that fills the
 // remaining height (children manage their own scroll). Optional footer.
+// Opening: the scrim fades in, the sheet rises and fades in. Closing from the
+// X, Escape or the scrim fades both out first; the owner unmounts on `onClose`
+// when that fade ends.
 const SIZES = {
   sm: 'w-[min(520px,calc(100vw-1.5rem))] max-h-[min(660px,calc(100vh-1.5rem))]',
   md: 'w-[min(820px,calc(100vw-1.5rem))] h-[min(720px,calc(100vh-1.5rem))]',
@@ -32,6 +35,22 @@ export function Modal({
   const panelRef = useRef(null)
   const titleId = useId()
   const drag = useDialogDrag(panelRef, open)
+  const [closing, setClosing] = useState(false)
+  const latestClose = useRef(onClose)
+  useEffect(() => { latestClose.current = onClose }, [onClose])
+  const closeTimer = useRef(null)
+  const finishClose = useCallback(() => {
+    if (!closeTimer.current) return
+    clearTimeout(closeTimer.current)
+    closeTimer.current = null
+    latestClose.current?.()
+  }, [])
+  const requestClose = useCallback(() => {
+    if (!latestClose.current || closeTimer.current) return
+    setClosing(true)
+    closeTimer.current = setTimeout(finishClose, 240)
+  }, [finishClose])
+  useEffect(() => () => clearTimeout(closeTimer.current), [])
   useEffect(() => {
     const previous = document.activeElement
     panelRef.current?.focus()
@@ -39,17 +58,17 @@ export function Modal({
   }, [])
   useEffect(() => {
     if (!onClose) return
-    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e) => { if (e.key === 'Escape') requestClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, requestClose])
 
   if (!open) return null
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-x-scrim backdrop-blur-[4px] p-3 md:p-5"
-      onClick={onClose}
+      className={cx('x-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-x-scrim backdrop-blur-[4px] p-3 md:p-5 animate-in', closing && 'is-closing')}
+      onClick={requestClose}
     >
       <div
         ref={panelRef}
@@ -66,11 +85,12 @@ export function Modal({
           else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) { event.preventDefault(); first.focus() }
         }}
         className={cx(
-          'relative x-panel shadow-[var(--x-shadow-3)] flex flex-col outline-none scale-in',
+          'relative x-panel shadow-[var(--x-shadow-3)] flex flex-col outline-none scale-in x-modal-in',
           SIZES[size] || SIZES.lg,
           className,
         )}
         onClick={(e) => e.stopPropagation()}
+        onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finishClose() }}
       >
         {(title || Icon || onClose) && (
           <header {...drag.headerProps} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-x-line shrink-0">
@@ -87,7 +107,7 @@ export function Modal({
                 {subtitle && <p className="text-xs text-x-muted truncate mt-0.5">{subtitle}</p>}
               </div>
             </div>
-            {onClose && <IconButton icon={X} label="Close" onClick={onClose} />}
+            {onClose && <IconButton icon={X} label="Close" onClick={requestClose} />}
           </header>
         )}
 

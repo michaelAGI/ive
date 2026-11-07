@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { X, Pencil, Copy, CopyPlus, ClipboardCopy, Download, Trash2, Sparkles, FileText, Square, ExternalLink, Archive, ArchiveRestore } from 'lucide-react'
 import useStore from '../../state/store'
 import { api } from '../../lib/api'
@@ -11,29 +11,57 @@ import useEscapeToClose from '../../hooks/useEscapeToClose'
 // from this, Copy output / last message, Export, Summary, Close / Restore,
 // Stop, Delete.
 
+// Keeps the menu on screen. offsetWidth/Height ignore the entrance scale, so
+// the clamp holds while the menu is still animating in. The menu grows out of
+// the corner that touches its anchor, also after it flipped up or left.
 function clampTo(x, y, menuEl) {
-  const pos = { left: x, top: y }
+  const pos = { left: x, top: y, transformOrigin: '0 0' }
   if (!menuEl) return pos
-  const rect = menuEl.getBoundingClientRect()
-  if (rect.bottom > window.innerHeight) pos.top = Math.max(4, window.innerHeight - rect.height - 8)
-  if (rect.right > window.innerWidth) pos.left = Math.max(4, window.innerWidth - rect.width - 8)
+  const { offsetWidth: width, offsetHeight: height } = menuEl
+  if (y + height > window.innerHeight) pos.top = Math.max(4, window.innerHeight - height - 8)
+  if (x + width > window.innerWidth) pos.left = Math.max(4, window.innerWidth - width - 8)
+  pos.transformOrigin = `${pos.left < x ? '100%' : '0'} ${pos.top < y ? '100%' : '0'}`
   return pos
 }
 
-function MenuShell({ x, y, onClose, children, summary }) {
+// Closing fades the menu out first; the owner unmounts it when that animation
+// ends (or after a short fallback, should it never run). Every close path —
+// item, Escape, outside click — goes through `close`.
+function useDeferredClose(onClose) {
+  const [closing, setClosing] = useState(false)
+  const latest = useRef(onClose)
+  useEffect(() => { latest.current = onClose }, [onClose])
+  const timer = useRef(null)
+  const finish = useCallback(() => {
+    if (!timer.current) return
+    clearTimeout(timer.current)
+    timer.current = null
+    latest.current?.()
+  }, [])
+  const close = useCallback(() => {
+    if (timer.current) return
+    setClosing(true)
+    timer.current = setTimeout(finish, 240)
+  }, [finish])
+  useEffect(() => () => clearTimeout(timer.current), [])
+  return { closing, close, finish }
+}
+
+function MenuShell({ x, y, menu, children, summary }) {
   const menuRef = useRef(null)
-  const [pos, setPos] = useState({ left: x, top: y })
+  const [pos, setPos] = useState(() => clampTo(x, y, null))
+  const { closing, close, finish } = menu
 
   useEffect(() => {
-    const clickHandler = () => onClose()
+    const clickHandler = () => close()
     // React flushes this effect while the click that opened the menu is
     // still bubbling towards the window; listening from the next task keeps
     // that click from closing the menu it just opened.
     const timer = setTimeout(() => window.addEventListener('click', clickHandler), 0)
     return () => { clearTimeout(timer); window.removeEventListener('click', clickHandler) }
-  }, [onClose])
-  useEscapeToClose(true, onClose)
-  useEffect(() => { setPos(clampTo(x, y, menuRef.current)) }, [x, y])
+  }, [close])
+  useEscapeToClose(true, close)
+  useLayoutEffect(() => { setPos(clampTo(x, y, menuRef.current)) }, [x, y])
 
   return (
     <div
@@ -41,9 +69,10 @@ function MenuShell({ x, y, onClose, children, summary }) {
       role="menu"
       data-session-menu=""
       data-ive-popover=""
-      className="ive-session-context-menu x-panel scale-in"
+      className={`ive-session-context-menu x-panel scale-in${closing ? ' is-closing' : ''}`}
       style={pos}
       onClick={(e) => e.stopPropagation()}
+      onAnimationEnd={(e) => { if (closing && e.target === e.currentTarget) finish() }}
     >
       {summary && <div className="ive-session-context-summary">{summary}</div>}
       {children}
@@ -64,27 +93,29 @@ function MenuItems({ items }) {
 
 // Full menu of the project tree.
 export default function SessionContextMenu({ x, y, session, onClose, onOpenSummary, conversation = false }) {
-  const handleRename = () => { onClose(); requestSessionRename(session.id) }
+  const menu = useDeferredClose(onClose)
+  const { close } = menu
+  const handleRename = () => { close(); requestSessionRename(session.id) }
   const handleCopyOutput = async () => {
     try {
       const data = await api.getSessionOutput(session.id, 200)
       await navigator.clipboard.writeText(data.output || data.text || '')
     } catch { /* silent */ }
-    onClose()
+    close()
   }
   const handleCopyMessages = async () => {
     try {
       const msgs = await api.getMessages(session.id)
       if (msgs.length > 0) await navigator.clipboard.writeText(msgs[msgs.length - 1].content || '')
     } catch { /* silent */ }
-    onClose()
+    close()
   }
-  const handleStop = () => { useStore.getState().stopSession(session.id); onClose() }
-  const handleOpen = () => { useStore.getState().goSession(session.id, { autoStart: !conversation }); onClose() }
-  const handleExport = () => { window.open(`/api/sessions/${session.id}/export`, '_blank'); onClose() }
-  const handleDelete = async () => { onClose(); await deleteSessionWithConfirm(session.id) }
+  const handleStop = () => { useStore.getState().stopSession(session.id); close() }
+  const handleOpen = () => { useStore.getState().goSession(session.id, { autoStart: !conversation }); close() }
+  const handleExport = () => { window.open(`/api/sessions/${session.id}/export`, '_blank'); close() }
+  const handleDelete = async () => { close(); await deleteSessionWithConfirm(session.id) }
   const handleArchive = async () => {
-    onClose()
+    close()
     if (!session.archived) { await closeSession(session.id); return }
     try {
       await api.updateSession(session.id, { archived: 0 })
@@ -94,7 +125,7 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
       useStore.getState().addNotification({ type: 'warning', message: `Could not restore "${session.name}": ${err?.message || 'unknown error'}` })
     }
   }
-  const handleOpenSummary = () => { onOpenSummary?.(session); onClose() }
+  const handleOpenSummary = () => { onOpenSummary?.(session); close() }
   const handleClone = async () => {
     try {
       const cloned = await api.cloneSession(session.id)
@@ -103,9 +134,9 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
         useStore.getState().openSession(cloned.id)
       }
     } catch { /* silent */ }
-    onClose()
+    close()
   }
-  const handleLearn = () => { onClose(); learnFrom(session) }
+  const handleLearn = () => { close(); learnFrom(session) }
 
   const isRunning = session.status === 'running'
   const items = [
@@ -125,7 +156,7 @@ export default function SessionContextMenu({ x, y, session, onClose, onOpenSumma
     { icon: Trash2, label: 'Delete', action: handleDelete, danger: true },
   ]
 
-  return <MenuShell x={x} y={y} onClose={onClose} summary={session.summary}><MenuItems items={items} /></MenuShell>
+  return <MenuShell x={x} y={y} menu={menu} summary={session.summary}><MenuItems items={items} /></MenuShell>
 }
 
 async function learnFrom(session) {
@@ -141,24 +172,26 @@ async function learnFrom(session) {
 
 // Short menu of tiles and chips (formerly SessionTabs.ContextMenu).
 export function ContextMenu({ x, y, session, onClose }) {
-  const handleRename = () => { onClose(); requestSessionRename(session.id) }
+  const menu = useDeferredClose(onClose)
+  const { close } = menu
+  const handleRename = () => { close(); requestSessionRename(session.id) }
   const handleClone = async () => {
     const cloned = await api.cloneSession(session.id)
     useStore.getState().addSession(cloned)
-    onClose()
+    close()
   }
-  const handleExport = () => { window.open(`/api/sessions/${session.id}/export`, '_blank'); onClose() }
-  const handleDelete = async () => { onClose(); await deleteSessionWithConfirm(session.id) }
-  const handleLearn = () => { onClose(); learnFrom(session) }
+  const handleExport = () => { window.open(`/api/sessions/${session.id}/export`, '_blank'); close() }
+  const handleDelete = async () => { close(); await deleteSessionWithConfirm(session.id) }
+  const handleLearn = () => { close(); learnFrom(session) }
 
   const items = [
     { icon: Pencil, label: 'Rename', action: handleRename },
     { icon: Copy, label: 'Clone', action: handleClone },
     { icon: Sparkles, label: 'Learn from this', action: handleLearn },
     { icon: Download, label: 'Export', action: handleExport },
-    { icon: X, label: 'Close session', action: () => { onClose(); closeSession(session.id) } },
+    { icon: X, label: 'Close session', action: () => { close(); closeSession(session.id) } },
     { icon: Trash2, label: 'Delete', action: handleDelete, danger: true },
   ]
 
-  return <MenuShell x={x} y={y} onClose={onClose}><MenuItems items={items} /></MenuShell>
+  return <MenuShell x={x} y={y} menu={menu}><MenuItems items={items} /></MenuShell>
 }

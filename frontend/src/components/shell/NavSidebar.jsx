@@ -1,6 +1,6 @@
 import { visibleSessions } from '../../lib/visibleSessions'
 import { sessionNeedsAttention } from '../../lib/sessionAttention'
-import { useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Command, Plus, SquarePen, Search, X, House, Columns3, GitCompareArrows, BookOpen, Settings, Plug, Smartphone, PanelLeftClose } from 'lucide-react'
 import useStore from '../../state/store'
 import useView from '../../hooks/useView'
@@ -18,8 +18,9 @@ import useExperienceMode from '../../state/experienceMode'
 import ChatHistory from './ChatHistory'
 
 // The sidebar: brand, filter, Work (Home · Overview · Changes · Knowledge), the
-// project tree, Set up (Settings · Connectors · Phone), and the foot. Helper
-// sessions (Commander, Brainstormer) never appear here.
+// project tree, Set up (Settings · Connectors · Phone), the foot and, on the
+// desktop, the drag handle on its right edge. Helper sessions (Commander,
+// Brainstormer) never appear here.
 function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {
   return (
     <button
@@ -35,6 +36,115 @@ function NavItem({ id, icon: Icon, label, current, onClick, children, title }) {
       <span className="ive-nav-label">{label}</span>
       {children}
     </button>
+  )
+}
+
+// ── Sidebar width ───────────────────────────────────────────────────────────
+// The right edge drags like a Finder sidebar. The width is the CSS variable
+// `--ive-sidebar-w` on the <aside>: while dragging it is written straight to
+// the element (no React render per frame) and committed to state and
+// localStorage on release. Terminals re-fit through `cc-terminal-refit`, the
+// event the drawer and the grid already use.
+export const SIDEBAR_WIDTH_KEY = 'ive.sidebar-width.v1'
+export const SIDEBAR_WIDTH = Object.freeze({ min: 200, max: 440, default: 240, step: 16 })
+
+export function clampSidebarWidth(value) {
+  const n = Math.round(Number(value))
+  if (!Number.isFinite(n)) return SIDEBAR_WIDTH.default
+  return Math.min(SIDEBAR_WIDTH.max, Math.max(SIDEBAR_WIDTH.min, n))
+}
+
+function readSidebarWidth() {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY)
+    return raw === null ? SIDEBAR_WIDTH.default : clampSidebarWidth(raw)
+  } catch { return SIDEBAR_WIDTH.default }
+}
+
+function writeSidebarWidth(width) {
+  try {
+    if (width === SIDEBAR_WIDTH.default) localStorage.removeItem(SIDEBAR_WIDTH_KEY)
+    else localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width))
+  } catch { /* privacy mode */ }
+}
+
+function requestTerminalRefit() {
+  for (const delay of [0, 150, 350]) setTimeout(() => window.dispatchEvent(new Event('cc-terminal-refit')), delay)
+}
+
+const RESIZE_KEYS = { ArrowLeft: -SIDEBAR_WIDTH.step, ArrowRight: SIDEBAR_WIDTH.step }
+
+function SidebarResizeHandle() {
+  const [width, setWidth] = useState(readSidebarWidth)
+  const [dragging, setDragging] = useState(false)
+  const handleRef = useRef(null)
+  const drag = useRef(null)
+
+  // The handle sits inside the <aside>; its own ref is attached before this
+  // layout effect runs, so the width is on screen with the first paint.
+  const apply = useCallback((next) => {
+    const handle = handleRef.current
+    handle?.closest('.x-sidebar')?.style.setProperty('--ive-sidebar-w', `${next}px`)
+    handle?.setAttribute('aria-valuenow', String(next))
+  }, [])
+  useLayoutEffect(() => { apply(width) }, [apply, width])
+
+  const commit = useCallback((value) => {
+    const next = clampSidebarWidth(value)
+    apply(next)
+    setWidth(next)
+    writeSidebarWidth(next)
+    requestTerminalRefit()
+  }, [apply])
+
+  const endDrag = (event) => {
+    const d = drag.current
+    if (!d || event.pointerId !== d.pointerId) return
+    drag.current = null
+    document.body.classList.remove('ive-sidebar-resizing')
+    setDragging(false)
+    try { if (event.currentTarget.hasPointerCapture(d.pointerId)) event.currentTarget.releasePointerCapture(d.pointerId) } catch { /* already released */ }
+    commit(d.width)
+  }
+
+  return (
+    <div
+      ref={handleRef}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-controls="ive-project-sidebar"
+      aria-valuemin={SIDEBAR_WIDTH.min}
+      aria-valuemax={SIDEBAR_WIDTH.max}
+      aria-valuenow={width}
+      tabIndex={0}
+      data-sidebar-resize=""
+      className={`ive-sidebar-resize${dragging ? ' is-dragging' : ''}`}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || drag.current) return
+        drag.current = { pointerId: event.pointerId, x: event.clientX, start: width, width }
+        try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* moves still arrive while over the handle */ }
+        document.body.classList.add('ive-sidebar-resizing')
+        setDragging(true)
+      }}
+      onPointerMove={(event) => {
+        const d = drag.current
+        if (!d || event.pointerId !== d.pointerId) return
+        const next = clampSidebarWidth(d.start + event.clientX - d.x)
+        if (next === d.width) return
+        d.width = next
+        apply(next)
+      }}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onLostPointerCapture={endDrag}
+      onDoubleClick={() => commit(SIDEBAR_WIDTH.default)}
+      onKeyDown={(event) => {
+        if (Object.hasOwn(RESIZE_KEYS, event.key)) { event.preventDefault(); commit(width + RESIZE_KEYS[event.key]) }
+        else if (event.key === 'Home') { event.preventDefault(); commit(SIDEBAR_WIDTH.min) }
+        else if (event.key === 'End') { event.preventDefault(); commit(SIDEBAR_WIDTH.max) }
+      }}
+    />
   )
 }
 
@@ -157,6 +267,7 @@ export default function NavSidebar({
       </nav>
 
       <SidebarFoot />
+      {!isMobile && <SidebarResizeHandle />}
     </aside>
   )
 }

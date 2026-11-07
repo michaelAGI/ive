@@ -138,6 +138,9 @@ html[data-theme="light"] {
   --x-tooltip-ink: #F4F6FA;
   --x-scrollbar-hover: #9CA3AF;
   --x-ease: cubic-bezier(0.2, 0, 0, 1);
+  --x-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --x-press-scale: .97;
+  --x-press-scale-row: .985;
 }
 
 html[data-theme="dark"] {
@@ -471,8 +474,26 @@ code {
 }
 
 @keyframes scale-in {
-  from { transform: scale(0.98); opacity: 0; }
+  from { transform: scale(0.97); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
+}
+
+/* Sheets rise a little as they fade in; menus pop from their anchor. */
+@keyframes x-rise-in {
+  from { transform: translateY(8px) scale(0.98); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes x-pop-out {
+  to { transform: scale(0.97); opacity: 0; }
+}
+
+@keyframes x-sink-out {
+  to { transform: translateY(4px) scale(0.99); opacity: 0; }
+}
+
+@keyframes fade-out {
+  to { opacity: 0; }
 }
 
 @keyframes subtle-pulse {
@@ -493,7 +514,24 @@ code {
 }
 
 .scale-in {
-  animation: scale-in 0.18s var(--x-ease);
+  animation: scale-in 0.16s var(--x-ease-out);
+  transform-origin: 50% 0;
+}
+
+/* A panel directly under a scrim is a sheet: slide up + fade, ease-out. */
+[class*="fixed inset-0"] > .scale-in,
+.x-modal-in {
+  animation: x-rise-in 0.2s var(--x-ease-out);
+  transform-origin: 50% 50%;
+}
+
+.x-modal-shell.is-closing {
+  animation: fade-out 0.12s var(--x-ease) forwards;
+  pointer-events: none;
+}
+
+.x-modal-shell.is-closing > .x-modal-in {
+  animation: x-sink-out 0.12s var(--x-ease) forwards;
 }
 
 .animate-subtle-pulse {
@@ -732,6 +770,10 @@ code {
   .animate-in {
     animation-duration: 120ms !important;
   }
+  /* press feedback stays a colour change; menus and sheets crossfade */
+  :root, html[data-theme] { --x-press-scale: 1; --x-press-scale-row: 1; }
+  .scale-in, .x-modal-in { animation-name: fade-in !important; animation-duration: 120ms !important; }
+  .ive-session-context-menu.is-closing, .x-modal-shell.is-closing, .x-modal-shell.is-closing > .x-modal-in { animation-name: fade-out !important; animation-duration: 80ms !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -757,6 +799,26 @@ select {
 button,
 [role="button"] {
   transition-property: color, background-color, border-color, box-shadow, opacity;
+}
+
+/* ─── Press feedback — buttons and rows settle under the pointer, then spring back ─── */
+.x-press,
+.ive-btn, .ive-header-btn, .ive-sidebar-icon-btn, .ive-sidebar-new-chat, .ive-sidebar-filter-clear,
+.ive-project-action, .ive-needs-you, .ive-sidebar-toggle, .ive-sidebar-foot-identity, .ive-sidebar-foot-share,
+.ive-chat-history-heading button, .ive-chat-history-load, .ive-sidebar-empty button {
+  transition: color .08s var(--x-ease), background-color .08s var(--x-ease), border-color .08s var(--x-ease), box-shadow .08s var(--x-ease), opacity .08s var(--x-ease), transform .16s var(--x-ease-out);
+}
+
+/* Rows: the same spring with a lighter scale; hover and selection change in 120 ms. */
+.ive-nav-item, .x-session-card, .x-workspace-group > [role="button"], .ive-chat-history-row, .ive-session-context-item {
+  --x-press-scale: var(--x-press-scale-row);
+  transition: color .12s var(--x-ease), background-color .12s var(--x-ease), box-shadow .12s var(--x-ease), transform .16s var(--x-ease-out);
+}
+
+:is(.x-press, .ive-btn, .ive-header-btn, .ive-sidebar-icon-btn, .ive-sidebar-new-chat, .ive-sidebar-filter-clear, .ive-project-action, .ive-needs-you, .ive-sidebar-toggle, .ive-sidebar-foot-identity, .ive-sidebar-foot-share, .ive-chat-history-heading button, .ive-chat-history-load, .ive-sidebar-empty button,
+.ive-nav-item, .x-session-card, .x-workspace-group > [role="button"], .ive-chat-history-row, .ive-session-context-item):active:not(:disabled, [aria-disabled="true"]) {
+  transform: scale(var(--x-press-scale));
+  transition-duration: .06s;
 }
 
 /* Tailwind hardcodes the bare `rounded` family at 4px (it reads no theme var, so
@@ -1482,8 +1544,20 @@ pre {
 .ive-btn:focus-visible, .ive-header-btn:focus-visible, .ive-nav-item:focus-visible, .ive-sidebar-icon-btn:focus-visible { outline: 1px solid var(--x-focus); outline-offset: 1px; }
 
 /* ─── Sidebar ─── */
-.x-sidebar { display: flex; flex-direction: column; width: var(--ive-sidebar-w); min-width: 0; flex: 0 0 auto; height: 100%; background: var(--x-bg); border-right: 1px solid var(--x-line); color: var(--x-ink); font-size: var(--x-fs-body); }
+.x-sidebar { position: relative; display: flex; flex-direction: column; width: var(--ive-sidebar-w); min-width: 0; flex: 0 0 auto; height: 100%; background: var(--x-bg); border-right: 1px solid var(--x-line); color: var(--x-ink); font-size: var(--x-fs-body); }
 .ive-control-surface {}
+/* Drag the right edge to resize (components/shell/NavSidebar.jsx). The line
+   shows on hover, while dragging and under keyboard focus; the width is the
+   `--ive-sidebar-w` variable on the <aside>. */
+.ive-sidebar-resize { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 5; width: 7px; cursor: col-resize; touch-action: none; }
+.ive-sidebar-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; border-radius: 1px; background: var(--x-line-strong); opacity: 0; transition: opacity .12s var(--x-ease); }
+.ive-sidebar-resize:hover::after { opacity: 1; transition-delay: .1s; }
+.ive-sidebar-resize.is-dragging::after { opacity: 1; transition-delay: 0s; }
+.ive-sidebar-resize:focus-visible { outline: none !important; }
+.ive-sidebar-resize:focus-visible::after { opacity: 1; background: var(--x-focus); }
+.ive-sidebar-resizing, .ive-sidebar-resizing * { cursor: col-resize !important; }
+.ive-sidebar-resizing { user-select: none; -webkit-user-select: none; }
+.ive-sidebar-resizing iframe { pointer-events: none; }
 .ive-sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: var(--ive-header-h); padding: 0 10px 0 14px; flex: none; }
 .ive-sidebar-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ive-brand-mark { width: 20px; height: 20px; flex: none; }
@@ -1524,6 +1598,10 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 .ive-nav-item:hover { color: var(--x-ink); background: var(--x-hover); }
 .ive-nav-item[aria-current="page"] { color: var(--x-accent); background: var(--x-tint); font-weight: 500; }
 .ive-nav-item[aria-current="page"] > svg { color: var(--x-accent); }
+/* The chat list's open conversation: tint + accent like Work items and session cards. */
+.ive-chat-history .ive-chat-history-row.is-active { background: var(--x-tint); }
+.ive-chat-history .ive-chat-history-row.is-active .ive-chat-history-open strong,
+.ive-chat-history .ive-chat-history-row.is-active .ive-chat-history-open > svg { color: var(--x-accent); }
 .ive-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ive-nav-badge { display: inline-flex; align-items: center; gap: 4px; font-size: var(--x-fs-label); font-variant-numeric: tabular-nums; color: var(--x-muted); }
 .ive-nav-badge-running { color: var(--x-running); }
@@ -1617,7 +1695,8 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 .ive-grid-layout-item.is-active, .ive-grid-layout-item.is-accent { color: var(--x-accent); }
 
 /* ─── Session context menu (components/shell/SessionContextMenu) ─── */
-.ive-session-context-menu { position: fixed; z-index: 60; min-width: 170px; max-width: 280px; padding: 4px; }
+.ive-session-context-menu { position: fixed; z-index: 60; min-width: 170px; max-width: 280px; padding: 4px; animation: scale-in .16s var(--x-ease-out); transform-origin: 0 0; }
+.ive-session-context-menu.is-closing { animation: x-pop-out .12s var(--x-ease) forwards; pointer-events: none; }
 .ive-session-context-summary { padding: 6px 8px 8px; border-bottom: 1px solid var(--x-line-subtle); color: var(--x-muted); font-size: var(--x-fs-label); line-height: 1.5; font-style: italic; }
 .ive-session-context-sep { margin: 4px 0; border-top: 1px solid var(--x-line-subtle); }
 .ive-session-context-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border-radius: var(--x-radius); color: var(--x-ink-secondary); font-size: var(--x-fs-meta); text-align: left; }
@@ -1679,6 +1758,7 @@ html[data-theme="dark"] .ive-provider-logo .ive-provider-logo-dark { display: bl
 /* ─── Phones ─── */
 @media (max-width: 767px) {
   .x-sidebar { width: 100%; border-right: 0; }
+  .ive-sidebar-resize { display: none; }
   .ive-sidebar-head { padding-left: 12px; }
   .ive-nav-item, .x-session-card, .ive-sidebar-icon-btn { min-height: 40px; }
   .ive-sidebar-filter input { height: 40px; }
