@@ -52,6 +52,7 @@ _MESSAGES = {
     "heartbeat_expired": "The connection between IVE and its background helper stopped, so normal sleep is restored. Turn the feature on again while IVE is running.",
     "app_exited": "IVE stopped and normal sleep is restored. Turn the feature on again after reopening IVE.",
     "helper_restarted": "The background helper restarted and restored normal sleep. Turn the feature on again if you still need it.",
+    "helper_restarting": "The background helper is restarting after an app update. Try again in a moment.",
     "restore_failed": "Normal sleep could not be verified. Keep the lid open and choose Turn off and restore again (Restore normal sleep in iPhone setup). If that fails, run: sudo pmset -a disablesleep 0, or restart the Mac.",
     "recovery_journal_unreadable": "The background helper could not check a previous session. Keep the lid open and restart the Mac to clear it.",
     "not_found": "The IVE background helper is missing from this app. Install the latest IVE Mac app.",
@@ -66,6 +67,10 @@ SETTINGS_PANES = {
 # Registration replies name a state but no reason; the state alone says what to do.
 _STATE_REASONS = {"needs_approval": "macos_helper_approval_required", "not_registered": "macos_helper_not_registered",
                   "unregistered": "macos_helper_not_registered", "not_found": "not_found"}
+# After an app update the daemon answers helper_restarting, exits and launchd relaunches it from the new
+# bundle. Waits before the bounded retries of the same request; the second one only bridges a relaunch gap.
+RESTART_WAITS = (1.5, 2.0)
+_RELAUNCH_GAP = {"helper_connection_failed", "helper_response_timeout"}
 
 
 def message_for(reason, *, refusing=False):
@@ -146,6 +151,26 @@ class PhoneAvailability:
             raise PowerRefusal("helper_connection_failed")
         return result
 
+    async def _ask(self, payload):
+        """One helper request that follows the daemon's hand-over to an updated app bundle.
+
+        helper_restarting means the daemon did nothing, restored normal sleep and is exiting so
+        that launchd relaunches it from the new bundle. Send the same request again after a short
+        wait. If that retry falls into the relaunch gap, try once more, except for start, whose
+        outcome would then be unknown. Bounded by RESTART_WAITS; every other reply returns as is.
+        """
+        result = await self.caller(payload)
+        restarting = False
+        for wait in RESTART_WAITS:
+            reason = result.get("reason")
+            if reason == "helper_restarting":
+                restarting = True
+            elif not (restarting and reason in _RELAUNCH_GAP and payload["action"] != "start"):
+                break
+            await asyncio.sleep(wait)
+            result = await self.caller(payload)
+        return result
+
     def _remember(self, result):
         self.revision += 1
         phase = result.get("status", result.get("state", "blocked"))
@@ -179,7 +204,7 @@ class PhoneAvailability:
         # when it fails. Do not lock this IPC: Stop must remain able to proceed
         # while a status helper is slow or unavailable.
         try:
-            result = await self.caller({"action": "status", "app_pid": self.app_pid})
+            result = await self._ask({"action": "status", "app_pid": self.app_pid})
         except Exception as exc:
             if revision != self.revision:
                 return dict(self.last)
@@ -194,7 +219,7 @@ class PhoneAvailability:
         """Register the background helper with macOS. Approval may still be pending; nothing starts."""
         async with self.lock:
             self.revision += 1
-            return self._remember(await self.caller({"action": "register", "app_pid": self.app_pid}))
+            return self._remember(await self._ask({"action": "register", "app_pid": self.app_pid}))
 
     async def start(self, *, allow_battery, duration_seconds=MAX_DURATION,
                     purpose="phone", lid_low_power=False, pause_apps=None):
@@ -220,13 +245,13 @@ class PhoneAvailability:
                                        message="Normal sleep must be verified before battery use changes. Keep the lid open and try again in a moment.")
             if purpose == "phone" and not self.connected():
                 raise PowerConflict("phone_connection_required")
-            status = await self.caller({"action": "status", "app_pid": self.app_pid})
+            status = await self._ask({"action": "status", "app_pid": self.app_pid})
             if (lid_low_power or pause_apps) and status.get("lid_saver_supported") is not True:
                 raise PowerRefusal("helper_outdated", state=status.get("status"))
             if status.get("status") == "needs_approval":
                 return self._remember(status)
             if status.get("status") in {"not_registered", "unregistered"}:
-                status = await self.caller({"action": "register", "app_pid": self.app_pid})
+                status = await self._ask({"action": "register", "app_pid": self.app_pid})
                 if status.get("ok") is not True or status.get("status") != "ready":
                     return self._remember(status)
             payload = {"action": "start", "app_pid": self.app_pid,
@@ -234,7 +259,7 @@ class PhoneAvailability:
             if lid_low_power or pause_apps:
                 payload.update(lid_low_power=lid_low_power, pause_apps=pause_apps)
             try:
-                result = await self.caller(payload)
+                result = await self._ask(payload)
             except Exception:
                 self._remember({"state": "restoring", "reason": "helper_connection_failed",
                                 "message": "Start could not be confirmed. Check status before retrying; the helper restores an unrenewed session automatically."})
@@ -272,6 +297,9 @@ class PhoneAvailability:
                     await self._stop_lease()
                     return
                 result = await self.caller({"action": "renew", "lease_id": self.lease, "app_pid": self.app_pid})
+                if result.get("reason") == "helper_restarting":
+                    # The daemon restored normal sleep before handing over to the updated app; this lease is over.
+                    result = {**result, "reason": "helper_restarted"}
                 self._remember(result)
                 if not result.get("ok") or result.get("status") != "active":
                     if result.get("status") in {"ready", "stopped"}:
@@ -292,7 +320,13 @@ class PhoneAvailability:
         lease = self.lease
         if lease:
             try:
-                view = self._remember(await self.caller({"action": "stop", "lease_id": lease, "app_pid": self.app_pid}))
+                result = await self.caller({"action": "stop", "lease_id": lease, "app_pid": self.app_pid})
+                if result.get("reason") == "helper_restarting":
+                    # The daemon restored normal sleep before handing over to the updated app, which is
+                    # what Stop asked for. Its status says whether that restoration was verified.
+                    verified = result.get("status") in {"ready", "stopped"}
+                    result = {**result, "ok": verified, "reason": None if verified else "restore_failed"}
+                view = self._remember(result)
                 if view["state"] in {"ready", "stopped"}:
                     self.lease = None
                     self.purpose = None

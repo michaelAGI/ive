@@ -4,8 +4,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from phone_availability import (PhoneAvailability, PowerConflict, PowerRefusal, MAX_DURATION, SETTINGS_PANES,
-                                _MESSAGES, _START_REFUSALS)
+from phone_availability import (PhoneAvailability, PowerConflict, PowerRefusal, MAX_DURATION, RESTART_WAITS,
+                                SETTINGS_PANES, _MESSAGES, _START_REFUSALS)
+
+# The daemon's reply while it leaves for the helper of an updated app bundle, and
+# the CLI's reply when the relaunched daemon is not listening yet.
+RESTARTING = {"ok": False, "status": "ready", "reason": "helper_restarting"}
+GAP = {"ok": False, "status": "unavailable", "reason": "helper_connection_failed"}
 
 
 class Helper:
@@ -14,10 +19,13 @@ class Helper:
         self.phase = "ready"
         self.start_token = "private-test-lease"
         self.refusal = None
+        self.scripted = {}  # action -> canned replies, consumed before the normal behaviour
 
     async def __call__(self, value):
         self.calls.append(value)
         action = value["action"]
+        if self.scripted.get(action):
+            return dict(self.scripted[action].pop(0))
         if action == "start" and self.refusal:
             return {"ok": False, "status": self.phase, "reason": self.refusal}
         if action == "start":
@@ -256,6 +264,125 @@ class AvailabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await pending, stopped)
         self.assertEqual(self.controller.last, stopped)
         self.assertNotIn('message', self.controller.last)
+
+    def instant_waits(self):
+        """Record the retry waits instead of sleeping; still yield to the loop once."""
+        real_sleep, waits = asyncio.sleep, []
+
+        async def fake(delay):
+            waits.append(delay)
+            await real_sleep(0)
+
+        return patch('phone_availability.asyncio.sleep', new=fake), waits
+
+    async def test_status_asks_again_once_the_updated_helper_is_back(self):
+        self.helper.scripted = {'status': [RESTARTING]}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.status()
+        self.assertEqual(view['state'], 'ready')
+        self.assertIsNone(view.get('reason'))
+        self.assertNotIn('message', view)
+        self.assertEqual([c['action'] for c in self.helper.calls], ['status', 'status'])
+        self.assertEqual(waits, [1.5])
+        self.assertEqual(RESTART_WAITS[0], 1.5)
+
+    async def test_start_waits_for_the_relaunched_helper_instead_of_failing(self):
+        self.helper.scripted = {'status': [RESTARTING]}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.start(allow_battery=True)
+        self.assertEqual((view['state'], self.controller.lease), ('active', 'private-test-lease'))
+        self.assertEqual([c['action'] for c in self.helper.calls], ['status', 'status', 'start'])
+        self.assertEqual(waits, [1.5])
+        await self.controller.stop()
+        # The hand-over reply to start itself means nothing started; the same start is sent once more.
+        self.helper.calls.clear()
+        self.helper.scripted = {'start': [RESTARTING]}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.start(allow_battery=True)
+        self.assertEqual(view['state'], 'active')
+        self.assertEqual([c['action'] for c in self.helper.calls], ['status', 'start', 'start'])
+        self.assertEqual(self.helper.calls[1], self.helper.calls[2])
+        self.assertEqual(waits, [1.5])
+
+    async def test_repeated_handover_is_reported_after_bounded_retries(self):
+        self.helper.scripted = {'status': [RESTARTING] * 5}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.status()
+        self.assertEqual((view['state'], view['reason']), ('ready', 'helper_restarting'))
+        self.assertIn('Try again in a moment', view['message'])
+        self.assertEqual(len(self.helper.calls), 1 + len(RESTART_WAITS))
+        self.assertEqual(waits, list(RESTART_WAITS))
+        self.helper.calls.clear()
+        self.helper.scripted = {'start': [RESTARTING] * 5}
+        patcher, waits = self.instant_waits()
+        with patcher, self.assertRaises(PowerRefusal) as failure:
+            await self.controller.start(allow_battery=True)
+        self.assertEqual((failure.exception.reason, failure.exception.state), ('helper_restarting', 'ready'))
+        self.assertEqual(sum(c['action'] == 'start' for c in self.helper.calls), 1 + len(RESTART_WAITS))
+        self.assertIsNone(self.controller.lease)
+
+    async def test_relaunch_gap_after_handover_is_bridged_except_for_start(self):
+        self.helper.scripted = {'status': [RESTARTING, GAP]}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.status()
+        self.assertEqual(view['state'], 'ready')
+        self.assertEqual([c['action'] for c in self.helper.calls], ['status'] * 3)
+        self.assertEqual(waits, [1.5, 2.0])
+        # A start whose retry falls into the gap has an unknown outcome: no third attempt.
+        self.helper.calls.clear()
+        self.helper.scripted = {'start': [RESTARTING, GAP]}
+        patcher, waits = self.instant_waits()
+        with patcher, self.assertRaises(PowerRefusal) as failure:
+            await self.controller.start(allow_battery=True)
+        self.assertEqual(failure.exception.reason, 'helper_connection_failed')
+        self.assertEqual([c['action'] for c in self.helper.calls], ['status', 'start', 'start'])
+        self.assertEqual(waits, [1.5])
+        self.assertIsNone(self.controller.lease)
+        # Without a preceding hand-over a connection failure is final, as before.
+        self.helper.calls.clear()
+        self.helper.scripted = {'status': [GAP]}
+        self.controller.last_check = float('-inf')
+        patcher, waits = self.instant_waits()
+        with patcher:
+            view = await self.controller.status()
+        self.assertEqual((view['state'], view['reason']), ('unavailable', 'helper_connection_failed'))
+        self.assertEqual((len(self.helper.calls), waits), (1, []))
+
+    async def test_heartbeat_handover_ends_the_lease_without_a_retry(self):
+        await self.controller.start(allow_battery=True)
+        await self.controller._cancel_heartbeat()
+        self.helper.calls.clear()
+        self.helper.scripted = {'renew': [RESTARTING]}
+        patcher, waits = self.instant_waits()
+        with patcher:
+            await asyncio.wait_for(self.controller._heartbeat(), 1)
+        self.assertEqual([c['action'] for c in self.helper.calls], ['renew'])
+        self.assertIsNone(self.controller.lease)
+        self.assertEqual((self.controller.last['state'], self.controller.last['reason']), ('ready', 'helper_restarted'))
+        self.assertIn('restored normal sleep', self.controller.last['message'])
+        self.assertEqual(waits, [10])
+
+    async def test_stop_during_handover_counts_as_the_requested_stop(self):
+        await self.controller.start(allow_battery=True)
+        self.helper.scripted = {'stop': [RESTARTING]}
+        view = await self.controller.stop()
+        self.assertEqual(view['state'], 'ready')
+        self.assertIsNone(view.get('reason'))
+        self.assertNotIn('message', view)
+        self.assertIsNone(self.controller.lease)
+        self.assertEqual([c['action'] for c in self.helper.calls if c['action'] == 'stop'], ['stop'])
+        # An unverified restoration stays visible and keeps the lease for the next stop.
+        await self.controller.start(allow_battery=True)
+        self.helper.scripted = {'stop': [{**RESTARTING, 'status': 'restore_failed'}]}
+        view = await self.controller.stop()
+        self.assertEqual((view['state'], view['reason']), ('restore_failed', 'restore_failed'))
+        self.assertIn('disablesleep 0', view['message'])
+        self.assertEqual(self.controller.lease, 'private-test-lease')
 
 
 if __name__ == '__main__':

@@ -55,8 +55,7 @@ private func validateCode(pid: pid_t, requirement: String) throws {
     }
 }
 
-private func validateEmbeddedService(_ root: URL) throws {
-    let binary = try EmbeddedPhoneService.validateLayout(app: root)
+private func validateHelperSignature(_ binary: URL) throws {
     var code: SecStaticCode?
     var required: SecRequirement?
     guard SecRequirementCreateWithString(helperRequirement as CFString, [], &required) == errSecSuccess,
@@ -67,6 +66,10 @@ private func validateEmbeddedService(_ root: URL) throws {
     }
 }
 
+private func validateEmbeddedService(_ root: URL) throws {
+    try validateHelperSignature(try EmbeddedPhoneService.validateLayout(app: root))
+}
+
 private func ownAppRoot() throws -> URL {
     let path = try processInfo(getpid()).0.executable
     let url = URL(fileURLWithPath: path)
@@ -75,6 +78,41 @@ private func ownAppRoot() throws -> URL {
         throw PowerError("helper_not_in_app_bundle")
     }
     return root
+}
+
+// Which file a path names right now; two samples differ once it was replaced.
+private struct FileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+    init?(path: String) {
+        var info = stat()
+        guard stat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
+        device = info.st_dev
+        inode = info.st_ino
+    }
+}
+
+// launchd starts the daemon from the registered bundle path. After an app
+// update that path holds a newer helper while this process still runs the old
+// binary, whose own path follows the moved bundle (or is gone), so every client
+// fails `trustedOwner` with client_path_mismatch. The daemon then hands over:
+// it restores normal sleep, answers `helper_restarting`, exits, and `KeepAlive`
+// relaunches the helper from the updated bundle. Only a Developer ID signed IVE
+// helper at the launch path counts as a replacement. A missing file keeps this
+// process alive, because launchd could not relaunch anything in its place.
+private final class LaunchIdentity {
+    let path: String
+    let file: FileIdentity
+    init?() {
+        guard (try? ownAppRoot()) != nil, let path = try? processInfo(getpid()).0.executable,
+              let file = FileIdentity(path: path) else { return nil }
+        self.path = path
+        self.file = file
+    }
+    func replaced() -> Bool {
+        guard let current = FileIdentity(path: path), current != file else { return false }
+        return (try? validateHelperSignature(URL(fileURLWithPath: path))) != nil
+    }
 }
 
 // The signed CLI cannot be used as a general root broker by arbitrary scripts.
@@ -403,8 +441,10 @@ private final class ConnectionHandler: NSObject, PowerRPC {
     let connection: NSXPCConnection
     let controller: LeaseController
     let boot: String
-    init(connection: NSXPCConnection, controller: LeaseController, boot: String) {
-        self.connection = connection; self.controller = controller; self.boot = boot
+    // Serial queue only. True when the daemon leaves for its updated replacement.
+    let handover: (pid_t) -> Bool
+    init(connection: NSXPCConnection, controller: LeaseController, boot: String, handover: @escaping (pid_t) -> Bool) {
+        self.connection = connection; self.controller = controller; self.boot = boot; self.handover = handover
     }
 
     func request(_ data: Data, reply: @escaping (Data) -> Void) {
@@ -412,6 +452,9 @@ private final class ConnectionHandler: NSObject, PowerRPC {
             do {
                 guard data.count <= 16384 else { throw PowerError("request_too_large") }
                 let input = try JSONDecoder().decode(Request.self, from: data)
+                // An updated bundle makes every client fail trustedOwner; the
+                // request did nothing and the client retries after the relaunch.
+                guard !self.handover(self.connection.processIdentifier) else { throw PowerError("helper_restarting") }
                 let owner = try trustedOwner(clientPID: self.connection.processIdentifier,
                                              uid: self.connection.effectiveUserIdentifier,
                                              requestedPID: input.app_pid)
@@ -465,6 +508,8 @@ private final class ConnectionHandler: NSObject, PowerRPC {
 private final class Daemon: NSObject, NSXPCListenerDelegate {
     let controller = LeaseController(power: MacPowerAdapter(), journal: RootJournal(), lid: MacLidAdapter())
     let boot: String
+    private let launch = LaunchIdentity() // nil: this process never hands over
+    private var handingOver = false
     private var timer: DispatchSourceTimer?
     private var signals: [DispatchSourceSignal] = []
     init(boot: String) { self.boot = boot; super.init() }
@@ -473,9 +518,27 @@ private final class Daemon: NSObject, NSXPCListenerDelegate {
         guard connection.effectiveUserIdentifier != 0 else { return false }
         connection.setCodeSigningRequirement(helperRequirement)
         connection.exportedInterface = NSXPCInterface(with: PowerRPC.self)
-        connection.exportedObject = ConnectionHandler(connection: connection, controller: controller, boot: boot)
+        connection.exportedObject = ConnectionHandler(connection: connection, controller: controller, boot: boot,
+                                                      handover: { [weak self] pid in self?.handover(clientPID: pid) ?? false })
         connection.invalidationHandler = { [weak connection] in connection?.exportedObject = nil }
         connection.resume()
+        return true
+    }
+
+    // Serial queue only. Leaves once a signed newer helper sits at the launch
+    // path, so launchd relaunches that one. The watchdog passes nil; a request
+    // hands over only for a client that itself carries the helper signature.
+    // Everyone else keeps trustedOwner's refusal, which cannot end this process.
+    private func handover(clientPID: pid_t?) -> Bool {
+        if handingOver { return true }
+        guard let launch, launch.replaced() else { return false }
+        if let clientPID, (try? validateCode(pid: clientPID, requirement: helperRequirement)) == nil { return false }
+        handingOver = true
+        controller.restore(reason: "helper_restarting")
+        // Leave after the pending reply is on its way; the replacement starts clean.
+        serial.asyncAfter(deadline: .now() + .milliseconds(300)) { [self] in
+            exit(controller.state == "restore_failed" ? 1 : 0)
+        }
         return true
     }
 
@@ -487,6 +550,7 @@ private final class Daemon: NSObject, NSXPCListenerDelegate {
         timer = DispatchSource.makeTimerSource(queue: serial)
         timer?.schedule(deadline: .now() + 1, repeating: 2, leeway: .milliseconds(100))
         timer?.setEventHandler { [self] in
+            guard !handover(clientPID: nil) else { return }
             let reading = powerReading()
             controller.tick(now: continuousNow(), bootID: boot,
                             appAlive: controller.lease.map { appStillAlive($0.owner) } ?? true, reading: reading)
