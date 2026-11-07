@@ -385,5 +385,34 @@ class AvailabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controller.lease, 'private-test-lease')
 
 
+
+
+class RestartHelperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_restart_runs_one_fixed_admin_kickstart(self):
+        import phone_availability as pa
+        calls = []
+        async def run(argv, *, timeout):
+            calls.append(argv)
+            return 0, "", ""
+        await pa.restart_helper(run=run)
+        osa = [argv for argv in calls if argv[0] == "/usr/bin/osascript"]
+        self.assertEqual(len(osa), 1)
+        script = osa[0][2]
+        self.assertIn("launchctl kickstart -k system/com.ive.desktop.phone-power", script)
+        self.assertIn("with administrator privileges", script)
+
+    async def test_cancelled_password_dialog_is_a_clear_refusal(self):
+        import phone_availability as pa
+        async def run(argv, *, timeout):
+            return (1, "", "execution error: User canceled. (-128)") if argv[0] == "/usr/bin/osascript" else (0, "", "")
+        with self.assertRaises(pa.PowerRefusal) as caught:
+            await pa.restart_helper(run=run)
+        self.assertEqual(caught.exception.reason, "helper_restart_cancelled")
+
+    def test_path_mismatch_message_names_the_fix(self):
+        import phone_availability as pa
+        self.assertIn("Restart it once", pa.message_for("client_path_mismatch"))
+        self.assertIn("client_path_mismatch", pa.RESTART_HELPER_REASONS)
+
 if __name__ == '__main__':
     unittest.main()

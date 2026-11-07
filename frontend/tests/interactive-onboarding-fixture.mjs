@@ -277,6 +277,7 @@ export async function createTourFixture(browser, options = {}) {
       }
       if (path === '/mac-power/stop' && method === 'POST') { data.macPower = { ...data.macPower, state: 'ready', expires_at: undefined }; return reply(data.macPower) }
       if (path === '/mac-power/approval' && method === 'POST') return reply(data.macPower)
+      if (path === '/mac-power/restart_helper' && method === 'POST') { data.macPower = { ...data.macPower, state: 'ready', reason: null, message: null, lid_saver_supported: true }; return reply(data.macPower) }
       if (path === '/browse-folder' && method === 'POST') return reply({ path: project.path })
       if (path === '/workspaces' && method === 'POST') {
         const existing = data.workspaces.find((item) => item.path === body?.path)

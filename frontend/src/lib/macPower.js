@@ -13,6 +13,9 @@ export const DEFAULTS = { duration_seconds: 3600, allow_battery: false, lid_low_
 // Refusals that the Login Items pane resolves. helper_outdated gets the button only.
 export const LOGIN_ITEMS_REASONS = ['macos_helper_approval_required', 'macos_helper_not_registered', 'helper_connection_failed', 'helper_outdated']
 export const STARTABLE_STATES = ['ready', 'stopped', 'not_registered', 'unregistered', 'needs_approval']
+// The helper runs from another IVE copy: an in-app restart (with the Mac password) fixes it.
+export const RESTART_HELPER_REASONS = ['client_path_mismatch', 'parent_chain_mismatch', 'helper_not_in_app_bundle']
+export const needsHelperRestart = (status) => status?.state !== 'active' && RESTART_HELPER_REASONS.includes(status?.reason)
 
 export function loadOptions(storage = globalThis.localStorage) {
   try {

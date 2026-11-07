@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Battery, ExternalLink, Laptop, Leaf, Pause, Play, RotateCw, Settings2, Square, Timer } from 'lucide-react'
 import { api, ApiError } from '../../lib/api'
 import { Button } from '../ui'
-import { APPS, DURATIONS, DEFAULTS, LOGIN_ITEMS_REASONS, fetchSharedOptions, loadOptions, pushSharedOptions, saveOptions, remaining } from '../../lib/macPower'
+import { APPS, DURATIONS, DEFAULTS, LOGIN_ITEMS_REASONS, needsHelperRestart, fetchSharedOptions, loadOptions, pushSharedOptions, saveOptions, remaining } from '../../lib/macPower'
 
 const LABELS = {
   loading: 'Checking status', unknown: 'Status not confirmed', unavailable: 'IVE Mac app required',
@@ -171,6 +171,7 @@ export default function MacPowerPanel() {
           <span>Works without an iPhone connection</span>
         </div>}
         {status.message && <p className="mt-3 text-xs leading-relaxed text-x-ink-secondary">{status.message}</p>}
+        {needsHelperRestart(status) && <div className="mt-3"><Button size="sm" icon={RotateCw} disabled={!!busy} loading={busy === 'restartHelper'} onClick={() => act('restartHelper')}>Restart Mac helper</Button></div>}
         {status.state === 'unavailable' && <div className="mt-3 space-y-2 text-xs text-x-muted">
           {!status.message && <p>This feature needs the installed IVE Mac app with its macOS helper.</p>}
           <a href="https://ive.dev" target="_blank" rel="noreferrer" className="inline-flex min-h-[26px] items-center gap-1.5 rounded-md border border-x-line-strong bg-x-surface px-2.5 py-1 text-[11px] font-medium text-x-ink hover:bg-x-hover">Get the IVE Mac app<ExternalLink size={11} /></a>

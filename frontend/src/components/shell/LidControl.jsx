@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Battery, Leaf, Lock, Pause, Settings2, Timer } from 'lucide-react'
+import { Battery, Leaf, Lock, Pause, RotateCw, Settings2, Timer } from 'lucide-react'
 import EyelidIcon from './EyelidIcon'
 import { api, ApiError } from '../../lib/api'
-import { APPS, DURATIONS, LOGIN_ITEMS_REASONS, canStart, fetchSharedOptions, headline, loadOptions, pushSharedOptions, remaining, remainingShort, saveOptions } from '../../lib/macPower'
+import { APPS, DURATIONS, LOGIN_ITEMS_REASONS, canStart, needsHelperRestart, fetchSharedOptions, headline, loadOptions, pushSharedOptions, remaining, remainingShort, saveOptions } from '../../lib/macPower'
 import './lid-control.css'
 
 // The eyelid in the header: one glance shows whether the Mac keeps working
@@ -114,6 +114,7 @@ export default function LidControl({ onOpenSettings }) {
   const batteryFirst = startable && !options.allow_battery && status.on_battery === true
   const batteryRefused = failure?.reason === 'battery_not_allowed' && !options.allow_battery
   const loginItems = LOGIN_ITEMS_REASONS.includes(failure?.reason) || status.state === 'needs_approval'
+  const restartable = needsHelperRestart(status)
   const locked = active || restoring || !!busy
   const toggle = () => {
     if (active || restoring) return act('stop')
@@ -144,7 +145,7 @@ export default function LidControl({ onOpenSettings }) {
           <div className="ive-lid-row ive-lid-head">
             <div className="min-w-0">
               <div className="ive-lid-title">Close the lid, agents keep working</div>
-              <p className="ive-lid-sub" role="status">{active ? `On until ${endsAt(status.expires_at)} · ${remaining(status.expires_at, now)} left` : (status.message || title)}</p>
+              <p className="ive-lid-sub" role="status">{active ? `On until ${endsAt(status.expires_at)} · ${remaining(status.expires_at, now)} left` : restartable ? 'Off. The Mac helper needs a restart first.' : (status.message || title)}</p>
             </div>
             <button
               type="button"
@@ -164,6 +165,12 @@ export default function LidControl({ onOpenSettings }) {
               <p>{failure.message}</p>
               {batteryRefused && <button type="button" className="ive-lid-action" disabled={!!busy} onClick={() => act('start', { allow_battery: true })}><Battery size={13} aria-hidden="true" />Allow battery use and turn on</button>}
               {loginItems && <button type="button" className="ive-lid-action" disabled={!!busy} onClick={() => act('approval')}>Open Login Items & Extensions</button>}
+            </div>
+          )}
+          {restartable && (
+            <div className="ive-lid-alert" data-lid-restart="">
+              <p>{status.message || 'The Mac helper still runs from another copy of IVE.'}</p>
+              <button type="button" className="ive-lid-action" disabled={!!busy} onClick={() => act('restartHelper')}><RotateCw size={13} aria-hidden="true" />{busy === 'restartHelper' ? 'Waiting for your password…' : 'Restart Mac helper'}</button>
             </div>
           )}
           {!failure && status.state === 'needs_approval' && (

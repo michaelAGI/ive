@@ -31310,6 +31310,13 @@ async def mac_power_handler(request: web.Request) -> web.Response:
             result = await controller.open_approval()
         elif action == "register":
             result = await controller.register()
+        elif action == "restart_helper":
+            from phone_availability import restart_helper
+            await restart_helper()
+            # launchd needs a moment to start the helper again from this app.
+            await asyncio.sleep(2.5)
+            controller.last_check = float("-inf")
+            result = await controller.status()
         else:
             return _power_error("Unknown Mac power action.", "unknown_action", status=404)
         return web.json_response(result)

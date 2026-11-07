@@ -56,8 +56,15 @@ _MESSAGES = {
     "restore_failed": "Normal sleep could not be verified. Keep the lid open and choose Turn off and restore again (Restore normal sleep in iPhone setup). If that fails, run: sudo pmset -a disablesleep 0, or restart the Mac.",
     "recovery_journal_unreadable": "The background helper could not check a previous session. Keep the lid open and restart the Mac to clear it.",
     "not_found": "The IVE background helper is missing from this app. Install the latest IVE Mac app.",
+    "client_path_mismatch": "The background helper still runs from another copy of IVE. Restart it once: IVE asks for your Mac password.",
+    "helper_restart_cancelled": "The helper was not restarted. Choose Restart Mac helper again when you are ready.",
+    "helper_restart_failed": "macOS did not restart the helper. Restart the Mac, then open IVE again.",
 }
 _MESSAGES["embedded_service_missing"] = _MESSAGES["not_found"]
+# Reasons the in-app "Restart Mac helper" action fixes (an admin-approved launchctl kickstart).
+RESTART_HELPER_REASONS = {"client_path_mismatch", "parent_chain_mismatch", "helper_not_in_app_bundle"}
+HELPER_LABEL = "system/com.ive.desktop.phone-power"
+LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 # Which System Settings pane fixes a reason; absent means a sentence is enough.
 SETTINGS_PANES = {
     "macos_helper_approval_required": "login_items", "macos_helper_not_registered": "login_items",
@@ -97,6 +104,43 @@ class PowerRefusal(PowerProblem, RuntimeError):
 
 class PowerConflict(PowerProblem, ValueError):
     """The request clashes with the running session or its preconditions."""
+
+
+def app_root() -> Path | None:
+    """The IVE.app this frozen backend belongs to, or None outside the Mac app."""
+    helper = helper_path()
+    return helper.parents[2] if helper is not None else None
+
+
+async def restart_helper(*, run=None) -> None:
+    """Restart the root helper so launchd starts it from this app.
+
+    launchd finds the helper through the app's bundle identifier. With several
+    IVE copies on disk (build folders, a mounted disk image) it can pick
+    another copy, and the helper then refuses this app as client_path_mismatch.
+    Registering this copy first makes it the one macOS resolves; the restart
+    itself needs an administrator, so macOS shows its own password dialog.
+    The command is fixed, nothing from the request reaches the shell.
+    """
+    run = run or _run_process
+    root = app_root()
+    if root is not None and Path(LSREGISTER).exists():
+        await run([LSREGISTER, "-f", str(root)], timeout=30)
+    script = ('do shell script "/bin/launchctl kickstart -k ' + HELPER_LABEL + '" with administrator privileges '
+              'with prompt "IVE: restart the Mac helper so the lid-closed mode works with this version of IVE."')
+    code, _out, err = await run(["/usr/bin/osascript", "-e", script], timeout=180)
+    if code != 0:
+        raise PowerRefusal("helper_restart_cancelled" if "-128" in (err or "") else "helper_restart_failed")
+
+
+async def _run_process(argv, *, timeout):
+    process = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        process.kill()
+        return 1, "", "timeout"
+    return process.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 def helper_path() -> Path | None:

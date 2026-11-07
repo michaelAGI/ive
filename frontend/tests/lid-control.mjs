@@ -111,3 +111,19 @@ test('a battery refusal offers the one-click fix, unavailable disables the switc
     assert.deepEqual(g.errors, [])
   } finally { await g.context.close() }
 })
+
+test('a helper from another IVE copy offers Restart Mac helper, and the switch works afterwards', async () => {
+  const f = await fixture({ macPower: { state: 'ready', reason: 'client_path_mismatch', message: 'The background helper still runs from another copy of IVE. Restart it once: IVE asks for your Mac password.', battery_percent: 100, on_battery: false } })
+  try {
+    await button(f).click()
+    await dialog(f).waitFor()
+    assert.equal(await toggle(f).isDisabled(), true, 'the switch waits for the helper')
+    const restart = dialog(f).getByRole('button', { name: 'Restart Mac helper' })
+    await restart.waitFor()
+    await restart.click()
+    await f.page.waitForFunction(() => !document.querySelector('[data-lid-restart]'))
+    assert.equal(posts(f, '/mac-power/restart_helper').length, 1)
+    assert.equal(await toggle(f).isDisabled(), false, 'after the restart the mode can be turned on')
+    assert.deepEqual(f.errors, [])
+  } finally { await f.context.close() }
+})

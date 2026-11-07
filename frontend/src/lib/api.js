@@ -1257,6 +1257,8 @@ export const api = {
     start: options => request('/mac-power/start', { method: 'POST', body: JSON.stringify(options), signal: AbortSignal.timeout(90000) }),
     stop: () => request('/mac-power/stop', { method: 'POST', signal: AbortSignal.timeout(90000) }),
     approval: () => request('/mac-power/approval', { method: 'POST', signal: AbortSignal.timeout(90000) }),
+    // macOS shows its password dialog; give the person time to answer it.
+    restartHelper: () => request('/mac-power/restart_helper', { method: 'POST', signal: AbortSignal.timeout(200000) }),
   },
   phonePairStart: () => request('/phone/pair/start', { method: 'POST' }),
   phonePairCancel: () => request('/phone/pair/cancel', { method: 'POST' }),
