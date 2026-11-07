@@ -1635,6 +1635,7 @@ export default function App() {
               closeExclusivePanels()
               if (destination === 'project') setShowWorkspacePicker(true)
               if (destination === 'accounts') setSettingsSection('accounts')
+              if (destination === 'mac-power') setSettingsSection('mac-power')
               if (destination === 'home') useStore.getState().goHome()
               if (destination === 'session' && detail.workspaceId) {
                 useStore.getState().setActiveWorkspace(detail.workspaceId)

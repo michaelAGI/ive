@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ArrowRight, FolderOpen, MessageSquare, Bot, X } from 'lucide-react'
+import { ArrowRight, FolderOpen, MessageSquare, Bot, Laptop, X } from 'lucide-react'
 import './interactive-onboarding.css'
 
 // The first launch explains the first task, without creating practice sessions,
@@ -66,6 +66,7 @@ export default function InteractiveOnboarding({ profile, onFinish, onNavigate })
     [FolderOpen, 'Projekt öffnen', 'Wähle den Ordner, an dem du arbeiten möchtest.'],
     [Bot, 'KI wählen', 'Starte einen Dialog mit Claude oder Codex. Du nutzt dein eigenes KI-Konto.'],
     [MessageSquare, 'Aufgabe beschreiben', 'Zum Beispiel: „Erkläre mir dieses Projekt.“ Du kannst direkt im Chat nachfragen.'],
+    [Laptop, 'Deckel zu, weiterarbeiten', 'Optional: Der Mac bleibt mit geschlossenem Deckel wach, die Terminals laufen weiter und du erreichst sie vom iPhone. Einmal unter Einstellungen → Mac & Power einschalten.'],
   ] : [
     [FolderOpen, 'Projekt ansehen', 'Öffne ein Projekt, das mit dir geteilt wurde.'],
     [MessageSquare, 'Dialog öffnen', 'Lies die Unterhaltung und sieh, woran die KI arbeitet.'],
@@ -99,6 +100,7 @@ export default function InteractiveOnboarding({ profile, onFinish, onNavigate })
               {saving ? 'Einen Moment …' : owner ? 'Projekt öffnen' : 'Zur Übersicht'}<ArrowRight size={16} aria-hidden="true" />
             </button>
             {owner && <button type="button" className="ive-welcome-secondary" disabled={saving} onClick={() => finish('accounts')}>KI einrichten</button>}
+            {owner && <button type="button" className="ive-welcome-secondary" disabled={saving} onClick={() => finish('mac-power')}>Deckel-zu-Modus</button>}
           </div>
           <p>Jederzeit unter „?“ wieder öffnen.</p>
         </footer>
