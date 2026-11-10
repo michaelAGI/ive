@@ -1,0 +1,70 @@
+/* IVE's activity instrument: one quiet blue signal per active turn. The
+   surrounding surface uses the app's light/dark tokens and existing fonts. */
+.ive-overview-activity { flex: 0 0 auto; min-width: 0; }
+.ive-live-work { margin: 10px 12px 0; border: 1px solid var(--x-line); border-radius: 10px; background: var(--x-bg); overflow: hidden; }
+.ive-live-work-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 6px 12px; }
+.ive-live-work-title, .ive-live-work-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ive-live-work-title > svg { color: var(--x-running); flex: none; }
+.ive-live-work-title h2 { font: 600 12px/1.4 var(--font-sans); color: var(--x-ink); white-space: nowrap; }
+.ive-live-work-count { font: 500 11px/1.4 var(--font-mono); color: var(--x-running); padding: 1px 5px; background: var(--x-accent-subtle); border-radius: 4px; }
+.ive-live-work-scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--x-muted); border-left: 1px solid var(--x-line); padding-left: 8px; }
+.ive-live-needs-you { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; min-height: 28px; border-radius: 5px; color: var(--x-waiting); font: 500 11px/1.4 var(--font-sans); white-space: nowrap; transition: background 140ms ease; }
+.ive-live-needs-you:hover { background: color-mix(in srgb, var(--x-waiting) 10%, transparent); }
+.ive-live-needs-you > span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.ive-live-collapse { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 5px; color: var(--x-muted); }
+.ive-live-collapse:hover { background: var(--x-hover); color: var(--x-ink); }
+.ive-live-work-body { min-width: 0; }
+.ive-live-work-cards { display: flex; gap: 8px; margin: 0; padding: 0 10px 10px; overflow-x: auto; overscroll-behavior-x: contain; list-style: none; scrollbar-width: thin; scroll-snap-type: x proximity; }
+.ive-live-work-cards > li { flex: 0 0 clamp(220px, 25%, 320px); min-width: 0; scroll-snap-align: start; animation: ive-work-enter 200ms ease-out both; }
+.ive-live-work-card { width: 100%; display: flex; flex-direction: column; gap: 7px; text-align: left; padding: 10px 11px; border: 1px solid var(--x-line); border-radius: 7px; background: var(--x-surface); transition: border-color 140ms ease, background 140ms ease; }
+.ive-live-work-card:hover { background: var(--x-hover); border-color: var(--x-tint-line); }
+.ive-live-work-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ive-live-work-card-top strong { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 12px/1.4 var(--font-sans); color: var(--x-ink); }
+.ive-live-open-arrow { color: var(--x-faint); flex: none; transition: transform 140ms ease, color 140ms ease; }
+.ive-live-work-card:hover .ive-live-open-arrow { transform: translate(1px, -1px); color: var(--x-running); }
+.ive-work-signal { display: flex; flex: none; align-items: center; gap: 2px; width: 16px; height: 14px; color: var(--x-running); }
+.ive-work-signal i { width: 2px; height: 10px; border-radius: 1px; background: currentColor; transform: scaleY(.4); }
+.ive-work-signal i:nth-child(2) { transform: scaleY(.8); }
+.ive-work-signal i:nth-child(3) { transform: scaleY(.6); }
+.ive-work-signal[data-active="true"] i { animation: ive-work-signal 1300ms ease-in-out infinite; }
+.ive-work-signal i:nth-child(2) { animation-delay: -900ms; }
+.ive-work-signal i:nth-child(3) { animation-delay: -500ms; }
+.ive-work-signal i:nth-child(4) { animation-delay: -200ms; }
+.ive-live-work-step { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--x-ink-secondary); font: 11px/1.5 var(--font-mono); }
+.ive-live-work-step > span { color: var(--x-muted); font-family: var(--font-sans); }
+.ive-live-work-card-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--x-muted); font-size: 10px; line-height: 1.4; }
+.ive-live-work-card-foot > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ive-live-work-card-foot time { flex: none; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.ive-live-work-empty { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0 12px 12px; color: var(--x-muted); font-size: 12px; line-height: 1.5; }
+.ive-live-work-empty > svg { flex: none; color: var(--x-faint); }
+.ive-live-offline { display: flex; align-items: center; gap: 6px; padding: 0 12px 8px; margin: 0; color: var(--x-warning); font-size: 11px; line-height: 1.5; }
+.ive-overview-activity[data-live="false"] .ive-work-signal { color: var(--x-muted); }
+.ive-overview-activity[data-live="false"] .ive-live-work-title > svg, .ive-overview-activity[data-live="false"] .ive-live-work-count { color: var(--x-muted); }
+.ive-overview-filter-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px 5px; min-width: 0; }
+.ive-overview-filter-label { color: var(--x-muted); font-size: 11px; white-space: nowrap; }
+.ive-overview-filters { display: flex; align-items: center; gap: 3px; padding: 2px; border-radius: 6px; background: var(--x-surface); }
+.ive-overview-filters button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 4px; min-height: 27px; color: var(--x-muted); font: 500 11px/1.4 var(--font-sans); white-space: nowrap; transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease; }
+.ive-overview-filters button > span { font: 10px/1.4 var(--font-mono); opacity: .8; }
+.ive-overview-filters button[aria-pressed="true"] { color: var(--x-ink); background: var(--x-bg); box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
+.ive-overview-filters button:hover { color: var(--x-ink); }
+.ive-overview-activity button:focus-visible, .ive-activity-grid-empty button:focus-visible { outline: 2px solid var(--x-running); outline-offset: 2px; }
+.ive-activity-grid-empty { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; padding: 24px; text-align: center; }
+.ive-activity-grid-empty button { color: var(--x-link); padding: 6px 10px; border: 1px solid var(--x-line); border-radius: 5px; }
+@keyframes ive-work-signal { 0%, 100% { transform: scaleY(.35); } 50% { transform: scaleY(1); } }
+@keyframes ive-work-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 700px) {
+  .ive-live-work { margin: 6px 6px 0; }
+  .ive-live-work-heading { gap: 6px; padding: 5px 8px; }
+  .ive-live-work-title, .ive-live-work-actions { gap: 5px; }
+  .ive-live-work-scope { display: none; }
+  .ive-live-work-cards { padding: 0 8px 8px; }
+  .ive-live-work-cards > li { flex-basis: min(260px, 84vw); }
+  .ive-overview-filter-bar { gap: 7px; padding: 6px 8px 4px; flex-wrap: wrap; }
+  .ive-overview-filters button { min-height: 36px; }
+  .ive-live-collapse { width: 36px; height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ive-live-work-cards > li, .ive-work-signal[data-active="true"] i { animation: none; }
+  .ive-live-work-card, .ive-live-open-arrow, .ive-overview-filters button, .ive-live-needs-you { transition: none; }
+  .ive-live-work-card:hover .ive-live-open-arrow { transform: none; }
+}

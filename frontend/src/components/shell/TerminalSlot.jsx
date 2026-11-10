@@ -45,7 +45,11 @@ export default function TerminalSlot({ sessionId, mode = 'full', focusOnMount = 
     const unregister = registerTerminalSlot(sessionId, { el, mode })
     // Focus in the layout commit, before a fast follow-up Enter can arrive.
     // Background tiles must never take the keyboard from the selected session.
-    if (focusOnMount && useStore.getState().activeSessionId === sessionId) {
+    const activeElement = document.activeElement
+    const preserveControlFocus = mode === 'tile' && activeElement?.matches?.('button, a[href], select, input:not(.xterm-helper-textarea), textarea:not(.xterm-helper-textarea), [contenteditable="true"], [role="button"], [role="tab"]')
+    // Filtering the Overview can re-adopt the selected terminal. Its mount
+    // must not steal the next key from the filter, another composer or menu.
+    if (focusOnMount && !preserveControlFocus && useStore.getState().activeSessionId === sessionId) {
       window.dispatchEvent(new Event('cc-focus-terminal'))
     }
     // One slot reveal must not schedule a refit for every open terminal.

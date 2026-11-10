@@ -1788,6 +1788,10 @@ async def get_session_config(session_id: str) -> dict | None:
         row = await cur.fetchone()
         if row:
             d = dict(row)
+            from review_brief import is_independent_review_session, review_artifact_path
+            if is_independent_review_session(d) and d.get("worktree_path"):
+                d["workspace_path"] = review_artifact_path(d["workspace_path"], d["worktree_path"])
+                d["worktree"] = 0
             if d.get("worktree") and d.get("native_session_id") and (d.get("cli_type") or "claude") == "claude":
                 worktree_path = await asyncio.to_thread(_claude_resume_worktree, d)
                 if worktree_path:
@@ -3513,7 +3517,9 @@ async def _maybe_broadcast_output_inferred_status(session_id: str) -> None:
     if cli_type != "antigravity":
         return
 
-    text = capture_proc.get_buffer(session_id, 160)
+    # Repaint history can retain a spinner after the turn is done. Only the
+    # current emulated screen is evidence for this provider fallback.
+    text = capture_proc.get_screen(session_id) or ""
     desired = None
     try:
         from hooks import get_session_logical_status
@@ -3596,6 +3602,45 @@ async def _codex_turn_sync_loop():
                     await _sync_codex_turn_completion(sid)
             except Exception as exc:
                 logger.debug("Codex turn sync skipped for %s: %s", sid[:8], exc)
+        await asyncio.sleep(0.5)
+
+
+async def _shell_activity_sync_loop():
+    """Publish foreground-job changes even for completely silent commands.
+
+    State belongs to a PTY generation: a restarted shell must be sampled and
+    published afresh even if it has the same activity as its predecessor.
+    Nothing is written to the shell, its environment, or its startup files.
+    """
+    previous = {}
+    while True:
+        current = pty_mgr.shell_activity_snapshot()
+        observed = {}
+        for sid in current:
+            # Previous delivery may have yielded while another PTY exited or
+            # restarted. Resample this session immediately before its event.
+            generation = pty_mgr.get_pid(sid)
+            activity = pty_mgr.get_shell_activity(sid)
+            if generation is None or activity is None:
+                continue
+            observed[sid] = (generation, activity)
+            if previous.get(sid) == observed[sid]:
+                continue
+            try:
+                await broadcast({
+                    "session_id": sid,
+                    "type": "status",
+                    "status": "running" if activity == "working" else "idle",
+                    "agentState": "working" if activity == "working" else "idle",
+                    "terminal_activity": activity,
+                    "pty_alive": True,
+                })
+            except Exception as exc:
+                # Retry this transition on the next sample; one failed client
+                # delivery must not stop updates for every other shell.
+                observed.pop(sid, None)
+                logger.debug("Shell activity sync skipped for %s: %s", sid[:8], exc)
+        previous = observed
         await asyncio.sleep(0.5)
 
 
@@ -5312,6 +5357,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                     #      where type='guideline') — from the plugin marketplace,
                     #      CLI-agnostic (works for both Claude and Gemini).
                     system_prompt_parts = []
+                    from review_brief import is_independent_review_session, INDEPENDENT_REVIEW_INSTRUCTIONS
+                    _independent_review = is_independent_review_session(config)
+                    if _independent_review:
+                        system_prompt_parts.append(INDEPENDENT_REVIEW_INSTRUCTIONS)
                     if config.get("system_prompt"):
                         system_prompt_parts.append(config["system_prompt"])
 
@@ -5410,6 +5459,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                             if (
                                 _mem_settings.get("enabled", True)
                                 and _mem_settings.get("auto_sync", True)
+                                and not _independent_review
                                 and not _quick_start.is_quick_workspace_cached(_ws_id_mem)
                             ):
                                 _ws_path_mem = config.get("workspace_path")
@@ -5509,7 +5559,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                             _is_documentor_w2w = _session_type_w2w == "documentor"
                             _is_brainstormer_w2w = _session_type_w2w == "brainstormer"
 
-                            if ws_flags and ws_flags["context_sharing_enabled"]:
+                            if ws_flags and ws_flags["context_sharing_enabled"] and not _independent_review:
                                 if extension_host.available("myelin"):
                                     knowledge_prompt = await _myelin_workspace_knowledge(config, _ws_id)
                                     if knowledge_prompt:
@@ -5582,7 +5632,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                                         "Note: Workspace peer coordination and file locks are programmatically enforced at the middleware layer by hooks before tool execution."
                                     )
 
-                            if ws_flags and ws_flags["comms_enabled"]:
+                            if ws_flags and ws_flags["comms_enabled"] and not _independent_review:
                                 if _is_brainstormer_w2w:
                                     pass
                                 elif _is_documentor_w2w:
@@ -5770,7 +5820,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                             if config.get("system_prompt"):
                                 _skill_ctx_parts.append(config["system_prompt"][:300])
                             _ws_id = config.get("workspace_id")
-                            if _ws_id:
+                            if _ws_id and not _independent_review:
                                 try:
                                     _dg_db = await get_db()
                                     try:
@@ -6697,22 +6747,19 @@ async def get_overview(request: web.Request) -> web.Response:
 
         workspace_marks = ",".join("?" for _ in workspace_ids)
 
-        from session_attention import get_attention
         cur = await db.execute(
-            f"""SELECT id, workspace_id, status
+            f"""SELECT id, workspace_id, status, cli_type
                   FROM sessions
                  WHERE workspace_id IN ({workspace_marks})""",
             workspace_ids,
         )
         for row in await cur.fetchall():
             project = projects[row["workspace_id"]]
-            status = row["status"] or "idle"
-            if status in _OVERVIEW_BLOCKED_STATUSES:
+            if row["status"] in _OVERVIEW_BLOCKED_STATUSES:
                 project["blocked_sessions"]["total"] += 1
-            # The Home counter: a session with an open question is waiting,
-            # whatever status the database remembers.
-            if pty_mgr.is_alive(row["id"]) and get_attention(row["id"]):
-                status = "waiting"
+            # Use the same live evidence as session tiles. The database's
+            # 'running' means its PTY was started, not that it is still busy.
+            status = _decorate_session_dict(dict(row))["status"]
             project["sessions"]["total"] += 1
             project["sessions"]["by_status"].setdefault(status, 0)
             project["sessions"]["by_status"][status] += 1
@@ -7510,11 +7557,17 @@ def _decorate_session_dict(session: dict) -> dict:
     logical_status = get_session_logical_status(d["id"], pty_alive, d.get("status") or "idle")
     if logical_status == "idle" and pty_alive and (d.get("cli_type") or "").lower() == "antigravity":
         try:
-            if _looks_antigravity_busy(d.get("cli_type"), capture_proc.get_buffer(d["id"], 160)):
+            if _looks_antigravity_busy(d.get("cli_type"), capture_proc.get_screen(d["id"]) or ""):
                 logical_status = "running"
         except Exception as exc:
             logger.debug("Antigravity status fallback skipped for %s: %s", d["id"][:8], exc)
     d["status"] = logical_status
+    if (d.get("cli_type") or "").lower() == "shell":
+        activity = pty_mgr.get_shell_activity(d["id"]) if pty_alive else None
+        d["terminal_activity"] = activity or "unknown"
+        if pty_alive:
+            logical_status = "running" if activity == "working" else "idle"
+            d["status"] = logical_status
     d["attention"] = get_attention(d["id"]) if pty_alive else None
     d["agentState"] = "prompting" if logical_status == "waiting" else "working" if logical_status == "running" else logical_status
     # What the agent did last and how many turns it finished (in-memory hook
@@ -7777,6 +7830,11 @@ async def _attach_capability_to_session(
     if task_id:
         fields.append("active_ticket_id = ?")
         values.append(task_id)
+        if capability_cfg["tag"] == "capability_testing":
+            # Read-only task access without stealing the implementation's
+            # board assignment, just like visual pipeline reviewers.
+            fields.append("task_id = ?")
+            values.append(task_id)
     values.append(session_id)
     await db.execute(f"UPDATE sessions SET {', '.join(fields)} WHERE id = ?", values)
 
@@ -7923,6 +7981,10 @@ async def _create_capability_worker(
     )
     await _sync_zai_mcp_servers_for_session(db, session_id, cli_type, account_id)
     await _attach_capability_to_session(db, session_id, capability_cfg, task_id=task_id, extra_tags=extra_tags)
+    if capability == "testing":
+        from review_brief import bind_review_artifacts
+        await bind_review_artifacts(db, session_id, workspace_id,
+                                    body.get("reviewed_session_id") or (source_session or {}).get("id"))
     cur = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
     return dict(await cur.fetchone())
 
@@ -7942,7 +8004,7 @@ def _build_capability_handoff_prompt(
         lines.append(f"Source session: {source_session.get('name') or source_session.get('id')} ({source_session.get('id')})")
     if task:
         lines.append(f"Feature board task: {task.get('title') or task.get('id')} ({task.get('id')})")
-    if reason:
+    if reason and capability != "testing":
         lines.append(f"Reason: {reason}")
     if capability == "testing":
         lines.append(
@@ -7960,7 +8022,12 @@ def _build_capability_handoff_prompt(
         lines.append(
             "When finished, post a concise result to the workspace peer messages with topic='capability-handoff' and mention the source session id above."
         )
-    lines.append("\nRequest:\n" + prompt.strip())
+    if capability == "testing" and (original_prompt or (task or {}).get("description") or (task or {}).get("acceptance_criteria")):
+        lines.append("Independently verify the original request and acceptance criteria below against the actual workspace artifacts.")
+    else:
+        # With no linked task the request is the only available scope. It is
+        # not a completion report; the independent policy still governs it.
+        lines.append("\nRequest:\n" + prompt.strip())
     brief = "\n\n".join(lines)
     if capability == "testing":
         from review_brief import build_review_brief
@@ -7968,7 +8035,6 @@ def _build_capability_handoff_prompt(
             brief,
             original_prompt=original_prompt,
             board_card=task,
-            handoff_notes=(task or {}).get("result_summary") or prompt,
         )
     return brief
 
@@ -8020,16 +8086,12 @@ async def compose_review_brief(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    handoff_notes = body.get("handoff_notes")
-    if not handoff_notes and card:
-        handoff_notes = card.get("result_summary")
     from review_brief import build_review_brief
     return web.json_response({
         "brief": build_review_brief(
             instructions,
             original_prompt=original_prompt,
             board_card=card,
-            handoff_notes=handoff_notes,
             original_prompt_ref=(
                 f"ive:session/{reviewed_session_id}/first-user-prompt"
                 if reviewed_session_id else None
@@ -8071,9 +8133,13 @@ async def request_capability_handoff(request: web.Request) -> web.Response:
     source_session_id = body.get("source_session_id") or request.headers.get("X-IVE-Session-Id")
     workspace_id = body.get("workspace_id") or request.headers.get("X-IVE-Workspace-Id")
     task_id = body.get("task_id")
-    reuse = body.get("reuse", True) is not False
+    # Verification starts in a new conversation, including retries. Reusing
+    # the implementer or an earlier tester would reintroduce its conclusions.
+    reuse = capability != "testing" and body.get("reuse", True) is not False
     allow_busy = bool(body.get("allow_busy", False))
     extra_tags = []
+    if capability == "testing":
+        extra_tags.append("independent_review")
     if capability == "testing" and body.get("show_browser"):
         extra_tags.append("tester_headed")
     if capability == "documentation" and body.get("allow_all_edits"):
@@ -8513,10 +8579,19 @@ async def create_session(request: web.Request) -> web.Response:
                 "UPDATE sessions SET tags = ? WHERE id = ?",
                 (json.dumps(tags), session_id),
             )
+        from review_brief import is_independent_review_session, bind_review_artifacts
+        independent_review = is_independent_review_session({"session_type": session_type, "tags": tags})
+        if independent_review:
+            source_id = body.get("reviewed_session_id")
+            if source_id and not await _get_readable_session_for_request(source_id, request):
+                raise ValueError("reviewed session is not visible")
+            await bind_review_artifacts(db, session_id, workspace_id, source_id)
+            if task_id:
+                await db.execute("UPDATE sessions SET task_id=? WHERE id=?", (task_id, session_id))
         await _sync_zai_mcp_servers_for_session(db, session_id, cli_type, account_id)
 
         # Assign task when task_id is provided.
-        if task_id and session_type != "commander":
+        if task_id and session_type != "commander" and not independent_review:
             # Assign the task to this session
             await db.execute(
                 "UPDATE tasks SET assigned_session_id = ?, updated_at = datetime('now') WHERE id = ?",
@@ -8662,8 +8737,11 @@ async def _start_shell_pty(session_id: str, config: dict, cols: int = 120, rows:
         )
         await _mark_session_pty_started(session_id)
         pty_alive = pty_mgr.is_alive(session_id)
+        activity = pty_mgr.get_shell_activity(session_id) if pty_alive else None
         await broadcast({"session_id": session_id, "type": "status",
-                         "status": "running" if pty_alive else "exited", "pty_alive": pty_alive})
+                         "status": ("running" if activity == "working" else "idle") if pty_alive else "exited",
+                         "agentState": "working" if activity == "working" else "idle",
+                         "terminal_activity": activity or "unknown", "pty_alive": pty_alive})
         return {"ok": True}
     except Exception as exc:
         logger.warning("Terminal start failed for %s: %s", session_id, exc)
@@ -8911,6 +8989,9 @@ async def _autostart_session_pty(session_id: str, *, cols: int = 120, rows: int 
     effort = config.get("effort") or None
     system_prompt = config.get("system_prompt") or ""
     session_type = config.get("session_type") or ""
+    from review_brief import is_independent_review_session, INDEPENDENT_REVIEW_INSTRUCTIONS
+    if is_independent_review_session(config) and INDEPENDENT_REVIEW_INSTRUCTIONS not in system_prompt:
+        system_prompt = INDEPENDENT_REVIEW_INSTRUCTIONS + "\n" + system_prompt
 
     extra_env = await _prepare_session_cli_env(config, session_id)
     permission_mode = await _apply_worker_safety_gate_permission(
@@ -13196,6 +13277,8 @@ async def list_tasks(request: web.Request) -> web.Response:
         # ?brief=1: the MCP list tools want the bare rows, not the board fields.
         if request.query.get("brief") != "1":
             tasks = await _enrich_task_rows(db, tasks)
+        from review_brief import review_task_view
+        tasks = await review_task_view(db, tasks, request.headers.get("X-IVE-Session-Id"))
         return web.json_response(tasks)
     finally:
         await db.close()
@@ -13412,6 +13495,8 @@ async def get_task(request: web.Request) -> web.Response:
             return web.json_response({"error": "task not found"}, status=404)
         task = dict(row)
         await _enrich_task_rows(db, [task])
+        from review_brief import review_task_view
+        task = (await review_task_view(db, [task], request.headers.get("X-IVE-Session-Id")))[0]
         return web.json_response(task)
     finally:
         await db.close()
@@ -13570,9 +13655,6 @@ def _build_seam_check_description(parent: dict, slices: list[dict]) -> str:
     ]
     for s in slices:
         lines.append(f"• [{s.get('id')}] {s.get('title', '')}")
-        summary = (s.get("result_summary") or "").strip()
-        if summary:
-            lines.append(f"    result: {summary}")
         touched = s.get("_files_touched") or []
         if touched:
             lines.append(f"    files: {', '.join(touched[:30])}")
@@ -13588,16 +13670,10 @@ def _build_seam_check_description(parent: dict, slices: list[dict]) -> str:
         "Commander can route the repair. The contract is the authority; a slice "
         "that drifted from it is the one that is wrong.",
     ]
-    handoff_notes = []
-    for slice_task in slices:
-        summary = (slice_task.get("result_summary") or "").strip()
-        if summary:
-            handoff_notes.append(f"{slice_task.get('title') or slice_task.get('id')}: {summary}")
     from review_brief import build_review_brief
     return build_review_brief(
         "\n".join(lines),
         board_card=parent,
-        handoff_notes="\n".join(handoff_notes),
     )
 
 
@@ -22052,6 +22128,33 @@ async def _find_testing_worker(db, workspace_id: str) -> str | None:
     return None
 
 
+async def _fresh_test_queue_worker(db, workspace_id: str, template_id: str, task_id: str | None) -> str | None:
+    """Keep the selected tester's setup, start without its previous verdicts."""
+    row = await (await db.execute(
+        "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?", (template_id, workspace_id),
+    )).fetchone()
+    if not row:
+        return None
+    source = dict(row)
+    body = {key: source.get(key) for key in ("cli_type", "model", "permission_mode", "effort", "account_id")}
+    if task_id:
+        task = await (await db.execute("SELECT assigned_session_id FROM tasks WHERE id=? AND workspace_id=?", (task_id, workspace_id))).fetchone()
+        if task and task["assigned_session_id"]:
+            body["reviewed_session_id"] = task["assigned_session_id"]
+    tags = ["independent_review"]
+    if "tester_headed" in _session_tags_from_value(source.get("tags")):
+        tags.append("tester_headed")
+    target = await _create_capability_worker(
+        db, workspace_id, "testing", CAPABILITY_HANDOFFS["testing"], body,
+        source, task_id, tags,
+    )
+    if not isinstance(target, dict) or not target.get("id"):
+        return None
+    await db.commit()
+    await broadcast({"type": "session_created", "session": target})
+    return target["id"]
+
+
 async def _recheck_test_queue_after_timeout(workspace_id: str) -> None:
     """Wake the queue when a running test's lease can first be stale."""
     try:
@@ -22147,9 +22250,23 @@ async def _process_test_queue_locked(workspace_id: str):
             return
         entry = dict(row)
 
-        tester_id = await _find_testing_worker(db, workspace_id)
+        # Keep an unsent, prepared reviewer while its CLI signs in/starts. A
+        # timed-out dispatched attempt clears this binding before retrying.
+        tester_id = entry.get("assigned_session_id") if not entry.get("started_at") else None
         if not tester_id:
-            return
+            template_id = await _find_testing_worker(db, workspace_id)
+            if not template_id:
+                return
+            tester_id = await _fresh_test_queue_worker(db, workspace_id, template_id, entry.get("task_id"))
+            if not tester_id:
+                return
+            assigned = await db.execute(
+                "UPDATE test_queue SET assigned_session_id = ? WHERE id = ? AND status = 'queued' AND assigned_session_id IS NULL",
+                (tester_id, entry["id"]),
+            )
+            await db.commit()
+            if assigned.rowcount != 1:
+                return
         if not pty_mgr.is_alive(tester_id):
             try:
                 await _autostart_session_pty(tester_id)
@@ -32501,6 +32618,7 @@ async def on_startup(app: web.Application):
 
     # ── Telemetry (anonymous startup + daily heartbeat) ─────────────
     app["_codex_turn_sync_task"] = asyncio.create_task(_codex_turn_sync_loop())
+    app["_shell_activity_sync_task"] = asyncio.create_task(_shell_activity_sync_loop())
     import telemetry
     telemetry.start_background()
 
@@ -32629,6 +32747,13 @@ async def on_shutdown(app: web.Application):
 
 
 async def on_cleanup(app: web.Application):
+    shell_activity_task = app.get("_shell_activity_sync_task")
+    if shell_activity_task is not None:
+        shell_activity_task.cancel()
+        try:
+            await shell_activity_task
+        except asyncio.CancelledError:
+            pass
     turn_sync_task = app.get("_codex_turn_sync_task")
     if turn_sync_task is not None:
         turn_sync_task.cancel()
@@ -33767,13 +33892,17 @@ _MEMORY_TOOL_GUIDANCE_COMPACT = (
 
 def _memory_tool_guidance(config, compact):
     """Tell workers how IVE memory works. The Commander has its own prompt."""
-    if (config.get("session_type") or "worker") == "commander":
+    from review_brief import is_independent_review_session
+    if (config.get("session_type") or "worker") == "commander" or is_independent_review_session(config):
         return ""
     return _MEMORY_TOOL_GUIDANCE_COMPACT if compact else _MEMORY_TOOL_GUIDANCE
 
 
 async def _session_memory_prompt(config, session_id, settings, max_chars, compact):
     """Render explicit notes unless an installed memory provider supplies context."""
+    from review_brief import is_independent_review_session
+    if is_independent_review_session(config):
+        return "", None
     if extension_host.available("myelin"):
         context = await _myelin_session_memory(config, session_id, settings, max_chars)
         if context is not None:

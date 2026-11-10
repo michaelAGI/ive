@@ -49,6 +49,7 @@ class TestQueueDeliveryTests(unittest.IsolatedAsyncioTestCase):
             _session_cli_type=AsyncMock(return_value='claude'), _wait_for_cli_input_ready=AsyncMock(return_value=True),
             _startup_blocker_text=Mock(return_value='❯\u00a0'), _session_permission_menu=Mock(return_value=None),
             _autostart_session_pty=AsyncMock(), _recheck_test_queue_after_timeout=AsyncMock(),
+            _fresh_test_queue_worker=AsyncMock(return_value='tester'),
             _broadcast_test_queue_entry=AsyncMock(), _continue_after_test_queue_terminal=AsyncMock(),
             _resolve_caller=AsyncMock(return_value=None), broadcast=AsyncMock(),
             _enrich_task_rows=AsyncMock(side_effect=lambda db, rows: rows),
@@ -122,6 +123,18 @@ class TestQueueDeliveryTests(unittest.IsolatedAsyncioTestCase):
         await self.ns['_process_test_queue']('ws'); self.pty.write.assert_not_called()
         current = await self.entry(entry['id'])
         self.assertEqual(current['status'], 'queued'); self.assertEqual(current['attempt_count'], 0)
+
+    async def test_startup_wait_keeps_one_fresh_reviewer_without_sending_or_spawning_more(self):
+        entry = await self.enqueue()
+        self.ns['_wait_for_cli_input_ready'].return_value = False
+        await self.ns['_process_test_queue']('ws')
+        await self.ns['_process_test_queue']('ws')
+        current = await self.entry(entry['id'])
+        self.assertEqual(current['status'], 'queued')
+        self.assertEqual(current['attempt_count'], 0)
+        self.assertEqual(current['assigned_session_id'], 'tester')
+        self.ns['_fresh_test_queue_worker'].assert_awaited_once()
+        self.pty.write.assert_not_called()
 
     async def test_busy_or_waiting_tester_is_not_interrupted(self):
         entry = await self.enqueue()

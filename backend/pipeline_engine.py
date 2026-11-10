@@ -949,6 +949,53 @@ async def _execute_agent_stage(
     agent_config = stage.get("agent_config") or {}
     stage_config = stage.get("config") or {}
     ws_id = run.get("workspace_id")
+    independent_review = _is_review_stage(stage)
+
+    # A clean prompt is insufficient if the same native conversation already
+    # implemented the change or saw a previous verdict. Treat an explicitly
+    # selected session as a provider/settings preference, never review history.
+    if independent_review:
+        selected_id = session_id
+        reuse_from = stage.get("reuse_session_from")
+        if not selected_id and reuse_from:
+            selected_id = (_resolve_failure_session(defn, run, stage_id) if reuse_from == "__from_failure__"
+                           else (run.get("stage_history", {}).get(reuse_from) or {}).get("session_id"))
+        db_fresh = await get_db()
+        try:
+            if selected_id:
+                selected = await (await db_fresh.execute(
+                    "SELECT workspace_id, cli_type, model, permission_mode, effort, account_id FROM sessions WHERE id = ?",
+                    (selected_id,),
+                )).fetchone()
+                if not selected or selected["workspace_id"] != ws_id:
+                    await _fail_stage(run_id, stage_id, "Review session is outside the run's workspace")
+                    return
+                cli_type = selected["cli_type"] or cli_type
+                agent_config = {**{key: selected[key] for key in ("model", "permission_mode", "effort", "account_id")}, **agent_config}
+            # Reviewer labels in older recipes sometimes use worker/commander.
+            # Normalize the role as well as the session so they receive review
+            # isolation and cannot inherit commander delegation powers.
+            review_role = agent_config.get("role")
+            if review_role not in {"tester", "code_reviewer", "plan_critic", "reviewer"}:
+                review_role = "tester"
+            agent_config = {**agent_config, "role": review_role}
+            _, artifact_source_id = _review_handoff_source(stage, run, defn)
+            artifact_source_id = artifact_source_id or selected_id
+            if not artifact_source_id and run.get("task_id"):
+                task = await (await db_fresh.execute("SELECT assigned_session_id FROM tasks WHERE id=? AND workspace_id=?",
+                                                     (run["task_id"], ws_id))).fetchone()
+                artifact_source_id = task["assigned_session_id"] if task else None
+            agent_config["reviewed_session_id"] = artifact_source_id
+            session_type = "planner" if review_role == "plan_critic" else "tester"
+            session_id = await _auto_create_session(
+                db_fresh, ws_id, session_type, cli_type, agent_config,
+                task_id=run.get("task_id"),
+            )
+        finally:
+            await db_fresh.close()
+        if not session_id:
+            await _fail_stage(run_id, stage_id, "Could not create an independent reviewer")
+            return
 
     # Session reuse: rerun in the same session as another stage
     if not session_id:
@@ -1025,6 +1072,20 @@ async def _execute_agent_stage(
             src_hist = stage_history.get(source_id, {})
             src_stage = _find_stage(defn, source_id)
             src_name = src_stage.get("name", source_id) if src_stage else source_id
+            if independent_review:
+                from review_brief import review_artifact_references
+                plan_critic = agent_config.get("role") == "plan_critic"
+                references = review_artifact_references(src_hist.get("result"), include_plan=plan_critic)
+                if references:
+                    context_blocks.append(f"--- {src_name}: artifacts to inspect (unverified references) ---\n" + json.dumps(references, indent=2)[:6000])
+                elif plan_critic and src_stage and not _is_review_stage(src_stage) and (
+                    src_stage.get("session_type") == "planner"
+                    or (src_stage.get("agent_config") or {}).get("role") in {"planner", "architect"}
+                ):
+                    # The proposed plan is the subject of this review, not an
+                    # implementation success report or an earlier critic verdict.
+                    context_blocks.append(f"--- Proposed plan (untrusted artifact) ---\n{src_hist.get('output_summary', '')}")
+                continue
             # C1: prefer the typed result object when a source stage produced one,
             # so downstream agents receive structured context, not scraped text.
             src_result = src_hist.get("result")
@@ -1047,7 +1108,7 @@ async def _execute_agent_stage(
     transitions = defn.get("transitions", [])
     incoming_fail = [t for t in transitions
                      if t["target"] == stage_id and t.get("condition") == "on_fail"]
-    for t in incoming_fail:
+    for t in ([] if independent_review else incoming_fail):
         src_hist = stage_history.get(t["source"], {})
         src_output = src_hist.get("output_summary", "")
         if src_output:
@@ -2596,6 +2657,8 @@ async def _auto_create_session(
     capability_tag = _capability_tag_for_session_type(session_type)
     if capability_tag:
         initial_tags.append(capability_tag)
+    if session_type in {"tester", "test_worker", "reviewer"} or cfg.get("role") in {"tester", "code_reviewer", "plan_critic", "reviewer"}:
+        initial_tags.append("independent_review")
 
     # Commander-typed pipeline stages need the orchestrator system prompt,
     # the tool deny-list, and the builtin-commander MCP attached — otherwise
@@ -2604,8 +2667,11 @@ async def _auto_create_session(
     extra_system_prompt = None
     extra_disallowed = None
     attach_commander_mcp = False
+    if "independent_review" in initial_tags:
+        from review_brief import INDEPENDENT_REVIEW_INSTRUCTIONS
+        extra_system_prompt = INDEPENDENT_REVIEW_INSTRUCTIONS
     if session_type == "planner":
-        extra_system_prompt = PIPELINE_PLANNER_SYSTEM_PROMPT
+        extra_system_prompt = (extra_system_prompt or "") + "\n\n" + PIPELINE_PLANNER_SYSTEM_PROMPT
     elif session_type == "commander":
         try:
             from config import COMMANDER_SYSTEM_PROMPT, COMMANDER_DISALLOWED_TOOLS
@@ -2633,12 +2699,15 @@ async def _auto_create_session(
         """INSERT INTO sessions
            (id, workspace_id, name, model, permission_mode, effort,
             session_type, cli_type, auto_approve_mcp, task_id,
-            system_prompt, disallowed_tools, tags)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+            system_prompt, disallowed_tools, tags, account_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
         (session_id, workspace_id, name, model, permission_mode, effort,
          db_session_type, resolved_cli, task_id, extra_system_prompt, extra_disallowed,
-         json.dumps(initial_tags)),
+         json.dumps(initial_tags), cfg.get("account_id")),
     )
+    if "independent_review" in initial_tags:
+        from review_brief import bind_review_artifacts
+        await bind_review_artifacts(db, session_id, workspace_id, cfg.get("reviewed_session_id"))
     if attach_commander_mcp:
         await db.execute(
             "INSERT OR IGNORE INTO session_mcp_servers "
@@ -2727,14 +2796,18 @@ def _is_review_stage(stage: dict) -> bool:
         return True
     if role in {"tester", "code_reviewer", "plan_critic", "reviewer"}:
         return True
+    if role in {"worker", "default_worker", "planner", "architect", "documentor", "commander"}:
+        return False
     import re
     label = f"{stage.get('id', '')} {stage.get('name', '')}".lower()
     tokens = set(re.findall(r"[a-z0-9]+", label))
+    if tokens & {"implement", "implementation", "build", "create", "fix", "repair", "write"}:
+        return False
     return bool(tokens & {"test", "tests", "tester", "verify", "verification", "review", "reviewer", "audit", "critic"})
 
 
 def _review_handoff_source(stage: dict, run: dict, defn: dict) -> tuple[str, str | None]:
-    """Return the nearest implementation summary and its session id."""
+    """Find the implementation's original-request source, without its report."""
     history = run.get("stage_history") or {}
     config = stage.get("config") or {}
     configured = stage.get("context_from") or config.get("context_from") or []
@@ -2772,11 +2845,8 @@ def _review_handoff_source(stage: dict, run: dict, defn: dict) -> tuple[str, str
 
     for source_id in candidates:
         source = history.get(source_id) or {}
-        summary = source.get("output_summary")
-        if not summary and isinstance(source.get("result"), dict):
-            summary = json.dumps(source["result"], indent=2)
-        if summary:
-            return str(summary), source.get("session_id")
+        if source.get("session_id"):
+            return "", source["session_id"]
     return "", None
 
 
@@ -2794,7 +2864,7 @@ async def _with_review_intent(prompt: str, stage: dict, run: dict, defn: dict) -
             or variables.get("topic")
             or ""
         ).strip()
-        handoff_notes, reviewed_session_id = _review_handoff_source(stage, run, defn)
+        _handoff_notes, reviewed_session_id = _review_handoff_source(stage, run, defn)
         task_id = run.get("task_id")
         card = None
         db = await get_db()
@@ -2805,6 +2875,7 @@ async def _with_review_intent(prompt: str, stage: dict, run: dict, defn: dict) -
                 reviewed_session_id=reviewed_session_id if not original_prompt else None,
                 task_id=task_id,
                 fallback_original_prompt=original_prompt,
+                allowed_workspace_id=run.get("workspace_id"),
             )
         finally:
             await db.close()
@@ -2813,10 +2884,11 @@ async def _with_review_intent(prompt: str, stage: dict, run: dict, defn: dict) -
             prompt,
             original_prompt=resolved_original,
             board_card=card,
-            handoff_notes=handoff_notes or (card or {}).get("result_summary"),
         )
     except Exception:
-        return prompt
+        # Lookup failures may omit intent, never the independence contract.
+        from review_brief import build_review_brief
+        return build_review_brief(prompt)
 
 
 def _resolve_failure_session(defn: dict, run: dict, stage_id: str) -> Optional[str]:
@@ -3586,7 +3658,7 @@ PRESETS = {
                 "id": "quality_audit", "name": "Quality Audit", "type": "agent",
                 "session_type": "commander",
                 "prompt_template": (
-                    "Audit the output quality of {topic}. This is NOT a correctness check — the previous stages already verified that. "
+                    "Independently audit the output quality of {topic}. Establish behavior yourself; do not assume previous checks passed. "
                     "Your job: run the feature with realistic inputs and evaluate whether the outputs are actually USEFUL to a human user. "
                     "Check: Are generated texts meaningful and relevant? Are suggestions actionable? Do edge cases produce reasonable results or garbage? "
                     "Test with at least 3 different realistic scenarios. Compare outputs against what a good human-crafted version would look like. "

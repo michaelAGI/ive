@@ -652,7 +652,7 @@ def get_session_logical_status(session_id: str, is_alive: bool, db_status: str) 
             return "waiting"
         hstate = _hook_sessions.get(session_id, {}).get("state", "idle")
         return "running" if hstate == "working" else "idle"
-    if db_status in {"exited", "error", "failed", "crashed", "stopped", "auth_failed"}:
+    if db_status in {"exited", "error", "failed", "crashed", "stopped", "auth_failed", "quota_exceeded"}:
         return db_status
     return "idle"
 

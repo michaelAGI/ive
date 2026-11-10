@@ -58,7 +58,7 @@ registerDictionary('status', {
   en: {
     running: 'Running', waiting: 'Waiting', done: 'Done', failed: 'Failed', stopped: 'Stopped',
     replaying: 'Replaying', notStarted: 'Not started', stoppedByYou: 'Stopped by you',
-    loginExpired: 'Login expired', cliExited: 'CLI exited', cliExitedCode: 'CLI exited ({code})',
+    loginExpired: 'Login expired', usageLimit: 'Usage limit reached', cliExited: 'CLI exited', cliExitedCode: 'CLI exited ({code})',
     lastTurnFailed: 'Last turn failed', needsAnswer: 'Needs your answer', answered: 'Answered',
     filesChanged: '{n} files changed', fileChanged: '1 file changed',
   },
@@ -66,7 +66,7 @@ registerDictionary('status', {
     // Product words stay English on purpose.
     running: 'Running', waiting: 'Waiting', done: 'Done', failed: 'Failed', stopped: 'Stopped',
     replaying: 'Wiedergabe', notStarted: 'Nicht gestartet', stoppedByYou: 'Von dir gestoppt',
-    loginExpired: 'Login abgelaufen', cliExited: 'CLI beendet', cliExitedCode: 'CLI beendet ({code})',
+    loginExpired: 'Login abgelaufen', usageLimit: 'Nutzungslimit erreicht', cliExited: 'CLI beendet', cliExitedCode: 'CLI beendet ({code})',
     lastTurnFailed: 'Letzter Durchlauf fehlgeschlagen', needsAnswer: 'Braucht deine Antwort', answered: 'Beantwortet',
     filesChanged: '{n} Dateien geändert', fileChanged: '1 Datei geändert',
   },

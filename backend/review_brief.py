@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -19,9 +20,107 @@ _MANAGED_CONTEXT_START = "<ive-managed-context>"
 _UNTRUSTED_START = '<ive-untrusted-review-context encoding="json">'
 _UNTRUSTED_END = "</ive-untrusted-review-context>"
 
+# This precedes even a context-free review. Warnings around a worker's success
+# claim still expose the reviewer to that claim; omit it instead.
+INDEPENDENT_REVIEW_INSTRUCTIONS = """# Independent review
+
+Form your own assessment from the original request, acceptance criteria and actual artifacts. Implementation summaries, claimed test results and earlier verdicts are intentionally not supplied. Do not retrieve those accounts or ask the implementing agent for its conclusion before completing your own inspection.
+
+Inspect the actual diff and surrounding code, or the supplied plan when reviewing a plan. Check the requested behavior and plausible failure cases. Run relevant checks yourself when permitted; a green test suite alone does not establish correctness. Do not modify the implementation under review.
+
+Report concrete findings with file/line or reproduction evidence, the checks you actually ran and their outcomes, and anything you could not verify. Separate observations from assumptions. If a required acceptance criterion cannot be verified, report that limitation and do not return PASS. An implementation author's confidence is never evidence.
+"""
+
 
 class ReviewScopeError(ValueError):
     """An explicit review source is outside the reviewed resource scope."""
+
+
+def review_artifact_path(workspace_path: str, artifact_path: str) -> str:
+    """Validate an existing source directory; never fall back to other files."""
+    try:
+        root = Path(workspace_path).expanduser().resolve(strict=True)
+        candidate = Path(artifact_path).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError, TypeError) as exc:
+        raise ReviewScopeError("The reviewed artifact directory is unavailable. Restore it before retrying.") from exc
+    if not candidate.is_dir() or (candidate != root and not candidate.is_relative_to(root)):
+        raise ReviewScopeError("The reviewed artifact directory is outside the workspace or unavailable.")
+    return str(candidate)
+
+
+async def bind_review_artifacts(db, reviewer_id: str, workspace_id: str, source_session_id: str | None) -> None:
+    """Bind a fresh reviewer to source files without owning its worktree.
+
+    ``worktree_path`` records the artifact location for Git and launch views.
+    ``worktree=0`` is deliberate: the reviewer must not create/remove a branch.
+    """
+    await db.execute("UPDATE sessions SET worktree=0 WHERE id=? AND workspace_id=?", (reviewer_id, workspace_id))
+    if not source_session_id:
+        return
+    row = await (await db.execute(
+        "SELECT s.*, w.path AS workspace_path FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=? AND s.workspace_id=?",
+        (source_session_id, workspace_id),
+    )).fetchone()
+    if not row:
+        raise ReviewScopeError("The reviewed session is outside the workspace or no longer exists.")
+    source = dict(row)
+    source_path = source.get("worktree_path")
+    if source.get("worktree") and not source_path:
+        raise ReviewScopeError("The original session's worktree is not known yet. Open its terminal before reviewing.")
+    path = review_artifact_path(source["workspace_path"], source_path or source["workspace_path"])
+    await db.execute("UPDATE sessions SET worktree=0, worktree_path=? WHERE id=? AND workspace_id=?",
+                     (path, reviewer_id, workspace_id))
+
+
+def is_independent_review_session(config: Mapping[str, Any]) -> bool:
+    tags = config.get("tags") or []
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except (TypeError, ValueError):
+            tags = []
+    return (config.get("session_type") in {"tester", "test_worker", "reviewer"}
+            or isinstance(tags, list) and any(tag in tags for tag in ("independent_review", "capability_testing")))
+
+
+async def review_task_view(db, tasks: list[dict], caller_session_id: str | None) -> list[dict]:
+    """Keep task lookup useful without revealing completion claims to reviewers.
+
+    Owner/UI reads retain the full record. This is a context boundary rather
+    than an access-control boundary; artifact and project access is unchanged.
+    """
+    if not caller_session_id:
+        return tasks
+    row = await (await db.execute("SELECT session_type, tags FROM sessions WHERE id = ?", (caller_session_id,))).fetchone()
+    if not row or not is_independent_review_session(dict(row)):
+        return tasks
+    fields = {"id", "workspace_id", "title", "description", "acceptance_criteria", "priority", "labels",
+              "parent_task_id", "seam_contract", "task_kind", "assigned_session_id", "created_at", "updated_at"}
+    return [{**{key: value for key, value in task.items() if key in fields},
+             "review_context": "Independent review: implementation reports and earlier verdicts withheld."}
+            for task in tasks]
+
+
+def review_artifact_references(result: Any, *, include_plan: bool = False) -> dict:
+    """Carry artifact locations, never an upstream verdict or evidence claims.
+
+    A plan critic needs the plan itself. Code reviewers instead inspect the
+    repository; their inputs must not contain the author's account of it.
+    """
+    if not isinstance(result, dict):
+        return {}
+    references = {}
+    for key in ("changed_files", "artifact_paths"):
+        value = result.get(key)
+        if isinstance(value, list):
+            paths = [path for path in value if isinstance(path, str) and path.strip()]
+            if paths:
+                references[key] = [path[:500] for path in paths[:50]]
+    if include_plan:
+        for key in ("plan_steps", "risks"):
+            if isinstance(result.get(key), list):
+                references[key] = result[key]
+    return references
 
 
 def _text(value: Any) -> str:
@@ -112,12 +211,14 @@ def build_review_brief(
     max_intent_chars: int = INTENT_CHAR_LIMIT,
     original_prompt_ref: str | None = None,
 ) -> str:
-    """Prepend bounded, delimited untrusted context to reviewer instructions.
+    """Build an independent first-pass review from intent, never worker claims.
 
-    Missing sources are omitted independently.  If every source is missing,
-    the existing brief is returned byte-for-byte so context lookup can never
-    block or degrade a review spawn.
+    ``handoff_notes`` remains accepted for older callers, but is deliberately
+    not rendered. Keep those notes in the task's user-facing history instead.
+    Missing optional context must not remove the independent-review contract.
     """
+    instructions = existing_brief if isinstance(existing_brief, str) else str(existing_brief or "")
+    independent = INDEPENDENT_REVIEW_INSTRUCTIONS + "\n" + instructions
     try:
         fields: list[dict] = []
         asked = _text(original_prompt)
@@ -146,22 +247,22 @@ def build_review_brief(
                 "truncated": False,
             })
 
-        notes = _text(handoff_notes)
-        if notes:
+        criteria = _card_value(board_card, "acceptance_criteria")
+        if criteria:
             fields.append({
-                "provenance": "handoff.notes",
-                "label": "Handoff notes excerpt",
-                "excerpt": notes,
+                "provenance": "feature_board.acceptance_criteria",
+                "label": "Acceptance criteria excerpt",
+                "excerpt": criteria,
                 "truncated": False,
             })
 
         if not fields:
-            return existing_brief
+            return independent
 
         limit = max(1, int(max_intent_chars))
         intent = _bounded_untrusted_context(fields, limit)
         if not intent:
-            return existing_brief
+            return independent
 
         attachment = ""
         if asked and isinstance(original_prompt, str):
@@ -172,13 +273,12 @@ def build_review_brief(
                 ))
             )
 
-        instructions = existing_brief if isinstance(existing_brief, str) else str(existing_brief or "")
         trusted = "\n\n# Reviewer instructions (trusted)\n\n" + instructions if instructions else ""
-        return intent + attachment + trusted
+        return INDEPENDENT_REVIEW_INSTRUCTIONS + "\n" + intent + attachment + trusted
     except Exception:
         # Intent is informational.  A malformed optional source must never
         # prevent the underlying review/test instructions from being sent.
-        return existing_brief
+        return independent
 
 
 def _content_text(content: Any) -> str:
@@ -321,9 +421,7 @@ async def resolve_review_intent_sources(
                     raise ReviewScopeError("explicit task requires a visible reviewed workspace")
                 return original_prompt, None
             cur = await db.execute(
-                """SELECT id, workspace_id, title, description, result_summary,
-                          assigned_session_id, commander_session_id
-                     FROM tasks WHERE id = ? AND workspace_id = ?""",
+                "SELECT * FROM tasks WHERE id = ? AND workspace_id = ?",
                 (linked_task_id, scope_workspace),
             )
             row = await cur.fetchone()

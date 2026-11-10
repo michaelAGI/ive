@@ -437,7 +437,9 @@ export default function App() {
     for (const id of ids) {
       if (!store.sessions[id] || Object.values(assignments).includes(id)) continue
       if (overflowNotifiedRef.current.has(id)) {
-        if (focus && store.activeSessionId === id) store.goSession(id)
+        // Layout overflow only reveals the selected session. Starting it is
+        // owned by the original action; inspection must never restart it.
+        if (focus && store.activeSessionId === id) store.goSession(id, { autoStart: false })
         continue
       }
       const free = cells.find((c) => !assignments[c.id] || !store.sessions[assignments[c.id]] || !store.openTabs.includes(assignments[c.id]))
@@ -456,7 +458,7 @@ export default function App() {
       type: 'info',
       message: `All ${cells.length} cells of "${tpl.name}" are in use, so ${names} opened full size. Drag it onto a cell to keep it in the overview.`,
     })
-    if (focus && overflow.includes(store.activeSessionId)) store.goSession(store.activeSessionId)
+    if (focus && overflow.includes(store.activeSessionId)) store.goSession(store.activeSessionId, { autoStart: false })
   }
   const prevOpenTabsRef = useRef(openTabs)
   useEffect(() => {
@@ -904,6 +906,7 @@ export default function App() {
       // An open menu or popover closes itself on Escape (useEscapeToClose);
       // it must not also close a panel or leave the Session level.
       if (document.querySelector('[data-ive-popover]')) return
+      if (document.querySelector('[data-ive-review-dialog]')) return
       if (taskFlow) return // The active task modal owns Escape and pending writes.
       // Text fields keep their local Escape behavior. A focused terminal in
       // the Session view also uses Escape to return to the Board.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Minus, Sliders, Terminal, MessageSquare, Maximize2 } from 'lucide-react'
 import useStore from '../../state/store'
 import ChatPanel from '../chat/ChatPanel'
@@ -10,9 +10,9 @@ import StatusDot from '../ui/StatusDot'
 import { isShellSession } from '../../lib/sessionStatus'
 import { sessionStateOf } from '../../lib/sessionVocabulary'
 import { getSessionDisplayStatus } from '../../lib/sessionStatus'
-import { isHelperSession } from '../../lib/visibleSessions'
 import { sessionNeedsAttention } from '../../lib/sessionAttention'
 import { GRID_FOCUS_IGNORE_SELECTOR, shouldFocusGridTerminal } from '../../lib/gridFocus'
+import { openActivityTabs } from '../../lib/liveActivity'
 
 // The tile wall (Grid mode of the Board): every open session as a tile with
 // its chat or terminal, in a built-in layout or a custom template. Opening a
@@ -41,7 +41,7 @@ function readGridSessionViews() {
   } catch { return {} }
 }
 
-export default function SessionGrid() {
+export default function SessionGrid({ activityFilter = 'all', onClearFilter }) {
   const openTabs = useStore((s) => s.openTabs)
   const sessions = useStore((s) => s.sessions)
   const sessionStarted = useStore((s) => s.sessionStarted)
@@ -55,6 +55,7 @@ export default function SessionGrid() {
   const activeGridTemplateId = useStore((s) => s.activeGridTemplateId)
   const terminalBoardMode = useStore((s) => s.terminalBoardMode)
   const gridAdjustMode = useStore((s) => s.gridAdjustMode)
+  const focusedTile = useRef(null)
 
   // Reorder + context menu on cell headers.
   const sessionChipMenu = useSessionChipMenu()
@@ -127,10 +128,18 @@ export default function SessionGrid() {
   }
 
   // Tabs filtered by the project/workspace scope; helper sessions stay out.
-  const visibleTabs = openTabs.filter((id) => sessions[id] && !isHelperSession(sessions[id])
-    && (tabScope !== 'workspace' || !activeWorkspaceId || sessions[id].workspace_id === activeWorkspaceId))
+  const visibleTabs = openActivityTabs(openTabs, sessions, { tabScope, activeWorkspaceId }, activityFilter, sessionStarted)
+  useLayoutEffect(() => {
+    if (!focusedTile.current || visibleTabs.includes(focusedTile.current)) return
+    if (document.activeElement === document.body) {
+      document.querySelector(`[data-activity-filter="${activityFilter}"]`)?.focus({ preventScroll: true })
+    }
+    focusedTile.current = null
+  }, [visibleTabs, activityFilter])
 
-  const activeTpl = activeGridTemplateId ? gridTemplates.find((t) => t.id === activeGridTemplateId) : null
+  // An activity filter gets a compact ordinary grid. The custom template and
+  // its assignments are preserved verbatim and return when the filter clears.
+  const activeTpl = activityFilter === 'all' && activeGridTemplateId ? gridTemplates.find((t) => t.id === activeGridTemplateId) : null
 
   const renderHeader = (id, s) => (
     <div {...sessionChipMenu.chipProps(id)} className="ive-session-heading">
@@ -189,8 +198,12 @@ export default function SessionGrid() {
     },
     // Typing into a tile's composer (click or Tab) selects that session.
     onFocusCapture: (e) => {
+      focusedTile.current = id
       if (!e.target?.matches?.('textarea, input, [contenteditable="true"]')) return
       if (useStore.getState().activeSessionId !== id) useStore.getState().setActiveSession(id)
+    },
+    onBlurCapture: (e) => {
+      if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) focusedTile.current = null
     },
   })
 
@@ -210,8 +223,7 @@ export default function SessionGrid() {
       >
         {activeTpl.cells.map((cell, i) => {
           let sessionId = tplAssignments[cell.id]
-          if (sessionId && (!sessions[sessionId] || !openTabs.includes(sessionId))) sessionId = null
-          if (sessionId && tabScope === 'workspace' && activeWorkspaceId && sessions[sessionId]?.workspace_id !== activeWorkspaceId) sessionId = null
+          if (sessionId && !visibleTabs.includes(sessionId)) sessionId = null
           const s = sessionId ? sessions[sessionId] : null
           const isFocused = sessionId && activeSessionId === sessionId
           return (
@@ -255,12 +267,17 @@ export default function SessionGrid() {
   } else {
     /* ─── Built-in grid ─── */
     const readableColumns = Math.max(1, Math.min(3, Math.floor((areaWidth || 520) / 520)))
-    const layout = readableColumns < 2 ? 'equal' : gridLayout
+    const layout = readableColumns < 2 || activityFilter !== 'all' ? 'equal' : gridLayout
     const n = visibleTabs.length
+    const hasChatTiles = visibleTabs.some((id) => !isSessionTerminalView(id))
     const others = Math.max(1, n - 1)
     const rowMinmax = `minmax(${Math.max(380, gridMinRowHeight)}px, 1fr)`
-    const autoRowMin = Math.max(240, gridMinRowHeight)
+    // A conversation needs room for its reply and composer; a terminal can
+    // use the denser preview layout. Let rows scroll instead of cutting off
+    // controls to fit every chat into the space below the activity lane.
+    const autoRowMin = Math.max(hasChatTiles ? 360 : 240, gridMinRowHeight)
     const autoColumns = (() => {
+      if (hasChatTiles) return Math.max(1, Math.min(n, readableColumns))
       const gridW = areaWidth - 8 // grid padding (p-1)
       const gridH = areaHeight - 8
       if (!(gridW > 0 && gridH > 0)) return readableColumns
@@ -325,7 +342,10 @@ export default function SessionGrid() {
           )
         })}
         {visibleTabs.length === 0 && (
-          <div className="ive-grid-empty t-meta">No open sessions in this scope.</div>
+          <div className="ive-grid-empty ive-activity-grid-empty t-meta">
+            <span>{activityFilter === 'working' ? 'None of your open sessions are working right now.' : activityFilter === 'attention' ? 'None of your open sessions need your attention.' : 'No open sessions in this scope.'}</span>
+            {activityFilter !== 'all' && <button type="button" onClick={onClearFilter}>Show all open sessions</button>}
+          </div>
         )}
       </div>
     )

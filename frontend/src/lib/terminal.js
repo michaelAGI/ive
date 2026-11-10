@@ -617,15 +617,23 @@ export function sendTerminalCommand(sessionId, command, options = {}) {
   if ((_commandQueues.get(sessionId) || []).some((item) => item.command === command)) return false
 
   // @ralph starts a pipeline — the task prompt is sent by the pipeline engine, not here
-  const { command: afterRalph, isRalph } = processRalphTag(command, sessionId)
+  // Generated review requests contain source code and quoted user intent.
+  // Tokens inside that material must stay literal, not launch other work.
+  const { command: afterRalph, isRalph } = options.literal
+    ? { command, isRalph: false }
+    : processRalphTag(command, sessionId)
   if (isRalph) return // pipeline engine takes over
 
   let processed = afterRalph
-  const { command: afterResearch, researchJob } = processResearchTag(processed, sessionId)
+  const { command: afterResearch, researchJob } = options.literal
+    ? { command: processed, researchJob: null }
+    : processResearchTag(processed, sessionId)
   const researchReady = researchJob?.then((result) => ({ result }), (error) => ({ error })) || null
   processed = afterResearch
-  processed = processPromptTag(processed)
-  processed = processTicketTag(processed)
+  if (!options.literal) {
+    processed = processPromptTag(processed)
+    processed = processTicketTag(processed)
+  }
 
   // Drop identical commands either already pending OR currently dispatching.
   // Back-to-back dupes are noise — e.g. a flood of the same oversight nudge.

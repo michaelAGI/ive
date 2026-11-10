@@ -52,6 +52,7 @@ function detailOf(session, meta) {
       return code ? t('status.cliExitedCode', { code }) : t('status.cliExited')
     }
     case 'auth': return t('status.loginExpired')
+    case 'quota': return t('status.usageLimit')
     case 'ready': return session.last_turn_error ? t('status.lastTurnFailed') : ''
     default: return ''
   }

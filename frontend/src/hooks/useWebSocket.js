@@ -541,6 +541,8 @@ export default function useWebSocket() {
 
           case 'status': {
             const extra = Object.prototype.hasOwnProperty.call(data, 'pty_alive') ? { pty_alive: data.pty_alive } : {}
+            if (Object.prototype.hasOwnProperty.call(data, 'terminal_activity')) extra.terminal_activity = data.terminal_activity
+            if (Object.prototype.hasOwnProperty.call(data, 'agentState')) extra.agentState = data.agentState
             const store = useStore.getState()
             if (Object.prototype.hasOwnProperty.call(data, 'pty_alive')) {
               if (data.pty_alive) startedSessions.add(sid)

@@ -23,6 +23,7 @@ import useEscapeToClose from '../../hooks/useEscapeToClose'
 import TerminalFindBar from '../find/TerminalFindBar'
 import { applyStickyCtrl, clampPhoneFont, readPhoneFont, writePhoneFont } from '../../lib/phoneKeys'
 import { isShown } from '../../lib/sessionInputFocus'
+import { canRestoreTerminalFocus } from '../../lib/gridFocus'
 
 // GPU rendering for terminals. Browsers cap live WebGL contexts (about 16 in
 // Chromium/WebKit), so only the first few terminals get one; the rest and any
@@ -1881,7 +1882,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
           // Only the active session may take keyboard focus. Every mounted
           // terminal runs this on page load; an unconditional focus() let the
           // last one to start steal the active session (focus listener).
-          if (useStore.getState().activeSessionId === sessionId && isShown(wrapper)) term.focus()
+          if (useStore.getState().activeSessionId === sessionId && isShown(wrapper) && canRestoreTerminalFocus(document.activeElement)) term.focus()
           // First paint may not have happened yet — wait two frames so the
           // .xterm-screen has its real height before we measure for scrolling.
           requestAnimationFrame(() => requestAnimationFrame(ensureCursorVisible))
@@ -1931,7 +1932,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     // The new xterm has no sequence watermark, so request an explicit reset
     // plus all retained complete frames. The same protocol requests geometry
     // ownership; a non-owner keeps the authoritative PTY dimensions.
-    if (useStore.getState().activeSessionId === sessionId && isShown(wrapper)) term.focus()
+    if (useStore.getState().activeSessionId === sessionId && isShown(wrapper) && canRestoreTerminalFocus(document.activeElement)) term.focus()
 
     const remountTimer = setTimeout(() => {
       requestResume(true)

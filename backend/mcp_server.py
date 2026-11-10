@@ -168,6 +168,10 @@ def tool_create_session(args: dict) -> str:
     session_type = args.get("session_type")
     if session_type:
         body["session_type"] = session_type
+    if args.get("testing") or session_type == "test_worker":
+        # Install review isolation before auto-start can build the native
+        # system prompt; adding capability tags afterwards is too late.
+        body["tags"] = ["capability_testing", "independent_review"]
     system_prompt = args.get("system_prompt", "")
     # Enforce plan_first by prepending plan-first instructions
     if args.get("plan_first"):
@@ -186,6 +190,8 @@ def tool_create_session(args: dict) -> str:
         body["task_id"] = task_id
         system_prompt = WORKER_BOARD_PROMPT + ("\n\n" + system_prompt if system_prompt else "")
         task = api_call("GET", f"/tasks/{task_id}")
+        if (args.get("testing") or session_type == "test_worker") and isinstance(task, dict) and task.get("assigned_session_id"):
+            body["reviewed_session_id"] = task["assigned_session_id"]
         if _task_is_alloy(task):
             if args.get("testing"):
                 alloy_prompt = ALLOY_TESTER_SYSTEM_PROMPT_FRAGMENT
@@ -203,7 +209,7 @@ def tool_create_session(args: dict) -> str:
         mcp_ids = []
         guideline_ids = []
         overrides = {}
-        tags = []
+        tags = ["independent_review"] if args.get("testing") or session_type == "test_worker" else []
         if args.get("testing"):
             mcp_ids.append("builtin-playwright")
             guideline_ids.append("builtin-testing-agent")

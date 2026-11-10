@@ -362,8 +362,15 @@ def _build_node_prompt(node: dict, parent_results: dict) -> str:
     compact = {}
     if parent_results:
         compact = {k: v for k, v in parent_results.items() if v is not None}
+        if str(role or "").lower() in {"tester", "code_reviewer", "plan_critic", "reviewer"}:
+            from review_brief import review_artifact_references
+            compact = {
+                key: references for key, value in compact.items()
+                if (references := review_artifact_references(value, include_plan=role == "plan_critic"))
+            }
         if compact:
-            parts.append("Upstream results:\n" + json.dumps(compact, indent=2)[:4000])
+            label = "Artifacts to inspect (unverified references)" if str(role or "").lower() in {"tester", "code_reviewer", "plan_critic", "reviewer"} else "Upstream results"
+            parts.append(label + ":\n" + json.dumps(compact, indent=2)[:4000])
     schema = node.get("result_schema")
     if schema:
         parts.append(
@@ -380,7 +387,6 @@ def _build_node_prompt(node: dict, parent_results: dict) -> str:
                 prompt,
                 original_prompt=node.get("original_prompt"),
                 board_card=node.get("board_card"),
-                handoff_notes=json.dumps(compact, indent=2) if compact else None,
             )
         except Exception:
             pass

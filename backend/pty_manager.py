@@ -274,6 +274,30 @@ class PTYSession:
     def is_alive(self) -> bool:
         return bool(self._alive and self.pid is not None and self.master_fd is not None)
 
+    def shell_activity(self) -> str | None:
+        """Observe a plain shell's foreground job without running a command.
+
+        An open prompt and background-only jobs leave the shell in control of
+        the terminal. A foreground job takes that control, including silent
+        jobs such as a build waiting on a subprocess. This deliberately does
+        not infer work from terminal output or pretend to measure CPU usage.
+        Shell builtins and shells without job control cannot be distinguished
+        from a prompt this way; unavailable kernel evidence stays unknown.
+        """
+        if not self.plain_shell:
+            return None
+        with self._fd_lock:
+            if not self.is_alive():
+                return "unknown"
+            try:
+                foreground = os.tcgetpgrp(self.master_fd)
+                shell_group = os.getpgid(self.pid)
+            except (OSError, ValueError):
+                return "unknown"
+        if foreground <= 0 or shell_group <= 0:
+            return "unknown"
+        return "idle" if foreground == shell_group else "working"
+
     def _close_fd(self):
         with self._fd_lock:
             if self.master_fd is not None:
@@ -648,6 +672,22 @@ class PTYManager:
     def is_alive(self, session_id: str) -> bool:
         s = self._sessions.get(session_id)
         return bool(s and s.is_alive())
+
+    def get_shell_activity(self, session_id: str) -> str | None:
+        session = self._sessions.get(session_id)
+        return session.shell_activity() if session else None
+
+    def get_pid(self, session_id: str) -> int | None:
+        session = self._sessions.get(session_id)
+        return session.pid if session and session.is_alive() else None
+
+    def shell_activity_snapshot(self) -> dict[str, str]:
+        """Only live shell PTYs, sampled cheaply from the kernel."""
+        return {
+            sid: session.shell_activity()
+            for sid, session in list(self._sessions.items())
+            if session.plain_shell and session.is_alive()
+        }
 
     async def stop_session(self, session_id: str):
         s = self._sessions.get(session_id)

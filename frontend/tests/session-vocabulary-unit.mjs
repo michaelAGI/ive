@@ -27,6 +27,7 @@ test('A.7: every backend state maps to one of five words with its detail', () =>
     [agent({ status: 'error', pty_alive: false, exit_code: 137 }), 'failed', 'Failed', 'CLI exited (SIGKILL)'],
     [agent({ status: 'error', pty_alive: false, exit_code: 2 }), 'failed', 'Failed', 'CLI exited (code 2)'],
     [agent({ status: 'auth_failed', pty_alive: false }), 'failed', 'Failed', 'Login expired'],
+    [agent({ status: 'quota_exceeded', pty_alive: false }), 'failed', 'Failed', 'Usage limit reached'],
     [agent({ status: 'idle', pty_alive: true, last_turn_error: 'rate_limit' }), 'done', 'Done', 'Last turn failed'],
     [shell({ status: 'running', pty_alive: true }), 'running', 'Running', ''],
     [shell({ status: 'exited', pty_alive: false }), 'stopped', 'Stopped', ''],

@@ -27,6 +27,7 @@ _TESTER_SCHEMA = {
         "verdict": {"type": "string", "enum": ["pass", "fail"]},
         "failures": {"type": "array", "items": {"type": "string"}},
         "evidence": {"type": "array", "items": {"type": "string"}},
+        "unverified": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
     },
 }
@@ -73,6 +74,8 @@ _REVIEWER_SCHEMA = {
     "properties": {
         "verdict": {"type": "string", "enum": ["pass", "fail"]},
         "issues": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "unverified": {"type": "array", "items": {"type": "string"}},
         "summary": {"type": "string"},
     },
 }
@@ -138,8 +141,10 @@ ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "model": "sonnet", "permission_mode": "auto", "effort": None,
         "tools": ["playwright", "testing-agent"],
         "system_fragment": (
-            "You are verifying an implementation. Run tests, check behavior, and report a "
-            "definitive verdict. Call submit_result with your typed verdict when done."
+            "Independently inspect the implementation against the task. Run relevant tests "
+            "and check behavior and failure cases yourself. Include evidence and unverified "
+            "criteria; never treat an author's claimed result as proof. Required criteria "
+            "that remain unverified cannot pass. Call submit_result with your typed verdict when done."
         ),
         "result_schema": _TESTER_SCHEMA,
     },
@@ -158,7 +163,12 @@ ROLE_TEMPLATES: dict[str, dict[str, Any]] = {
         "harness_pref": ["claude", "codex"],
         "model": "sonnet", "permission_mode": "auto", "effort": None,
         "tools": [],
-        "system_fragment": "Review the diff for correctness and quality. Report a pass/fail verdict.",
+        "system_fragment": (
+            "Independently review the actual diff and surrounding code against the task for "
+            "correctness and regressions. Report findings with file/line evidence, checks you "
+            "ran and their outcomes, and unverified criteria. Do not modify source files or "
+            "treat implementation summaries as proof. Required unverified criteria cannot pass."
+        ),
         "result_schema": _REVIEWER_SCHEMA,
     },
     "secure": {

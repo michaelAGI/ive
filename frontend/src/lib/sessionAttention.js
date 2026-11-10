@@ -92,7 +92,7 @@ export function handleAttentionEvent(store, sid, data) {
 // `session.startup_blocker` when GET output or a WS error reports one.
 export function sessionNeedsAttention(session) {
   return !!session?.attention || !!session?.startup_blocker
-    || ['waiting', 'prompting', 'input_needed', 'needs_input', 'auth_failed', 'error', 'failed', 'crashed'].includes(session?.status)
+    || ['waiting', 'prompting', 'input_needed', 'needs_input', 'auth_failed', 'quota_exceeded', 'error', 'failed', 'crashed'].includes(session?.status)
     || session?.agentState === 'prompting'
 }
 

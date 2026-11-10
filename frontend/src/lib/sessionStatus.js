@@ -34,7 +34,11 @@ export function getShellStatusMeta(session, sessionStarted = {}) {
   const status = normalizeStatus(session?.status)
   const alive = session?.pty_alive === true
     || (session?.pty_alive !== false && !!sessionStarted[session?.id] && !['exited', 'error', 'stopped'].includes(status))
-  if (alive) return meta('running', 'shell-running')
+  if (alive) {
+    if (session.terminal_activity === 'working') return meta('running', 'shell-working', true)
+    if (session.terminal_activity === 'idle') return meta('done', 'shell-idle')
+    return meta('running', 'shell-running')
+  }
   return meta('stopped', 'offline')
 }
 
@@ -63,6 +67,7 @@ export function getSessionStatusMeta(status = 'idle', agentState = null, hasStar
   const state = rawAgentState || rawStatus
 
   if (AUTH.has(rawStatus) || AUTH.has(state)) return meta('failed', 'auth')
+  if (rawStatus === 'quota_exceeded' || state === 'quota_exceeded') return meta('failed', 'quota')
   if (ERROR.has(rawStatus) || ERROR.has(state)) return meta('failed', 'error')
   if (EXITED.has(rawStatus)) return meta('stopped', 'offline')
   if (WAITING.has(state) || WAITING.has(rawStatus)) return meta('waiting', 'waiting')
@@ -105,7 +110,7 @@ export function getSubagentStatusMeta(status = 'running') {
 export function getSessionDisplayStatus(session, sessionStarted = {}) {
   if (isShellSession(session)) return getShellStatusMeta(session, sessionStarted)
   const result = getSessionStatusMeta(session?.status, session?.agentState, hasSessionStarted(session, sessionStarted))
-  if (!session || result.tone === 'auth' || result.tone === 'error' || result.tone === 'offline' || result.tone === 'waiting') return result
+  if (!session || result.state === 'failed' || result.tone === 'offline' || result.tone === 'waiting') return result
   if (!sessionNeedsAttention(session)) return result
   return meta('waiting', 'waiting')
 }

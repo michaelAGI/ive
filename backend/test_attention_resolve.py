@@ -384,8 +384,10 @@ class OverviewWaitingCounterTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         finally:
             await db.close()
-        for sid in ("asking", "gone"):
+        for sid in ("asking", "busy", "done", "gone"):
             self.addCleanup(attention.clear_attention, sid)
+            self.addCleanup(hooks.cleanup_session, sid)
+        hooks._get_state("busy")["state"] = "working"
         wanted = {"_OVERVIEW_DETAIL_LIMIT", "_OVERVIEW_SESSION_STATUSES", "_OVERVIEW_BLOCKED_STATUSES",
                   "_OVERVIEW_RESEARCH_TERMINAL_STATUSES", "TEST_QUEUE_ATTENTION_STATUSES"}
         tree = ast.parse(Path(__file__).with_name("server.py").read_text())
@@ -393,6 +395,9 @@ class OverviewWaitingCounterTests(unittest.IsolatedAsyncioTestCase):
         nodes += [n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "get_overview"]
         self.ns = {"web": web, "get_db": self.get_db, "get_auth": lambda _: SimpleNamespace(is_owner=True),
                    "pty_mgr": SimpleNamespace(is_alive=lambda sid: sid != "gone")}
+        self.ns["_decorate_session_dict"] = lambda row: {
+            **row, "status": hooks.get_session_logical_status(row["id"], row["id"] != "gone", row["status"]),
+        }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "server.py", "exec"), self.ns)
 
     async def get_db(self):
@@ -413,7 +418,8 @@ class OverviewWaitingCounterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workspace["blocked_sessions"]["total"], 1)
         await attention.resolve("asking")
         workspace = json.loads((await self.ns["get_overview"](SimpleNamespace())).text)["workspaces"][0]
-        self.assertEqual((workspace["sessions"]["by_status"]["waiting"], workspace["sessions"]["by_status"]["running"]), (0, 2))
+        self.assertEqual((workspace["sessions"]["by_status"]["waiting"], workspace["sessions"]["by_status"]["running"]), (0, 1))
+        self.assertEqual(workspace["sessions"]["by_status"]["idle"], 2)
 
 
 if __name__ == "__main__":

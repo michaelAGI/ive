@@ -267,7 +267,8 @@ class ShellCreateTests(unittest.IsolatedAsyncioTestCase):
 
 class ShellStartTests(unittest.IsolatedAsyncioTestCase):
     async def test_start_runs_login_shell_without_agent_assembly(self):
-        pty = SimpleNamespace(start_session=AsyncMock(), is_alive=lambda sid: True)
+        pty = SimpleNamespace(start_session=AsyncMock(), is_alive=lambda sid: True,
+                              get_shell_activity=lambda sid: "idle")
         broadcast = AsyncMock()
         started = []
         cache = {}
@@ -300,7 +301,8 @@ class ShellStartTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cache["s1"], "shell")
         self.assertEqual(started, [("s1", "full")])
         self.assertNotIn("s1", start_times)  # no agent initial-render collapse
-        broadcast.assert_awaited_with({"session_id": "s1", "type": "status", "status": "running", "pty_alive": True})
+        broadcast.assert_awaited_with({"session_id": "s1", "type": "status", "status": "idle",
+                                      "agentState": "idle", "terminal_activity": "idle", "pty_alive": True})
 
 
 if __name__ == "__main__":

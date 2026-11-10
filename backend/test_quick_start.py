@@ -227,6 +227,34 @@ class QuickStartTests(unittest.IsolatedAsyncioTestCase):
         unnamed = await self.quick_session(workspace_id="w1")
         self.assertEqual(unnamed["name"], "New session")
 
+    async def test_reviewer_without_source_uses_workspace_files_despite_worktree_default(self):
+        project = self.root / "review-project"
+        project.mkdir()
+        (project / "pending-change.txt").write_text("UNCOMMITTED_WORKSPACE_CHANGE")
+        await self.db.execute(
+            "INSERT INTO workspaces(id,name,path,default_worktree) VALUES('review-ws','Review',?,1)",
+            (str(project),))
+        await self.db.commit()
+        cases = [({}, 1), ({"tags": ["independent_review"]}, 0),
+                 ({"tags": ["capability_testing", "independent_review"]}, 0),
+                 ({"session_type": "test_worker"}, 0)]
+        for options, expected_worktree in cases:
+            with self.subTest(options=options):
+                response = await self.server.create_session(FakeRequest({
+                    "workspace_id": "review-ws", "cli_type": "claude", "auto_start": False,
+                    **options,
+                }))
+                self.assertEqual(response.status, 201, response.text)
+                session = payload(response)
+                self.assertEqual(session["worktree"], expected_worktree)
+                stored = dict(await (await self.db.execute("SELECT * FROM sessions WHERE id=?", (session["id"],))).fetchone())
+                self.assertEqual(stored["worktree"], expected_worktree)
+                self.assertIsNone(stored["worktree_path"])
+                config = await self.server.get_session_config(session["id"])
+                self.assertEqual(config["workspace_path"], str(project))
+                self.assertEqual((Path(config["workspace_path"])/"pending-change.txt").read_text(),
+                                 "UNCOMMITTED_WORKSPACE_CHANGE")
+
     async def test_project_target_errors_and_quick_workspace_id(self):
         missing = await self.server.create_quick_session(FakeRequest({"workspace_id": "nope"}))
         self.assertEqual(missing.status, 404)

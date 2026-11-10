@@ -11,6 +11,8 @@ import { sendTerminalCommand } from '../../lib/terminal'
 import { parseDiffLines } from '../../lib/diffParser'
 import { detectLang, tokenizeLine } from '../../lib/syntaxHighlight'
 import { getCliLabel, getRoleDefaultModel, getDefaultPermissionMode } from '../../lib/constants'
+import { DEFAULT_REVIEW_AGENT_PROMPT as DEFAULT_AGENT_PROMPT, composeIndependentReview, sendReviewRequest } from '../../lib/independentReview'
+import useReviewDialogFocus from '../../hooks/useReviewDialogFocus'
 
 const STATUS_LABELS = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', '?': 'Untracked' }
 const STATUS_ICONS = { M: FileEdit, A: FilePlus, D: FileMinus, '?': FileQuestion }
@@ -35,13 +37,6 @@ const DEFAULT_PROMPT = `Please review the following code changes and provide fee
 {diff}
 \`\`\``
 
-const DEFAULT_AGENT_PROMPT = `Act as a careful code reviewer. Walk the diff, flag bugs, security issues, regressions, dead code, and unclear naming. Quote the offending lines and propose concrete fixes. Be terse — skip what already looks correct.
-
-{annotations}
-
-\`\`\`diff
-{diff}
-\`\`\``
 
 // Skills relevant to code review. Other installed skills also get listed if found.
 const REVIEW_SKILLS = ['review', 'security-review', 'simplify', 'code-review']
@@ -637,14 +632,7 @@ export default function CodeReviewPanel({ onClose }) {
       const body = (agentPrompt || DEFAULT_AGENT_PROMPT)
         .replace('{diff}', diffText.slice(0, 100000))
         .replace('{annotations}', annotationsText)
-      let reviewBody = body
-      try {
-        const enriched = await api.composeReviewBrief({
-          instructions: body,
-          reviewed_session_id: activeSessionId,
-        })
-        if (enriched?.brief) reviewBody = enriched.brief
-      } catch {}
+      const reviewBody = await composeIndependentReview(api, body, activeSessionId, agentMode)
       const prompt = `${skillPrefix}${reviewBody}`
 
       let sid
@@ -656,6 +644,8 @@ export default function CodeReviewPanel({ onClose }) {
         const session = await api.createSession(workspaceId, {
           name: `Review · ${scopeLabel}${agentSkill ? ` · /${agentSkill}` : ''}`,
           purpose: 'Code review',
+          tags: ['independent_review'],
+          worktree: false,
           cli_type: reviewCliType,
           model: getRoleDefaultModel(reviewCliType, 'worker'),
           permission_mode: getDefaultPermissionMode(reviewCliType),
@@ -666,11 +656,9 @@ export default function CodeReviewPanel({ onClose }) {
           try { await api.setSessionGuidelines(session.id, ids) } catch {}
         }
         useStore.getState().addSession(session)
-        // Let the PTY come up before pasting a 100KB prompt
-        await useStore.getState().ensureSessionRunning(sid)
       }
 
-      sendTerminalCommand(sid, prompt)
+      await sendReviewRequest({ store: useStore.getState(), sessionId: sid, prompt, start: agentMode === 'new', send: sendTerminalCommand })
       setAgentModalOpen(false)
     } catch (e) {
       setAgentError(e.message || 'Failed to spawn review agent')
@@ -1186,6 +1174,7 @@ function AgentReviewModal({
   sessions, targetSessionId, setTargetSessionId, activeSessionId,
   configuredProvider, resolvedCliType,
 }) {
+  const dialogFocus = useReviewDialogFocus(onClose, busy)
   const providerText = configuredProvider === 'active'
     ? `${reviewProviderLabel(configuredProvider)} -> ${reviewProviderLabel(resolvedCliType)}`
     : reviewProviderLabel(resolvedCliType)
@@ -1193,11 +1182,13 @@ function AgentReviewModal({
   return (
     <div
       className="absolute inset-0 z-20 flex items-center justify-center bg-x-scrim backdrop-blur-[4px]"
-      onClick={onClose}
+      onClick={() => { if (!busy) onClose() }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div
-        className="w-[640px] max-h-[85%] flex flex-col x-panel scale-in"
+        {...dialogFocus}
+        className="w-[640px] max-w-[calc(100%-24px)] max-h-[85%] flex flex-col x-panel scale-in"
+        role="dialog" aria-modal="true" aria-label="Advanced code review"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -1210,7 +1201,7 @@ function AgentReviewModal({
             {` \u00B7 ${providerText}`}
           </span>
           <div className="flex-1" />
-          <button onClick={onClose} className="p-1 text-x-faint hover:text-x-ink-secondary rounded">
+          <button onClick={onClose} disabled={busy} aria-label="Close review setup" className="p-1 text-x-faint hover:text-x-ink-secondary rounded">
             <X size={14} />
           </button>
         </div>
@@ -1223,6 +1214,8 @@ function AgentReviewModal({
             <div className="flex gap-1.5">
               <button
                 onClick={() => setMode('new')}
+                aria-pressed={mode === 'new'}
+                disabled={busy}
                 className={`flex-1 px-3 py-2 text-[11px] font-mono rounded border transition-colors ${
                   mode === 'new'
                     ? 'bg-x-accent/15 text-x-accent border-x-accent/30'
@@ -1230,13 +1223,14 @@ function AgentReviewModal({
                 }`}
               >
                 <div className="flex items-center gap-1.5">
-                  <Bot size={11} /> New session
+                  <Bot size={11} /> Independent review
                 </div>
                 <div className="text-[11px] text-x-muted mt-0.5 font-normal truncate">Fresh agent via {providerText}</div>
               </button>
               <button
                 onClick={() => setMode('current')}
-                disabled={!activeSessionId}
+                aria-pressed={mode === 'current'}
+                disabled={busy || !activeSessionId}
                 className={`flex-1 px-3 py-2 text-[11px] font-mono rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                   mode === 'current'
                     ? 'bg-x-accent/15 text-x-accent border-x-accent/30'
@@ -1249,8 +1243,14 @@ function AgentReviewModal({
                 <div className="text-[11px] text-x-muted mt-0.5 font-normal">Hand off to a session you already have</div>
               </button>
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-x-muted" role="status">
+              {mode === 'new'
+                ? 'A fresh reviewer inspects the original task and actual changes, without the working agent’s completion summary or previous review verdicts. It reports its own checks and remaining gaps.'
+                : 'This session keeps its earlier context. Use it for follow-up feedback; choose Independent review for a fresh assessment.'}
+            </p>
             {mode === 'current' && sessions.length > 1 && (
               <select
+                aria-label="Feedback conversation"
                 value={targetSessionId || ''}
                 onChange={(e) => setTargetSessionId(e.target.value)}
                 className="mt-2 w-full px-2 py-1.5 text-[11px] font-mono bg-x-surface-2 border border-x-line rounded text-x-ink-secondary focus:outline-none focus:border-x-accent focus:ring-[3px] focus:ring-x-focus"
@@ -1345,6 +1345,7 @@ function AgentReviewModal({
               </button>
             </div>
             <textarea
+              aria-label="Review instructions"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               className="w-full h-[160px] px-3 py-2 text-[11px] font-mono bg-x-surface-2 border border-x-line rounded text-x-ink-secondary resize-y focus:outline-none focus:border-x-accent"
@@ -1366,6 +1367,7 @@ function AgentReviewModal({
           <div className="flex-1" />
           <button
             onClick={onClose}
+            disabled={busy}
             className="px-3 py-1.5 text-[11px] font-mono text-x-muted hover:text-x-ink bg-transparent hover:bg-x-hover rounded transition-colors"
           >
             Cancel
@@ -1380,7 +1382,7 @@ function AgentReviewModal({
             }`}
           >
             {busy ? <Loader2 size={11} className="animate-spin" /> : <Bot size={11} />}
-            {busy ? 'Spawning\u2026' : mode === 'new' ? 'Spawn Agent' : 'Send to Session'}
+            {busy ? 'Starting\u2026' : mode === 'new' ? 'Start independent review' : 'Send to session'}
           </button>
         </div>
       </div>

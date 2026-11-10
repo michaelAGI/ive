@@ -22,16 +22,11 @@ import { Button } from '../ui'
 import ReviewContextCard from './ReviewContextCard'
 import ReviewActions from './ReviewActions'
 import { REVIEW_SCOPES } from '../../lib/reviewContext'
+import { DEFAULT_REVIEW_AGENT_PROMPT, composeIndependentReview, sendReviewRequest } from '../../lib/independentReview'
+import useReviewDialogFocus from '../../hooks/useReviewDialogFocus'
 
 const STATUS_LABELS = { M: 'Modified', A: 'Added', D: 'Deleted', R: 'Renamed', C: 'Copied', '?': 'Untracked' }
 const STATUS_ICONS = { M: FileEdit, A: FilePlus, D: FileMinus, '?': FileQuestion }
-const DEFAULT_REVIEW_AGENT_PROMPT = `Act as a careful code reviewer. Read and explain the supplied changes without editing files or applying fixes. Walk the diff, flag bugs, security issues, regressions, dead code, and unclear naming. Quote the offending lines and propose concrete fixes. Be terse; skip what already looks correct.
-
-{annotations}
-
-\`\`\`diff
-{diff}
-\`\`\``
 
 // Prism's tokenizer emits a much richer set of token types (function,
 // class-name, variable, parameter, attr-name, ...). The class map lives in
@@ -772,14 +767,7 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
       const basePrompt = (reviewAgentPrompt || DEFAULT_REVIEW_AGENT_PROMPT)
         .replace('{diff}', gitDiffText.slice(0, 100000))
         .replace('{annotations}', annotationsText)
-      let prompt = basePrompt
-      try {
-        const enriched = await api.composeReviewBrief({
-          instructions: basePrompt,
-          reviewed_session_id: sessionId || activeSessionId,
-        })
-        if (enriched?.brief) prompt = enriched.brief
-      } catch {}
+      const prompt = await composeIndependentReview(api, basePrompt, sessionId || activeSessionId, reviewAgentMode)
 
       let sid = reviewAgentTargetSessionId || sessionId || activeSessionId
       if (reviewAgentMode === 'new') {
@@ -788,17 +776,17 @@ export default function SessionSidebar({ sessionId, initialFile = null, initialT
         const session = await api.createSession(workspaceId, {
           name: `Review · ${scopeLabel}${fileLabel}`,
           purpose: 'Code review',
+          tags: ['independent_review'],
+          // The displayed diff belongs to this workspace, not a new HEAD checkout.
+          worktree: false,
           cli_type: reviewCliType,
           model: getRoleDefaultModel(reviewCliType, 'worker'),
           permission_mode: getDefaultPermissionMode(reviewCliType),
         })
         useStore.getState().addSession(session)
         sid = session.id
-        // Wait for the real start_pty instead of a guessed delay.
-        await useStore.getState().ensureSessionRunning(sid)
       }
-      if (!sid) throw new Error('No review session available')
-      sendTerminalCommand(sid, prompt)
+      await sendReviewRequest({ store: useStore.getState(), sessionId: sid, prompt, start: reviewAgentMode === 'new', send: sendTerminalCommand })
       setReviewAgentOpen(false)
     } catch (e) {
       setReviewAgentError(e.message || 'Failed to start review agent')
@@ -2055,6 +2043,10 @@ function SidebarReviewAgentModal({
   annotationsCount, diffSize, sessions, targetSessionId, setTargetSessionId, activeSessionId, onProviderChange,
 }) {
   const providerText = reviewProviderLabel(resolvedCliType)
+  const dialogFocus = useReviewDialogFocus(onClose, busy)
+  const [showInstructions, setShowInstructions] = useState(false)
+  const instructionsRef = useRef(null)
+  useEffect(() => { if (showInstructions) instructionsRef.current?.focus() }, [showInstructions])
 
   return createPortal(
     <div
@@ -2063,6 +2055,7 @@ function SidebarReviewAgentModal({
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div
+        {...dialogFocus}
         className="w-full max-w-[560px] max-h-full flex flex-col rounded-xl border border-x-line bg-x-surface shadow-x-1 overflow-hidden"
         role="dialog" aria-modal="true" aria-label="Start a code review"
         onClick={(e) => e.stopPropagation()}
@@ -2075,13 +2068,13 @@ function SidebarReviewAgentModal({
             {annotationsCount ? ` · ${annotationsCount} note${annotationsCount !== 1 ? 's' : ''}` : ''}
           </span>
           <div className="flex-1" />
-          <button onClick={onClose} className="p-1 rounded text-x-muted hover:text-x-ink hover:bg-x-hover">
+          <button onClick={onClose} disabled={busy} aria-label="Close review setup" className="p-1 rounded text-x-muted hover:text-x-ink hover:bg-x-hover">
             <X size={13} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          <p className="text-xs text-x-muted">A separate reviewer checks the selected changes against the original task. Your current conversation keeps running. Feedback alone can be sent to the existing conversation.</p>
+          <p className="text-xs text-x-muted">A fresh reviewer checks the original task and actual changes, with its own inspection and checks.</p>
           <label className="flex items-center gap-2 text-xs">Reviewer
             <select aria-label="Review provider" value={resolvedCliType} disabled={busy} onChange={(event) => onProviderChange(event.target.value)} className="rounded border border-x-line bg-x-surface-2 px-2 py-1 text-x-ink"><option value="claude">Claude</option><option value="codex">Codex</option></select>
           </label>
@@ -2091,31 +2084,40 @@ function SidebarReviewAgentModal({
               <button
                 type="button"
                 onClick={() => setMode('new')}
+                aria-pressed={mode === 'new'}
+                disabled={busy}
                 className={`px-2 py-2 rounded-lg border text-left transition-colors ${
                   mode === 'new'
                     ? 'bg-x-accent/15 border-x-accent/35 text-x-accent'
                     : 'bg-x-surface-2 border-x-line text-x-ink-secondary hover:text-x-ink'
                 }`}
               >
-                <div className="text-[11px] font-mono font-semibold">Separate reviewer</div>
+                <div className="text-[11px] font-mono font-semibold">Independent review</div>
                 <div className="text-[11px] font-mono text-x-faint truncate">{providerText}</div>
               </button>
               <button
                 type="button"
                 onClick={() => setMode('current')}
-                disabled={!activeSessionId}
+                aria-pressed={mode === 'current'}
+                disabled={busy || !activeSessionId}
                 className={`px-2 py-2 rounded-lg border text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
                   mode === 'current'
                     ? 'bg-x-accent/15 border-x-accent/35 text-x-accent'
                     : 'bg-x-surface-2 border-x-line text-x-ink-secondary hover:text-x-ink'
                 }`}
               >
-                <div className="text-[11px] font-mono font-semibold">Existing</div>
+                <div className="text-[11px] font-mono font-semibold">Existing conversation</div>
                 <div className="text-[11px] font-mono text-x-faint">Send into selected session</div>
               </button>
             </div>
+            <p className="mt-2 text-[11px] leading-relaxed text-x-muted" role="status">
+              {mode === 'new'
+                ? 'Starts without the working agent’s completion summary or previous review verdicts. The reviewer reports what it checked and what remains unverified.'
+                : 'This conversation keeps its earlier context. Use it for follow-up feedback; choose Independent review for a fresh assessment.'}
+            </p>
             {mode === 'current' && sessions.length > 0 && (
               <select
+                aria-label="Feedback conversation"
                 value={targetSessionId || ''}
                 onChange={(e) => setTargetSessionId(e.target.value)}
                 className="mt-2 w-full px-2 py-1.5 text-[11px] font-mono bg-x-surface-2 border border-x-line rounded-lg text-x-ink-secondary focus:outline-none focus:border-x-accent focus:ring-[3px] focus:ring-x-focus"
@@ -2129,7 +2131,7 @@ function SidebarReviewAgentModal({
             )}
           </div>
 
-          <div>
+          {showInstructions && <div id="ive-review-instructions">
             <div className="flex items-center gap-1.5 mb-1.5">
               <Edit3 size={10} className="text-x-muted" />
               <span className="text-[11px] font-mono uppercase tracking-wide text-x-faint">Prompt</span>
@@ -2153,35 +2155,38 @@ function SidebarReviewAgentModal({
               </button>
             </div>
             <textarea
+              ref={instructionsRef}
+              aria-label="Review instructions"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               className="w-full h-[210px] px-2.5 py-2 text-[11px] leading-4 font-mono bg-x-surface-2 border border-x-line rounded-lg text-x-ink placeholder:text-x-faint resize-y focus:outline-none focus:border-x-accent focus:ring-[3px] focus:ring-x-focus"
             />
-          </div>
+          </div>}
 
           {error && (
-            <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-x-accent-ink/10 border border-x-accent-ink/25 text-[11px] font-mono text-x-accent-ink">
+            <div role="alert" className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-x-accent-ink/10 border border-x-accent-ink/25 text-[11px] font-mono text-x-accent-ink">
               <AlertTriangle size={11} />
               <span>{error}</span>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-2 border-t border-x-line bg-x-surface-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-t border-x-line bg-x-surface-2 shrink-0">
           <button
             type="button"
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent('open-panel', { detail: 'code-review' }))
-              requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('code-review:open-agent')))
-            }}
+            onClick={() => setShowInstructions(value => !value)}
+            aria-expanded={showInstructions}
+            aria-controls="ive-review-instructions"
+            disabled={busy}
             className="px-2 py-1.5 rounded-lg border border-x-line text-[11px] font-mono text-x-muted hover:text-x-ink hover:bg-x-hover"
           >
-            Advanced
+            {showInstructions ? 'Hide instructions' : 'Edit instructions'}
           </button>
           <div className="flex-1" />
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             className="px-2.5 py-1.5 rounded-lg bg-transparent hover:bg-x-hover text-[11px] font-mono text-x-ink-secondary hover:text-x-ink transition-colors"
           >
             Cancel

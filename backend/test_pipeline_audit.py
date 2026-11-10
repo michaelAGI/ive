@@ -118,7 +118,10 @@ class PipelineAuditTests(unittest.IsolatedAsyncioTestCase):
         from test_task_flow import server_functions
         run, sid, manager, _ = await self.agent_delivery(
             prompt='Review the proposed plan. Use report_pipeline_result.', role='plan_critic')
-        await self.wait_delivery(run['id'])
+        delivered = await self.wait_delivery(run['id'])
+        fresh_sid = delivered['stage_history']['agent']['session_id']
+        self.assertNotEqual(fresh_sid, sid)
+        sid = fresh_sid
         prompt = manager.write.call_args_list[0].args[1].decode()
         self.assertIn('ToolSearch to find `submit_result`', prompt)
         self.assertIn('Use submit_result instead of report_pipeline_result', prompt)
