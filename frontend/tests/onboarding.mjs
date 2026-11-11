@@ -58,7 +58,7 @@ test('keyboard focus stays inside, Escape dismisses, and help reopens the introd
     await dialog(f).waitFor({ state: 'detached' })
     assert.equal(await f.page.locator('.x-app-shell').evaluate(el => el.inert), false)
     await f.page.keyboard.press('?')
-    await f.page.getByRole('button', { name: 'Einführung' }).click()
+    await f.page.getByRole('button', { name: 'Introduction' }).click()
     await dialog(f).waitFor()
     clean(f)
   } finally { await f.context.close() }

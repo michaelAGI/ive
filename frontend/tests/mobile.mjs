@@ -160,7 +160,7 @@ test('phone layout', async (t) => {
       const help = page.getByRole('dialog', { name: 'Quick help' })
       await help.waitFor()
       assert(await noHorizontalOverflow(page), 'quick help: horizontal page overflow')
-      await assertTappable(help.getByRole('button', { name: 'Interaktive Einführung' }), 'quick help: Interaktive Einführung', width)
+      await assertTappable(help.getByRole('button', { name: 'Introduction' }), 'quick help: Introduction', width)
       await page.keyboard.press('Escape')
       await help.waitFor({ state: 'detached' })
       assert.deepEqual(errors, [])

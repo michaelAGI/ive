@@ -125,19 +125,19 @@ export default function PhoneOverview({ onOpenHome }) {
           <House size={16} aria-hidden="true" /> Home
         </button>
       </div>
-      <label className="mb-3 block text-sm text-x-muted">Projekt
-        <select aria-label="Sessions nach Projekt filtern" className="mt-1 min-h-11 w-full rounded-lg border border-x-line bg-x-surface px-3 text-base text-x-ink" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
-          <option value="">Alle Projekte</option>
+      <label className="mb-3 block text-sm text-x-muted">Project
+        <select aria-label="Filter sessions by project" className="mt-1 min-h-11 w-full rounded-lg border border-x-line bg-x-surface px-3 text-base text-x-ink" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
+          <option value="">All projects</option>
           {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
         </select>
       </label>
-      {!connected && <p role="status" className="mb-3 text-sm text-x-warning">Keine Verbindung zum Mac. Du siehst den zuletzt geladenen Stand.</p>}
+      {!connected && <p role="status" className="mb-3 text-sm text-x-warning">No connection to the Mac. Showing the last loaded state.</p>}
 
       {items.length === 0 ? (
         <div className="ive-phone-empty">
-          <p>Starte eine Session direkt vom iPhone. Sie läuft auf deinem Mac, solange er wach und erreichbar ist.</p>
+          <p>Start a session right from your iPhone. It runs on your Mac as long as the Mac is awake and reachable.</p>
           <button type="button" disabled={!canCreate} className="ive-phone-primary disabled:opacity-50" onClick={create}>
-            <Plus size={18} aria-hidden="true" /> {workspaceId ? 'Neue Session in diesem Projekt' : 'New session'}
+            <Plus size={18} aria-hidden="true" /> {workspaceId ? 'New session in this project' : 'New session'}
           </button>
         </div>
       ) : (
@@ -165,7 +165,7 @@ export default function PhoneOverview({ onOpenHome }) {
                     </span>
                   </span>
                   <span className="ive-phone-card-meta">
-                    {isShellSession(session) ? 'Mac-Shell · direkte Befehle' : getCliLabel(session.cli_type || 'claude')}
+                    {isShellSession(session) ? 'Mac shell · direct commands' : getCliLabel(session.cli_type || 'claude')}
                     {session.model ? ` · ${session.model}` : ''}
                     {workspace ? ` · ${workspace}` : ''}
                   </span>
@@ -179,7 +179,7 @@ export default function PhoneOverview({ onOpenHome }) {
       )}
       <div className="ive-phone-overview-foot">
         <button type="button" disabled={!canCreate} className="ive-phone-primary disabled:opacity-50" onClick={create}>
-          <Plus size={18} aria-hidden="true" /> {workspaceId ? 'Neue Session in diesem Projekt' : 'New session'}
+          <Plus size={18} aria-hidden="true" /> {workspaceId ? 'New session in this project' : 'New session'}
         </button>
       </div>
     </div>
