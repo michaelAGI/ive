@@ -15,9 +15,10 @@ function compact(value) {
 
 // Session-level switches in the app header (right side), so the conversation
 // starts directly under the header like a chat app: the session overview,
-// activity details, the history rail, token usage and the terminal drawer.
+// the agent's steps, the history rail, token usage and the terminal drawer.
+// Steps only shows once the conversation has a step to expand.
 export default function SessionHeaderActions({
-  showProcessing, onToggleProcessing,
+  hasSteps = false, showProcessing, onToggleProcessing,
   hasHistory, historyOpen, onToggleHistory,
   stats, briefOpen = false, onToggleBrief = null,
   isTerminalOpen, onToggleTerminal,
@@ -45,11 +46,13 @@ export default function SessionHeaderActions({
             <span className="ive-header-btn-label">{t('header.overview')}</span>
           </button>
         )}
-        <button type="button" data-chrome-button className="ive-header-btn" aria-pressed={showProcessing} onClick={onToggleProcessing}
-          title={t('header.detailsTitle')} aria-label={t('header.details')}>
-          <Activity size={15} aria-hidden="true" />
-          <span className="ive-header-btn-label">{t('header.details')}</span>
-        </button>
+        {hasSteps && (
+          <button type="button" data-chrome-button className="ive-header-btn" aria-pressed={showProcessing} onClick={onToggleProcessing}
+            title={t('header.stepsTitle')} aria-label={t('header.steps')} data-session-steps="">
+            <Activity size={15} aria-hidden="true" />
+            <span className="ive-header-btn-label">{t('header.steps')}</span>
+          </button>
+        )}
         {hasHistory && (
           <button type="button" data-chrome-button className="ive-header-btn" aria-pressed={historyOpen} onClick={onToggleHistory}
             title={t('header.historyTitle')} aria-label={t('header.history')}>

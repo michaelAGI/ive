@@ -103,6 +103,7 @@ import { loadLanguageSetting } from './lib/i18n'
 import { installRouter, viewOf } from './lib/route'
 import { api } from './lib/api'
 import { typeInTerminalUnlessQuestion } from './lib/terminal'
+import { installDesktopFileDrop } from './lib/desktopFileDrop'
 
 const OWNER_ACTORS = ['localhost', 'owner_legacy', 'owner_device']
 
@@ -764,6 +765,10 @@ export default function App() {
       .catch(() => { /* not inside the desktop shell */ })
     return () => { cancelled = true; unlisten?.() }
   }, [])
+
+  // Files dropped from Finder (desktop shell): the paths go to the terminal
+  // or message field under the pointer. A browser keeps its HTML5 drop.
+  useEffect(() => installDesktopFileDrop(), [])
 
   useEffect(() => {
     const handler = (e) => {
