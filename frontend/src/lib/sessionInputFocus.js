@@ -53,6 +53,17 @@ export function mayAutoFocusComposer({ touchOnly = false, sinceTypingMs = Infini
 }
 
 /**
+ * May code put the cursor into a text field on its own right now? Every
+ * automatic focus (a session opening, New chat, the terminal view) asks this.
+ * On a touch-only device a focused field raises the soft keyboard, so the
+ * answer is no unless the user is typing anyway. A tap on the field, the
+ * phone's keyboard button and dialogs the user opens to type are not asked.
+ */
+export function mayTakeKeyboard({ win = globalThis.window, now = Date.now() } = {}) {
+  return mayAutoFocusComposer({ touchOnly: isTouchOnly(win), sinceTypingMs: msSinceTyping(now) })
+}
+
+/**
  * Put the cursor into a session's chat composer if that is where it belongs:
  * the session is the active one, its composer is on screen and usable, no
  * terminal of it is on screen, and (touch) the user was just typing.
@@ -62,7 +73,7 @@ export function focusChatComposerFor({ sessionId, activeSessionId, textarea, doc
   if (!sessionId || sessionId !== activeSessionId) return false
   if (!textarea || textarea.disabled || !isShown(textarea)) return false
   if (terminalShownFor(sessionId, doc)) return false
-  if (!mayAutoFocusComposer({ touchOnly: isTouchOnly(win), sinceTypingMs: msSinceTyping() })) return false
+  if (!mayTakeKeyboard({ win })) return false
   if (doc?.activeElement === textarea) return true
   textarea.focus({ preventScroll: true })
   return doc?.activeElement === textarea

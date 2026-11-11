@@ -8,6 +8,7 @@ import '../lib/i18n/shell'
 import useExperienceMode from '../state/experienceMode'
 import ChatHistory from '../components/shell/ChatHistory'
 import ProjectTargetSelect from '../components/session/ProjectTargetSelect'
+import { mayTakeKeyboard } from '../lib/sessionInputFocus'
 
 // Scaffold stub: date, the composer (Enter starts a session in the current
 // project or the start folder) and the recent sessions. The home agent
@@ -27,7 +28,9 @@ export default function HomeScreen({ onPlan, onAddProject, onFindProject, onOpen
   void onReviewTask
   const today = new Date().toLocaleDateString(getLanguage() === 'de' ? 'de-DE' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
   useEffect(() => {
-    const focus = () => textareaRef.current?.focus()
+    // New chat: the cursor goes into the message field, except on a phone,
+    // where that would raise the keyboard before the user asked for it.
+    const focus = () => { if (mayTakeKeyboard()) textareaRef.current?.focus() }
     window.addEventListener('ive-focus-new-chat', focus)
     return () => window.removeEventListener('ive-focus-new-chat', focus)
   }, [])
