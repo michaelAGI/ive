@@ -56,9 +56,12 @@ for (const width of [768, 900, 1280, 1440]) for (const mode of ['chat', 'dev']) 
       dist: process.env.IVE_QA_DIST || undefined, width, height: 900,
       workspaces: [{ id: 'w', name: `International workspace — ${longName}`, path: '/isolated/header-long-names' }],
       sessions: [{ id: 's', name: longName, workspace_id: 'w', cli_type: 'claude', model: 'sonnet', status: 'idle', agentState: 'idle', pty_alive: false, session_type: 'worker', archived: 0, tags: [] }],
+      // One tool step, so the header also carries the Steps switch.
       messages: { s: [
         { id: 'u', session_id: 's', role: 'user', content: 'Summarize this weekly report.', created_at: '2025-01-01T00:00:00Z' },
-        { id: 'a', session_id: 's', role: 'assistant', content: 'The saved report is ready for review.', created_at: '2025-01-01T00:00:01Z' },
+        { id: 't', session_id: 's', role: 'assistant', content: JSON.stringify([{ type: 'tool_use', name: 'Read', id: 't1', input: { file_path: 'weekly-report.md' } }]), created_at: '2025-01-01T00:00:01Z' },
+        { id: 'r', session_id: 's', role: 'user', content: JSON.stringify([{ type: 'tool_result', tool_use_id: 't1', content: 'Weekly report' }]), created_at: '2025-01-01T00:00:02Z' },
+        { id: 'a', session_id: 's', role: 'assistant', content: 'The saved report is ready for review.', created_at: '2025-01-01T00:00:03Z' },
       ] },
       settings: { product_tour_version: '2', owner_name: 'Header QA' },
       storage: {
@@ -70,6 +73,7 @@ for (const width of [768, 900, 1280, 1440]) for (const mode of ['chat', 'dev']) 
     try {
       await f.page.goto('http://ive-guide.test/#session-s')
       await f.page.locator('[data-session-header-actions]').waitFor({ state: 'visible' })
+      await f.page.locator('[data-session-header-actions]').getByRole('button', { name: 'Steps', exact: true }).waitFor()
       const draft = f.page.locator('[data-session-view="s"] .ive-session-composer textarea')
       await draft.fill('Keep this unsent draft while the header changes.')
       await inspectHeader(f, `${engine}-${width}-${mode}-sidebar-open`)
@@ -78,8 +82,8 @@ for (const width of [768, 900, 1280, 1440]) for (const mode of ['chat', 'dev']) 
       await f.page.locator('#ive-project-sidebar').getByRole('button', { name: 'Hide sidebar', exact: true }).click()
       await f.page.locator('#ive-project-sidebar').waitFor({ state: 'detached' })
       await inspectHeader(f, `${engine}-${width}-${mode}-sidebar-hidden`)
-      await header.getByRole('button', { name: /^(?:Show activity details|Details)$/ }).click()
-      assert.equal(await header.getByRole('button', { name: /^(?:Show activity details|Details)$/ }).getAttribute('aria-pressed'), 'true')
+      await header.getByRole('button', { name: 'Steps', exact: true }).click()
+      assert.equal(await header.getByRole('button', { name: 'Steps', exact: true }).getAttribute('aria-pressed'), 'true')
       const other = mode === 'chat' ? 'Dev' : 'Chat'
       await header.getByRole('group', { name: 'Experience mode', exact: true }).getByRole('button', { name: other, exact: true }).click()
       await draft.waitFor({ state: 'visible' })
