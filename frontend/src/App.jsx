@@ -93,6 +93,7 @@ import NeedsYouPopover from './components/layout/NeedsYouPopover'
 import DesktopUpdates from './components/settings/DesktopUpdates'
 import PanelBoundary from './components/PanelBoundary'
 import { canRestoreTerminalFocus } from './lib/gridFocus'
+import { mayTakeKeyboard } from './lib/sessionInputFocus'
 import { openFindInSession } from './lib/findRouter'
 import useStore from './state/store'
 import useExperienceMode from './state/experienceMode'
@@ -1265,7 +1266,7 @@ export default function App() {
     if (id === 'start-task') {
       closeExclusivePanels()
       useStore.setState({ showHome: true })
-      setTimeout(() => document.querySelector('[data-home-composer]')?.focus(), 120)
+      setTimeout(() => { if (mayTakeKeyboard()) document.querySelector('[data-home-composer]')?.focus() }, 120)
       return
     }
     if (id === 'side-chat') { setShowSideChat(true); return }

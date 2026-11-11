@@ -3,7 +3,7 @@
 // keeps it, a hidden terminal never takes it, touch only after typing.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { focusChatComposerFor, isShown, mayAutoFocusComposer, noteTyping, terminalShownFor, TYPING_GRACE_MS } from '../src/lib/sessionInputFocus.js'
+import { focusChatComposerFor, isShown, mayAutoFocusComposer, mayTakeKeyboard, noteTyping, terminalShownFor, TYPING_GRACE_MS } from '../src/lib/sessionInputFocus.js'
 
 const el = (w, h, extra = {}) => ({ clientWidth: w, clientHeight: h, isConnected: true, ...extra })
 function fakeDoc(terminals = []) {
@@ -68,4 +68,12 @@ test('touch-only: no focus (no soft keyboard) unless the user was just typing', 
   assert.equal(focusChatComposerFor({ sessionId: 's1', activeSessionId: 's1', textarea: textarea(doc), doc, win: touch }), false)
   noteTyping()
   assert.equal(focusChatComposerFor({ sessionId: 's1', activeSessionId: 's1', textarea: textarea(doc), doc, win: touch }), true)
+})
+
+test('mayTakeKeyboard: every automatic focus (terminal view, New chat) follows the same touch rule', () => {
+  const t0 = 1_000_000
+  noteTyping(t0)
+  assert.equal(mayTakeKeyboard({ win: desktop, now: t0 + 60_000 }), true, 'desktop: always')
+  assert.equal(mayTakeKeyboard({ win: touch, now: t0 + TYPING_GRACE_MS - 1 }), true, 'touch, keyboard is up anyway')
+  assert.equal(mayTakeKeyboard({ win: touch, now: t0 + TYPING_GRACE_MS + 1 }), false, 'touch, nobody is typing: the keyboard stays closed')
 })
