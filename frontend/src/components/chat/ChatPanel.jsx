@@ -39,6 +39,7 @@ import { enqueueMessage, noteDirectSend, queueSupported } from '../../lib/compos
 import ContextChips, { ContextMentionRow, ContextSearchStatus, keepOptionVisible } from './ContextChips'
 import { queuedContextItems } from '../../lib/chatContext'
 import { focusChatComposerFor } from '../../lib/sessionInputFocus'
+import { imagesFromPaste, pastedImages, PASTE_IMAGE_FAILED } from '../../lib/clipboardImages'
 import { FILE_DRAG_EVENT } from '../../lib/desktopFileDrop'
 import { useChatContext, useContextSearch } from '../../hooks/useChatContext'
 
@@ -4140,18 +4141,16 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     }
   }
 
+  // An image on the clipboard becomes an attachment; text pastes pass through.
+  // When the image was announced but never arrived, say so (lib/clipboardImages.js).
   const handlePaste = async (e) => {
-    const items = e.clipboardData?.items
-    if (!items) return
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (file) {
-          await handleUploadImage(file)
-        }
-      }
-    }
+    const pasted = imagesFromPaste(e)
+    if (!pasted.offered && !pasted.empty) return
+    if (pasted.offered) e.preventDefault()
+    const files = await pastedImages(e)
+    if (!files) return
+    if (!files.length) { setError(PASTE_IMAGE_FAILED); return }
+    for (const file of files) await handleUploadImage(file)
   }
 
   const handleDragOver = (e) => {
