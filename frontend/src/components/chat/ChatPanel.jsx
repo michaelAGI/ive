@@ -39,6 +39,7 @@ import { enqueueMessage, noteDirectSend, queueSupported } from '../../lib/compos
 import ContextChips, { ContextMentionRow, ContextSearchStatus, keepOptionVisible } from './ContextChips'
 import { queuedContextItems } from '../../lib/chatContext'
 import { focusChatComposerFor } from '../../lib/sessionInputFocus'
+import { FILE_DRAG_EVENT } from '../../lib/desktopFileDrop'
 import { useChatContext, useContextSearch } from '../../hooks/useChatContext'
 
 const EMPTY_MESSAGES = Object.freeze([])
@@ -2949,6 +2950,13 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const activeSessionId = useStore((store) => store.activeSessionId)
   const queuedCommands = useStore((store) => store.queuedCommands?.[sessionId] || EMPTY_MESSAGES)
   const sessionStatus = session?.status || 'idle'
+  // Desktop app: a file from Finder hovers over this session's message field.
+  const [isPathDrag, setIsPathDrag] = useState(false)
+  useEffect(() => {
+    const onFileDrag = (event) => setIsPathDrag(event.detail?.sessionId === sessionId)
+    window.addEventListener(FILE_DRAG_EVENT, onFileDrag)
+    return () => window.removeEventListener(FILE_DRAG_EVENT, onFileDrag)
+  }, [sessionId])
   const cliProfiles = useStore((store) => store.cliProfiles)
   // Model/effort the CLI really used last turn (picks up /model switches
   // typed into the terminal). Refreshed whenever the session stops working.
@@ -4602,11 +4610,11 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       )}
 
       {/* Drag & Drop File Upload Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 bg-x-bg/95 z-50 flex flex-col items-center justify-center border border-dashed border-x-accent/45 m-4 rounded-2xl animate-in pointer-events-none">
+      {(isDragging || isPathDrag) && (
+        <div className="absolute inset-0 bg-x-bg/95 z-50 flex flex-col items-center justify-center border border-dashed border-x-accent/45 m-4 rounded-2xl animate-in pointer-events-none" data-drop-overlay={isPathDrag ? 'path' : 'upload'}>
           <UploadCloud size={40} className="text-x-accent animate-bounce mb-2" />
-          <span className="text-sm font-medium text-x-ink">Drop images or text files here to attach</span>
-          <span className="text-[11px] text-x-muted mt-1 font-sans">Files will be uploaded and previewed above composer</span>
+          <span className="text-sm font-medium text-x-ink">{isPathDrag ? 'Drop to add the file path to your message' : 'Drop images or text files here to attach'}</span>
+          {!isPathDrag && <span className="text-[11px] text-x-muted mt-1 font-sans">Files will be uploaded and previewed above composer</span>}
         </div>
       )}
 
