@@ -131,7 +131,7 @@ export default function GeneralSettingsPanel() {
       await api.setAppSetting('automatic_session_summaries', val ? 'on' : 'off')
       setAutomaticSummaries(val)
     } catch {
-      setSummaryError('Die Einstellung konnte nicht gespeichert werden.')
+      setSummaryError('Could not save this setting.')
     } finally {
       setSavingSummaries(false)
     }
@@ -156,8 +156,8 @@ export default function GeneralSettingsPanel() {
           <DesktopUpdateSettings />
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-x-line pb-5">
-            <div><h3 className="text-sm font-semibold text-x-ink">IVE kennenlernen</h3></div>
-            <Button icon={CircleHelp} onClick={() => window.dispatchEvent(new Event('open-onboarding'))}>Einführung öffnen</Button>
+            <div><h3 className="text-sm font-semibold text-x-ink">Get to know IVE</h3></div>
+            <Button icon={CircleHelp} onClick={() => window.dispatchEvent(new Event('open-onboarding'))}>Open introduction</Button>
           </div>
 
           {/* ── Language ───────────────────────────── */}
@@ -309,16 +309,16 @@ export default function GeneralSettingsPanel() {
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-x-ink font-medium">Automatische Zusammenfassungen</div>
+                  <div className="text-xs text-x-ink font-medium">Automatic summaries</div>
                   <p className="mt-1 text-[11px] text-x-muted">
-                    Zusätzliche KI-Aufrufe für geteilten Kontext und Chat-Zusammenfassungen.
-                    Verbraucht Claude- oder Codex-Kontingent. Standardmäßig aus.
-                    {' '}Bei Aktivierung: höchstens zwei Hintergrundaufrufe pro Session und sechs insgesamt in 24 Stunden,
-                    mit gemeinsamem Eingabelimit. Dateiübergaben benötigen keinen zusätzlichen KI-Aufruf.
+                    Extra AI calls for shared context and chat summaries.
+                    Uses Claude or Codex quota. Off by default.
+                    {' '}When on: at most two background calls per session and six in total in 24 hours,
+                    with a shared input limit. File handoffs need no extra AI call.
                   </p>
                 </div>
                 <Toggle value={automaticSummaries} onChange={handleSummaryToggle}
-                  label="Automatische Zusammenfassungen" disabled={savingSummaries} />
+                  label="Automatic summaries" disabled={savingSummaries} />
               </div>
               {summaryError && <p role="alert" className="text-xs text-red-500">{summaryError}</p>}
               {/* Auto session titles */}

@@ -38,8 +38,8 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu, ch
       await interruptPhoneSession(api, state.sessions[sessionId], { connected: state.connected, auth: state.currentAuth })
       for (const item of useStore.getState().queuedCommands?.[sessionId] || []) cancelQueuedCommand(sessionId, item.id)
       if (!shell) window.dispatchEvent(new CustomEvent('cc-session-interrupted', { detail: { sessionId, cliType: session?.cli_type } }))
-      if (current.current === sessionId) setNotice('Unterbrechung an den Mac gesendet. Der Status aktualisiert sich automatisch.')
-    } catch (failure) { if (current.current === sessionId) setError(failure?.message || 'Unterbrechung fehlgeschlagen.') }
+      if (current.current === sessionId) setNotice('Stop sent to the Mac. The status updates automatically.')
+    } catch (failure) { if (current.current === sessionId) setError(failure?.message || 'Stop failed.') }
     finally { if (current.current === sessionId) setStopping(false) }
   }
   return (<>
@@ -52,7 +52,7 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu, ch
         <span className={`ive-phone-session-sub ${meta.textClass}`}>
           <span className={`h-2 w-2 rounded-full shrink-0 ${meta.dotClass}`} aria-hidden="true" />
           <span data-phone-status="">{meta.label}</span>
-          <span className="text-x-faint">· {shell ? 'Mac-Shell' : getCliLabel(session?.cli_type || 'claude')}</span>
+          <span className="text-x-faint">· {shell ? 'Mac shell' : getCliLabel(session?.cli_type || 'claude')}</span>
         </span>
       </div>
       {!shell && !chatOnly && <div className="ive-phone-view-switch" role="group" aria-label="View">
@@ -64,7 +64,7 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu, ch
         </button>
       </div>}
       {!shell && !chatOnly && <SessionContextActions sessionId={sessionId} readOnly={!!session?.read_only} phone />}
-      <button type="button" className="ive-mobile-header-button" onClick={() => setControls(true)} aria-label="Session steuern" aria-expanded={controls}>
+      <button type="button" className="ive-mobile-header-button" onClick={() => setControls(true)} aria-label="Session controls" aria-expanded={controls}>
         <SlidersHorizontal size={20} aria-hidden="true" />
       </button>
       <button type="button" className="ive-mobile-header-button" onClick={onMenu} aria-label="Open sidebar">
@@ -72,9 +72,9 @@ export function PhoneSessionHeader({ sessionId, view, onView, onBack, onMenu, ch
       </button>
     </div>
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-x-line bg-x-surface px-3 py-2 text-xs" data-phone-control-status="">
-      <span className={reason ? 'text-x-warning' : 'text-x-muted'} role="status">{reason || (shell ? 'Echte Shell · Befehle laufen direkt auf dem Mac' : 'Gemeinsamer Chat und Verlauf mit dem Mac')}</span>
+      <span className={reason ? 'text-x-warning' : 'text-x-muted'} role="status">{reason || (shell ? 'Real shell · commands run directly on the Mac' : 'Chat and history shared with the Mac')}</span>
       {(meta.isWorking || meta.tone === 'waiting' || shell && session?.pty_alive) && <button type="button" className="ive-phone-stop disabled:opacity-50" disabled={!!reason || stopping} onClick={interrupt} aria-label={shell ? 'Interrupt shell command' : 'Stop the current answer'}>
-        <Square size={14} aria-hidden="true" /><span>{stopping ? 'Wird gesendet …' : 'Unterbrechen'}</span>
+        <Square size={14} aria-hidden="true" /><span>{stopping ? 'Sending…' : 'Stop'}</span>
       </button>}
       {error && <p role="alert" className="w-full text-x-danger">{error}</p>}
       {notice && !error && <p role="status" className="w-full text-x-muted">{notice}</p>}
@@ -111,7 +111,7 @@ export function keyTap(action) {
 function sendBytes(sessionId, data) {
   const state = useStore.getState()
   const target = state.sessions[sessionId]
-  const reason = phoneControlReason(target, { connected: state.connected && state.ws?.readyState === WebSocket.OPEN, auth: state.currentAuth }) || (!target?.pty_alive ? 'Das Terminal ist noch nicht bereit.' : '')
+  const reason = phoneControlReason(target, { connected: state.connected && state.ws?.readyState === WebSocket.OPEN, auth: state.currentAuth }) || (!target?.pty_alive ? 'The terminal is not ready yet.' : '')
   if (reason || !data) {
     if (reason) state.addNotification?.({ type: 'error', sessionId, message: reason })
     return false
@@ -120,7 +120,7 @@ function sendBytes(sessionId, data) {
   if (ctrl?.input) { ctrl.input(data); return true }
   const ws = useStore.getState().ws
   if (ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ action: 'input', session_id: sessionId, data })); return true }
-  state.addNotification?.({ type: 'error', sessionId, message: 'Keine Terminal-Verbindung. Die Taste wurde nicht gesendet.' })
+  state.addNotification?.({ type: 'error', sessionId, message: 'No terminal connection. The key was not sent.' })
   return false
 }
 
@@ -170,7 +170,7 @@ export function PhoneKeyBar({ sessionId }) {
       if (!text) return
       const state = useStore.getState()
       const target = state.sessions[sessionId]
-      const reason = phoneControlReason(target, { connected: state.connected && state.ws?.readyState === WebSocket.OPEN, auth: state.currentAuth }) || (!target?.pty_alive ? 'Das Terminal ist noch nicht bereit.' : '')
+      const reason = phoneControlReason(target, { connected: state.connected && state.ws?.readyState === WebSocket.OPEN, auth: state.currentAuth }) || (!target?.pty_alive ? 'The terminal is not ready yet.' : '')
       if (reason) throw new Error(reason)
       const ctrl = terminalControls.get(sessionId)
       if (ctrl?.paste) ctrl.paste(text)

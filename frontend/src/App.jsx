@@ -1457,7 +1457,7 @@ export default function App() {
       {phoneOverview && (
         // Safari does not focus a tapped button; focus it so the guide
         // returns focus here when it closes.
-        <button type="button" onClick={(e) => { e.currentTarget.focus(); window.dispatchEvent(new Event('open-onboarding')) }} aria-label="IVE kennenlernen" className="ive-mobile-header-button">
+        <button type="button" onClick={(e) => { e.currentTarget.focus(); window.dispatchEvent(new Event('open-onboarding')) }} aria-label="Get to know IVE" className="ive-mobile-header-button">
           <GraduationCap size={19} aria-hidden="true" />
         </button>
       )}

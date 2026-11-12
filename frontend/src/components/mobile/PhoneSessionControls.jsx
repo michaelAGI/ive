@@ -24,7 +24,7 @@ export default function PhoneSessionControls({ sessionId, onClose }) {
   const reason = phoneControlReason(session, { connected, auth })
   const cli = session?.cli_type || 'claude'
   const options = useMemo(() => {
-    const model = getModelsForCli(cli).map((item) => ({ value: item.id || '', label: item.label || item.id || 'Standard' }))
+    const model = getModelsForCli(cli).map((item) => ({ value: item.id || '', label: item.label || item.id || 'Default' }))
     if (session?.model && !model.some((item) => item.value === session.model)) model.unshift({ value: session.model, label: session.model })
     return {
       model,
@@ -66,27 +66,27 @@ export default function PhoneSessionControls({ sessionId, onClose }) {
       }
       if (updated.permission_apply) useStore.getState().setPermissionApply(sessionId, updated.permission_apply)
       setSaved(true)
-    } catch (failure) { setError(failure?.message || 'Die Änderung ist fehlgeschlagen.') }
+    } catch (failure) { setError(failure?.message || 'Change failed.') }
     finally { setBusy(false) }
   }
   const change = (field, value) => { setDraft((previous) => ({ ...previous, [field]: value })); setSaved(false); setError('') }
-  return <Modal title={shell ? 'Terminal steuern' : 'Session steuern'} icon={SlidersHorizontal} size="sm" onClose={busy ? undefined : onClose}>
+  return <Modal title={shell ? 'Terminal controls' : 'Session controls'} icon={SlidersHorizontal} size="sm" onClose={busy ? undefined : onClose}>
     <form onSubmit={save} className="min-h-0 overflow-y-auto p-4 space-y-4" data-phone-session-controls="">
-      <p className="text-sm text-x-muted">{shell ? 'Echte Shell auf deinem Mac. Eingaben führen Befehle direkt im Projektordner aus.' : 'Einstellungen gelten für dieselbe Session auf Mac und iPhone.'}</p>
+      <p className="text-sm text-x-muted">{shell ? 'Real shell on your Mac. What you type runs commands directly in the project folder.' : 'Settings apply to the same session on Mac and iPhone.'}</p>
       <label className="block space-y-1 text-sm text-x-ink">Name<input value={draft.name} maxLength={120} onChange={(e) => change('name', e.target.value)} disabled={!!reason || busy} className={selectClass} /></label>
       {!shell && ['model', 'effort', 'permission_mode'].map((field) => options[field].length > 0 && <label key={field} className="block space-y-1 text-sm text-x-ink">
-        <span>{{ model: 'Modell', effort: 'Denktiefe', permission_mode: 'Berechtigungen' }[field]}</span>
-        <select aria-label={{ model: 'Modell', effort: 'Denktiefe', permission_mode: 'Berechtigungen' }[field]} aria-describedby={`phone-setting-${sessionId}-${field}`} value={draft[field]} onChange={(e) => change(field, e.target.value)} disabled={!!reason || busy} className={selectClass}>
-          {!options[field].some((option) => option.value === draft[field]) && <option value={draft[field]}>{draft[field] || 'Standard'} (aktuell)</option>}
+        <span>{{ model: 'Model', effort: 'Effort', permission_mode: 'Permissions' }[field]}</span>
+        <select aria-label={{ model: 'Model', effort: 'Effort', permission_mode: 'Permissions' }[field]} aria-describedby={`phone-setting-${sessionId}-${field}`} value={draft[field]} onChange={(e) => change(field, e.target.value)} disabled={!!reason || busy} className={selectClass}>
+          {!options[field].some((option) => option.value === draft[field]) && <option value={draft[field]}>{draft[field] || 'Default'} (current)</option>}
           {options[field].map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
-        <span id={`phone-setting-${sessionId}-${field}`} className="block text-xs text-x-muted">{field === 'permission_mode' ? options[field].find((item) => item.value === draft[field])?.description : field === 'effort' ? 'Mehr Denktiefe kann mehr Zeit und Tokens benötigen.' : 'Wähle ein Modell des aktuellen Agenten.'}</span>
+        <span id={`phone-setting-${sessionId}-${field}`} className="block text-xs text-x-muted">{field === 'permission_mode' ? options[field].find((item) => item.value === draft[field])?.description : field === 'effort' ? 'More effort can take more time and tokens.' : 'Pick a model for the current agent.'}</span>
       </label>)}
-      {launchChange && <p className="rounded-lg border border-x-line bg-x-surface-2 p-3 text-sm text-x-ink-secondary">{session?.pty_alive ? 'Beim Übernehmen startet der Agent mit den neuen Einstellungen neu. Eine laufende Antwort oder Freigabe wird erst abgewartet; der Chatverlauf wird fortgesetzt.' : 'Diese Einstellungen gelten beim nächsten Start.'}</p>}
+      {launchChange && <p className="rounded-lg border border-x-line bg-x-surface-2 p-3 text-sm text-x-ink-secondary">{session?.pty_alive ? 'Applying restarts the agent with the new settings. It first waits for a running answer or approval. The conversation continues.' : 'These settings apply on the next start.'}</p>}
       {reason && <p role="status" className="text-sm text-x-warning">{reason}</p>}
       {error && <p role="alert" className="text-sm text-x-danger">{error}</p>}
       {(saved || Object.keys(launch || {}).length > 0 || permission?.state && permission.state !== 'none') && <p role={feedback.tone === 'error' ? 'alert' : 'status'} className={`text-sm ${feedback.tone === 'error' ? 'text-x-danger' : 'text-x-ink-secondary'}`}>{feedback.text}</p>}
-      <button type="submit" disabled={busy || !!reason || !changed} className="ive-phone-primary w-full disabled:opacity-50">{busy ? 'Wird gespeichert …' : launchChange && session?.pty_alive ? 'Änderungen und Neustart bestätigen' : 'Änderungen übernehmen'}</button>
+      <button type="submit" disabled={busy || !!reason || !changed} className="ive-phone-primary w-full disabled:opacity-50">{busy ? 'Saving…' : launchChange && session?.pty_alive ? 'Confirm changes and restart' : 'Apply changes'}</button>
     </form>
   </Modal>
 }

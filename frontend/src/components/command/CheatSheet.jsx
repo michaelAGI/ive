@@ -55,7 +55,7 @@ export default function CheatSheet({ onClose, onRun }) {
           <span>Tip: <Kbd>{formatKeyCombo(bindings.commandPalette)}</Kbd> finds every tool, session and project by name.</span>
           <span className="flex gap-2">
             <button type="button" className="inline-flex items-center gap-1 rounded-md border border-x-line px-2 py-1 hover:bg-x-hover hover:text-x-ink" onClick={() => { onClose(); window.dispatchEvent(new Event('open-onboarding')) }}>
-              <CircleHelp size={12} /> Einführung
+              <CircleHelp size={12} /> Introduction
             </button>
             <button type="button" className="inline-flex items-center gap-1 rounded-md border border-x-line px-2 py-1 hover:bg-x-hover hover:text-x-ink" onClick={() => run('shortcuts')}>
               <Settings size={12} /> Change shortcuts
