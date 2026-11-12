@@ -273,9 +273,13 @@ class ShellStartTests(unittest.IsolatedAsyncioTestCase):
         started = []
         cache = {}
         start_times = {}
+        # The one thing the shell gets from IVE: the terminal's own identity
+        # (never the agent identity), see test_terminal_agent.IdentityTests.
+        identity = shell_session.terminal_identity_env("s1", "proof", "http://127.0.0.1:5111")
         server = server_objects(
             "_start_shell_pty", "_autostart_session_pty",
             os=os, pty_mgr=pty, broadcast=broadcast, _shell_session=shell_session,
+            _terminal_identity_env=lambda sid: dict(identity, **{shell_session.TERMINAL_ID_ENV: sid}),
             capture_proc=SimpleNamespace(clear_buffer=lambda sid: None),
             _session_cli_type_cache=cache, _pty_start_time=start_times,
             mark_pty_started=lambda sid, mode: (started.append((sid, mode)), start_times.__setitem__(sid, 1)),
@@ -295,7 +299,8 @@ class ShellStartTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], "s1")
         self.assertEqual(args[1], tempfile.gettempdir())
         self.assertEqual((args[2], args[3]), (100, 30))
-        self.assertEqual((args[6], args[4], args[5]), ("/bin/sh", ["-l", "-i"], {}))
+        self.assertEqual((args[6], args[4], args[5]), ("/bin/sh", ["-l", "-i"], identity))
+        self.assertEqual(sorted(args[5]), sorted(shell_session.TERMINAL_ENV_KEYS))
         self.assertTrue(kwargs["plain_shell"])
         self.assertEqual(kwargs["sandbox_type"], "none")
         self.assertEqual(cache["s1"], "shell")

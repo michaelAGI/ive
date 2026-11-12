@@ -3,7 +3,10 @@ import { sessionNeedsAttention } from './sessionAttention.js'
 const normalizeStatus = (value) => String(value || '').toLowerCase()
 
 // Plain terminal sessions (cli_type "shell", see lib/shellSession.js): the
-// user's login shell, no agent. Their only states are Running and Stopped.
+// user's login shell. The backend says what it is doing (`terminal_activity`):
+// "working" while a program runs or an agent started by hand is in a turn,
+// "waiting" while that agent asks for permission or an answer, "idle" at the
+// shell prompt or when the agent is done (backend/terminal_agent.py).
 export const SHELL_CLI = 'shell'
 export const SHELL_LABEL = 'Terminal'
 
@@ -35,9 +38,11 @@ export function getShellStatusMeta(session, sessionStarted = {}) {
   const alive = session?.pty_alive === true
     || (session?.pty_alive !== false && !!sessionStarted[session?.id] && !['exited', 'error', 'stopped'].includes(status))
   if (alive) {
+    // "Running" is a claim about work. An open shell, an agent waiting at its
+    // prompt and a state the backend could not read are all not that.
     if (session.terminal_activity === 'working') return meta('running', 'shell-working', true)
-    if (session.terminal_activity === 'idle') return meta('done', 'shell-idle')
-    return meta('running', 'shell-running')
+    if (session.terminal_activity === 'waiting') return meta('waiting', 'waiting')
+    return meta('done', 'shell-idle')
   }
   return meta('stopped', 'offline')
 }

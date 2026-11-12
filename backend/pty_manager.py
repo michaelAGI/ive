@@ -77,12 +77,19 @@ class PTYSession:
         self._exit_notified = False
         self._closed_event = asyncio.Event()
         self.geometry_owner = geometry_owner
+        # Device name of the PTY's slave side (/dev/ttys003): how a plain
+        # terminal's foreground job is looked up (terminal_agent.py).
+        self.tty_name: Optional[str] = None
 
     async def start(self, output_cb: Callable, exit_cb: Callable):
         self._output_cb = output_cb
         self._exit_cb = exit_cb
 
         master_fd, slave_fd = pty.openpty()
+        try:
+            self.tty_name = os.ttyname(slave_fd)
+        except OSError:
+            self.tty_name = None
         try:
             env, wrapped_cmd = self._prepare_spawn(slave_fd)
             pid = os.fork()
@@ -235,6 +242,9 @@ class PTYSession:
             return
         self._exit_notified = True
         self._alive = False
+        if self.plain_shell:
+            import terminal_agent
+            terminal_agent.forget(self.session_id)
         self._pause_reader()
         await self._drain_fd_tail()
         self._close_fd()
@@ -283,6 +293,10 @@ class PTYSession:
         not infer work from terminal output or pretend to measure CPU usage.
         Shell builtins and shells without job control cannot be distinguished
         from a prompt this way; unavailable kernel evidence stays unknown.
+
+        A foreground job is "working", except an agent CLI the user started
+        by hand: that one is working, waiting for the user or idle according
+        to its own hooks and screen (terminal_agent.py).
         """
         if not self.plain_shell:
             return None
@@ -296,7 +310,15 @@ class PTYSession:
                 return "unknown"
         if foreground <= 0 or shell_group <= 0:
             return "unknown"
-        return "idle" if foreground == shell_group else "working"
+        import terminal_agent
+        if foreground == shell_group:
+            terminal_agent.at_prompt(self.session_id)
+            return "idle"
+        try:
+            return terminal_agent.foreground_activity(self.session_id, self.pid, foreground, self.tty_name)
+        except Exception as exc:  # the old rule is the safe answer
+            logger.debug("Terminal agent state unavailable: session=%s err=%s", self.session_id, exc)
+            return "working"
 
     def _close_fd(self):
         with self._fd_lock:
@@ -676,6 +698,10 @@ class PTYManager:
     def get_shell_activity(self, session_id: str) -> str | None:
         session = self._sessions.get(session_id)
         return session.shell_activity() if session else None
+
+    def is_plain_shell(self, session_id: str) -> bool:
+        session = self._sessions.get(session_id)
+        return bool(session and session.plain_shell)
 
     def get_pid(self, session_id: str) -> int | None:
         session = self._sessions.get(session_id)

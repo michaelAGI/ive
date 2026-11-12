@@ -7,10 +7,16 @@ import urllib.error
 import urllib.request
 
 
-def post(path, payload, session_id="", *, timeout=2):
+def post(path, payload, session_id="", *, timeout=2, terminal=False):
     base=os.environ.get("COMMANDER_API_URL", "http://127.0.0.1:5112").rstrip("/")
     headers={"Content-Type":"application/json"}
-    if session_id:
+    if terminal:
+        # A plain IVE terminal: the CLI was started by hand in it (shell_session.py).
+        base=(os.environ.get("IVE_TERMINAL_API_URL") or base).rstrip("/")
+        headers["X-Commander-Session-Id"]=session_id
+        headers["X-Commander-Session-Proof"]=os.environ.get("IVE_TERMINAL_SESSION_PROOF", "")
+        headers["X-IVE-Terminal"]="1"
+    elif session_id:
         headers["X-Commander-Session-Id"]=session_id
         headers["X-Commander-Session-Proof"]=os.environ.get("COMMANDER_SESSION_PROOF", "")
         headers["X-Commander-Workspace-Id"]=os.environ.get("COMMANDER_WORKSPACE_ID", "")
@@ -31,6 +37,11 @@ def main():
     if not isinstance(payload,dict):return 0
     cli=os.environ.get("COMMANDER_CLI_TYPE", "claude")
     session=os.environ.get("COMMANDER_SESSION_ID", "")
+    terminal=os.environ.get("IVE_TERMINAL_SESSION_ID", "")
+    if not session and terminal:
+        # Turn state for that terminal only: no discovery, no decisions.
+        post("/api/hooks/event",payload,terminal,terminal=True)
+        return 0
     if not session:
         try:
             parent=subprocess.check_output(["/bin/ps","-p",str(os.getppid()),"-o","comm="],text=True,timeout=1).lower()

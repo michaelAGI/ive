@@ -29,9 +29,13 @@ test('A.7: every backend state maps to one of five words with its detail', () =>
     [agent({ status: 'auth_failed', pty_alive: false }), 'failed', 'Failed', 'Login expired'],
     [agent({ status: 'quota_exceeded', pty_alive: false }), 'failed', 'Failed', 'Usage limit reached'],
     [agent({ status: 'idle', pty_alive: true, last_turn_error: 'rate_limit' }), 'done', 'Done', 'Last turn failed'],
-    [shell({ status: 'running', pty_alive: true }), 'running', 'Running', ''],
+    // A plain terminal is Running only for confirmed work (terminal_activity).
+    [shell({ status: 'running', pty_alive: true, terminal_activity: 'working' }), 'running', 'Running', ''],
+    [shell({ status: 'idle', pty_alive: true, terminal_activity: 'waiting' }), 'waiting', 'Waiting', ''],
+    [shell({ status: 'idle', pty_alive: true, terminal_activity: 'idle' }), 'done', 'Done', ''],
+    [shell({ status: 'running', pty_alive: true }), 'done', 'Done', ''],
     [shell({ status: 'exited', pty_alive: false }), 'stopped', 'Stopped', ''],
-    [shell({ status: 'running', pty_alive: true, attention: { kind: 'question' } }), 'running', 'Running', ''],
+    [shell({ status: 'running', pty_alive: true, attention: { kind: 'question' } }), 'done', 'Done', ''],
   ]
   for (const [session, state, label, detail] of rows) {
     const meta = sessionStateOf(session)

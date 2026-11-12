@@ -343,7 +343,7 @@ export default function SessionGrid({ activityFilter = 'all', onClearFilter }) {
         })}
         {visibleTabs.length === 0 && (
           <div className="ive-grid-empty ive-activity-grid-empty t-meta">
-            <span>{activityFilter === 'working' ? 'None of your open sessions are working right now.' : activityFilter === 'attention' ? 'None of your open sessions need your attention.' : 'No open sessions in this scope.'}</span>
+            <span>{activityFilter === 'working' ? 'None of your open sessions are working right now.' : activityFilter === 'attention' ? 'None of your open sessions need your attention.' : activityFilter === 'done' ? 'None of your open sessions are done.' : 'No open sessions in this scope.'}</span>
             {activityFilter !== 'all' && <button type="button" onClick={onClearFilter}>Show all open sessions</button>}
           </div>
         )}

@@ -92,10 +92,13 @@ class HookEventProofTests(_ProofTestCase):
 class RelayScriptTests(unittest.TestCase):
     def test_shell_relay_sends_proof_on_every_event_post(self):
         script = hook_installer.HOOK_SCRIPT
+        # Agent sessions send their proof, a plain terminal its own.
         self.assertEqual(
-            script.count('-H "X-Commander-Session-Proof: ${COMMANDER_SESSION_PROOF:-}"'),
+            script.count('-H "X-Commander-Session-Proof: ${COMMANDER_SESSION_PROOF:-}"')
+            + script.count('-H "X-Commander-Session-Proof: ${IVE_TERMINAL_SESSION_PROOF:-}"'),
             script.count("/api/hooks/event"),
         )
+        self.assertEqual(script.count("IVE_TERMINAL_SESSION_PROOF"), 1)
 
     def test_desktop_relay_sends_proof(self):
         import desktop_hook_relay
