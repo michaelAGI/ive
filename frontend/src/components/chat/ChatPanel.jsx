@@ -39,9 +39,13 @@ import { enqueueMessage, noteDirectSend, queueSupported } from '../../lib/compos
 import ContextChips, { ContextMentionRow, ContextSearchStatus, keepOptionVisible } from './ContextChips'
 import { queuedContextItems } from '../../lib/chatContext'
 import { focusChatComposerFor } from '../../lib/sessionInputFocus'
+import { imagesFromPaste, pastedImages, PASTE_IMAGE_FAILED } from '../../lib/clipboardImages'
+import { FILE_DRAG_EVENT } from '../../lib/desktopFileDrop'
 import { useChatContext, useContextSearch } from '../../hooks/useChatContext'
 
 const EMPTY_MESSAGES = Object.freeze([])
+// Pressed Steps switch in the tile strip (index.css keeps that strip button flat).
+const STEPS_PRESSED_STYLE = Object.freeze({ background: 'var(--x-tint)', borderColor: 'var(--x-tint-line)', color: 'var(--x-accent-ink)' })
 const BTW_COMMAND = { cmd: '/btw', desc: 'Ask on the side with this task’s context' }
 
 // The composer's text was refused (409 question_open) while no question card
@@ -1989,6 +1993,13 @@ function groupMessages(messages) {
   return grouped
 }
 
+// A process flow lists steps when it holds a tool call, a tool result, a
+// notification or non-empty thinking. Text alone is the reply itself.
+function groupHasSteps(group) {
+  return group.type === 'process_flow'
+    && group.messages.some((msg) => (contentBlocks(msg.content) || []).some(isProcessBlock))
+}
+
 function isClearCommandMessage(msg) {
   const role = effectiveMessageRole(msg)
   if (role === 'command') {
@@ -2876,6 +2887,10 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     groups: segment.type === 'cleared_context' ? null : groupMessages(segment.messages),
   })), [transcriptSegments])
   const activeGroupCount = transcriptGroups[transcriptGroups.length - 1]?.groups?.length || 0
+  // The Steps switch only shows once the conversation has a step to expand.
+  const hasSteps = useMemo(() => transcriptGroups.some(({ segment, groups }) => (
+    (groups || groupMessages(segment.messages)).some(groupHasSteps)
+  )), [transcriptGroups])
 
   const timelineItems = useMemo(() => {
     const items = []
@@ -2936,6 +2951,13 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const [autocompleteQuery, setAutocompleteQuery] = useState('')
   const [modelPickerRequest, setModelPickerRequest] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
+  // Desktop app: a file from Finder hovers over this session's message field.
+  const [isPathDrag, setIsPathDrag] = useState(false)
+  useEffect(() => {
+    const onFileDrag = (event) => setIsPathDrag(event.detail?.sessionId === sessionId)
+    window.addEventListener(FILE_DRAG_EVENT, onFileDrag)
+    return () => window.removeEventListener(FILE_DRAG_EVENT, onFileDrag)
+  }, [sessionId])
   const fileInputRef = useRef(null)
 
   const session = useStore((store) => store.sessions[sessionId])
@@ -4119,18 +4141,16 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     }
   }
 
+  // An image on the clipboard becomes an attachment; text pastes pass through.
+  // When the image was announced but never arrived, say so (lib/clipboardImages.js).
   const handlePaste = async (e) => {
-    const items = e.clipboardData?.items
-    if (!items) return
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (file) {
-          await handleUploadImage(file)
-        }
-      }
-    }
+    const pasted = imagesFromPaste(e)
+    if (!pasted.offered && !pasted.empty) return
+    if (pasted.offered) e.preventDefault()
+    const files = await pastedImages(e)
+    if (!files) return
+    if (!files.length) { setError(PASTE_IMAGE_FAILED); return }
+    for (const file of files) await handleUploadImage(file)
   }
 
   const handleDragOver = (e) => {
@@ -4490,6 +4510,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
           header. Tiles and the phone keep this compact strip. */}
       {!inFlowComposer && (
         <SessionHeaderActions
+          hasSteps={hasSteps}
           showProcessing={showProcessing}
           onToggleProcessing={() => setShowProcessing((prev) => !prev)}
           hasHistory={timelineItems.length > 0}
@@ -4549,17 +4570,21 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
               portalled so compact Overview tiles do not clip it. */}
           </>}
           <PermissionModePicker sessionId={sessionId} />
+          {hasSteps && <>
           <div className="ive-strip-process h-3.5 w-px bg-x-line/45" />
 
           <button
+            type="button"
             onClick={() => setShowProcessing(prev => !prev)}
-            title="Show activity details"
+            title="Show every step the agent took"
             aria-pressed={showProcessing}
             className="ive-strip-process flex items-center gap-1.5 bg-x-bg/40 hover:bg-x-bg/80 border border-x-line/45 hover:border-x-accent/45 rounded-md px-2 py-1 transition-all duration-200 cursor-pointer font-sans text-[11px] text-x-ink-secondary select-none"
+            style={showProcessing ? STEPS_PRESSED_STYLE : undefined}
           >
-            <Activity size={11} className={showProcessing ? 'text-x-accent animate-pulse' : 'text-x-faint'} />
-            <span>Details</span>
+            <Activity size={11} className={showProcessing ? '' : 'text-x-faint'} />
+            <span>Steps</span>
           </button>
+          </>}
 
           <div className="h-3.5 w-px bg-x-line/45" />
 
@@ -4602,11 +4627,11 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       )}
 
       {/* Drag & Drop File Upload Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 bg-x-bg/95 z-50 flex flex-col items-center justify-center border border-dashed border-x-accent/45 m-4 rounded-2xl animate-in pointer-events-none">
+      {(isDragging || isPathDrag) && (
+        <div className="absolute inset-0 bg-x-bg/95 z-50 flex flex-col items-center justify-center border border-dashed border-x-accent/45 m-4 rounded-2xl animate-in pointer-events-none" data-drop-overlay={isPathDrag ? 'path' : 'upload'}>
           <UploadCloud size={40} className="text-x-accent animate-bounce mb-2" />
-          <span className="text-sm font-medium text-x-ink">Drop images or text files here to attach</span>
-          <span className="text-[11px] text-x-muted mt-1 font-sans">Files will be uploaded and previewed above composer</span>
+          <span className="text-sm font-medium text-x-ink">{isPathDrag ? 'Drop to add the file path to your message' : 'Drop images or text files here to attach'}</span>
+          {!isPathDrag && <span className="text-[11px] text-x-muted mt-1 font-sans">Files will be uploaded and previewed above composer</span>}
         </div>
       )}
 

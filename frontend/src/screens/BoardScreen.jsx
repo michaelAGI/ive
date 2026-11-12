@@ -5,8 +5,9 @@ import SessionGrid from '../components/overview/SessionGrid'
 import GridToolbar from '../components/overview/GridToolbar'
 import LiveActivity from '../components/overview/LiveActivity'
 
-// A live activity lane separates active turns from merely open terminals.
-// Filters change only the tiles shown, never the session's running state.
+// One slim status row counts the open sessions by state (All / Working /
+// Needs you / Done) and filters the tiles. Filters change only the tiles
+// shown, never the session's running state.
 export default function BoardScreen({ onOpenSession, onOpenPanel }) {
   const overviewMode = useStore((s) => s.overviewMode)
   const [activityFilter, setActivityFilter] = useState('all')

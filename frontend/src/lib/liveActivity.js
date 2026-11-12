@@ -1,6 +1,7 @@
 // A live process is not the same thing as an active turn. Keep the Overview
-// lane and its filters on this one conservative definition of current work.
-import { getSessionDisplayStatus, isShellSession } from './sessionStatus.js'
+// status row and its filters on this one conservative definition of current
+// work: working / attention ("Needs you") / idle ("Done") / stopped.
+import { getSessionDisplayStatus } from './sessionStatus.js'
 import { sessionNeedsAttention } from './sessionAttention.js'
 import { isVisibleSession } from './visibleSessions.js'
 
@@ -10,9 +11,9 @@ export function liveActivityOf(session, sessionStarted = {}) {
   if (meta.state === 'failed') return 'attention'
   if (session.pty_alive === false || meta.state === 'stopped') return 'stopped'
   if (sessionNeedsAttention(session) || meta.state === 'waiting') return 'attention'
-  if (isShellSession(session)) return session.terminal_activity === 'working' ? 'working' : 'idle'
   // Replay/output activity and a recently used tool are not proof that an
-  // agent is still working. Only its current turn state belongs here.
+  // agent is still working. Only its current turn state belongs here; for a
+  // plain terminal that is a running program or its agent's running turn.
   return meta.isWorking ? 'working' : 'idle'
 }
 
@@ -21,9 +22,24 @@ export function scopedActivitySessions(sessions, { tabScope, activeWorkspaceId }
     && (tabScope !== 'workspace' || !activeWorkspaceId || session.workspace_id === activeWorkspaceId))
 }
 
+// The states of the status row, in the order it shows them. Every open
+// session is in exactly one of Working / Needs you / Done, so the three
+// always add up to All. A stopped session sits in Done, like on the board
+// (sessionVocabulary.boardColumnOf); a failed one needs you.
+export const ACTIVITY_FILTERS = [
+  { value: 'all', label: 'All' },
+  { value: 'working', label: 'Working' },
+  { value: 'attention', label: 'Needs you' },
+  { value: 'done', label: 'Done' },
+]
+
+export function activityFilterOf(session, sessionStarted = {}) {
+  const activity = liveActivityOf(session, sessionStarted)
+  return activity === 'working' || activity === 'attention' ? activity : 'done'
+}
+
 export function activityMatches(session, filter, sessionStarted = {}) {
-  if (filter === 'working') return liveActivityOf(session, sessionStarted) === 'working'
-  if (filter === 'attention') return liveActivityOf(session, sessionStarted) === 'attention'
+  if (filter === 'working' || filter === 'attention' || filter === 'done') return activityFilterOf(session, sessionStarted) === filter
   return true
 }
 
@@ -32,13 +48,12 @@ export function openActivityTabs(openTabs, sessions, scope, filter = 'all', sess
   return openTabs.filter((id) => available.has(id) && activityMatches(sessions[id], filter, sessionStarted))
 }
 
-// An observed turn timer must never silently fall back to the age of the PTY
-// (an agent may have been open for days). The UI labels this as observed time.
-export function observedWorkDuration(start, now = Date.now()) {
-  if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(now) || start > now) return ''
-  const seconds = Math.floor((now - start) / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+// One pass over the open tiles: how many the row shows per state.
+export function activityCounts(openTabs, sessions, scope, sessionStarted = {}) {
+  const counts = { all: 0, working: 0, attention: 0, done: 0 }
+  for (const id of openActivityTabs(openTabs, sessions, scope, 'all', sessionStarted)) {
+    counts.all += 1
+    counts[activityFilterOf(sessions[id], sessionStarted)] += 1
+  }
+  return counts
 }

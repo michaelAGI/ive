@@ -3208,6 +3208,36 @@ async def _emit_normalized(session_id: str, event_name: str, payload: dict):
     )
 
 
+async def _handle_terminal_hook(request: web.Request, session_id: str) -> web.Response:
+    """A lifecycle hook of an agent CLI running in a plain terminal.
+
+    Sets what the terminal is doing (terminal_agent.py): working at a prompt
+    submit or tool use, done at stop, waiting at a permission request. The
+    change reaches the UI through _shell_activity_sync_loop. A terminal
+    always has a proof (issued when its shell starts), so "no proof on file"
+    is not accepted here.
+    """
+    import session_proofs
+    import terminal_agent
+    if session_proofs.check_request(
+        request, session_id, header=session_proofs.HOOK_HEADER
+    ) != session_proofs.OK:
+        return web.json_response({"error": "forbidden: session proof mismatch"}, status=403)
+    try:
+        payload = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(payload, dict) or _pty_mgr is None or not _pty_mgr.is_plain_shell(session_id):
+        return web.json_response({})
+    canonical = _NATIVE_TO_CANONICAL.get(str(payload.get("hook_event_name") or ""))
+    if canonical is None:
+        return web.json_response({})
+    # Sample first: the signal belongs to the job that holds the terminal now.
+    _pty_mgr.get_shell_activity(session_id)
+    terminal_agent.note_hook(session_id, canonical.value, payload)
+    return web.json_response({})
+
+
 async def handle_hook_event(request: web.Request) -> web.Response:
     """
     POST /api/hooks/event
@@ -3228,6 +3258,14 @@ async def handle_hook_event(request: web.Request) -> web.Response:
     ) == session_proofs.MISMATCH:
         logger.warning("Rejected hook event for session %s: session proof mismatch", session_id[:8])
         return web.json_response({"error": "forbidden: session proof mismatch"}, status=403)
+
+    # A plain terminal (the user started this CLI by hand in it) reports its
+    # turn state and nothing else: no native id, title, safety, reflection or
+    # plugin hooks. Checked before any agent handler can see the event.
+    import shell_session
+    if (request.headers.get(shell_session.TERMINAL_HOOK_HEADER)
+            or (_pty_mgr is not None and _pty_mgr.is_plain_shell(session_id))):
+        return await _handle_terminal_hook(request, session_id)
 
     try:
         payload = await request.json()

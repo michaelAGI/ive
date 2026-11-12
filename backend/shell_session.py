@@ -5,6 +5,14 @@ A "shell" session is what the Mac Terminal app gives you: the login shell
 interactive shell in the chosen folder. No agent, no hooks, no transcript, no
 MCP, no permission/model/effort. Restart means a new shell.
 
+The one thing IVE adds to the shell's environment is the terminal's own
+identity (TERMINAL_ENV_KEYS): an agent CLI the user starts by hand in it
+reports "working / done / asking" to exactly this terminal through the hook
+relay, so the tile does not say Running while the agent waits at its prompt
+(terminal_agent.py). It is deliberately NOT the agent identity
+(COMMANDER_SESSION_ID): that one switches on the Safety Gate and every other
+agent hook, which a hand-started CLI must not get.
+
 The session row uses cli_type = session_type = "shell". The profile below is
 deliberately NOT in cli_profiles.PROFILES: everything that iterates the agent
 profiles (hook installation, model providers, MCP sync, CLI availability)
@@ -45,6 +53,21 @@ _DROP_PREFIXES = (
     "MCP_",
     "OTEL_",
 )
+
+
+# The terminal's identity for the hook relay (hook_installer.HOOK_SCRIPT,
+# desktop_hook_relay.py). Only ever set by IVE for the shell it starts, never
+# inherited: the IVE_ prefix above removes a parent terminal's values.
+TERMINAL_ID_ENV = "IVE_TERMINAL_SESSION_ID"
+TERMINAL_PROOF_ENV = "IVE_TERMINAL_SESSION_PROOF"
+TERMINAL_API_ENV = "IVE_TERMINAL_API_URL"
+TERMINAL_ENV_KEYS = (TERMINAL_ID_ENV, TERMINAL_PROOF_ENV, TERMINAL_API_ENV)
+# Header the relay adds so the backend never runs agent handlers for it.
+TERMINAL_HOOK_HEADER = "X-IVE-Terminal"
+
+
+def terminal_identity_env(session_id: str, proof: str, api_url: str) -> dict:
+    return {TERMINAL_ID_ENV: session_id, TERMINAL_PROOF_ENV: proof, TERMINAL_API_ENV: api_url}
 
 
 def is_shell_cli(cli_type: Optional[str]) -> bool:
@@ -130,12 +153,17 @@ def shell_env(inherited: Mapping[str, str], extra: Optional[Mapping[str, str]] =
     Starts from the backend's environment (HOME, USER, PATH, …), removes
     everything that describes IVE or a parent agent, and sets the terminal
     basics. The login shell then builds the rest from the user's rc files,
-    exactly like a new Terminal window.
+    exactly like a new Terminal window. The one IVE name that is kept is this
+    terminal's own identity (TERMINAL_ENV_KEYS), and only when the caller
+    passes it in ``extra``.
     """
     env = {**inherited, **(extra or {})}
     for key in list(env):
         if key in _DROP_EXACT or key.startswith(_DROP_PREFIXES):
             env.pop(key, None)
+    for key in TERMINAL_ENV_KEYS:
+        if extra and extra.get(key):
+            env[key] = extra[key]
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     if not env.get("LANG"):

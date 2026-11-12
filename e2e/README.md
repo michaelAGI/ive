@@ -27,6 +27,12 @@ Options (env vars):
 chat context flow (@ picker, chips, drag and drop, load errors, the text the
 fake Claude and Codex receive, 390 px) in its own sandbox.
 
+`IVE_E2E_PORT=<port> node e2e/terminal-status.mjs` checks that a plain
+terminal's status follows the fake Claude and Codex started by hand in it
+(Done at the prompt, Running during a turn, Waiting at a permission dialog,
+with IVE's hooks and from the screen alone) and that the Overview's status
+row counts and filters accordingly without changing its height.
+
 Exit code 0 = every check passed. `node e2e/serve.mjs` starts the same
 sandboxed backend and keeps it up until Ctrl-C, for poking at it by hand.
 

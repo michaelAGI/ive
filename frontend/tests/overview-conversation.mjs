@@ -75,10 +75,10 @@ try {
    await p.locator('.ive-conversation-history button').filter({hasText:/Calling tool/}).last().click()
    assert.equal(await p.locator('.ive-conversation-process').isVisible(),true)
    await p.getByRole('button',{name:'History',exact:true}).click()
-   await p.getByRole('button',{name:'Details',exact:true}).click()
+   await p.getByRole('button',{name:'Steps',exact:true}).click()
    await p.locator('.ive-conversation-activity pre').first().waitFor()
    assert.equal(await p.locator('.ive-conversation-activity-toggle').getAttribute('aria-expanded'),'true')
-   await p.getByRole('button',{name:'Details',exact:true}).click()
+   await p.getByRole('button',{name:'Steps',exact:true}).click()
    await p.locator('.ive-conversation-activity pre').first().waitFor({state:'hidden'})
    assert.equal(await p.locator('.ive-conversation-activity pre').count(),0)
   }

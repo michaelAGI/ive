@@ -2,19 +2,25 @@
 // mocked API + WebSocket (same mocks as terminal-open.mjs). No real backend,
 // PTY or session is touched.
 //
-// Checks
-//   1. At 1440x900, 1920x1080 and 1280x800 every overview tile is readable:
-//      font >= 9px, >= 80 visible columns, no scrollbars, the latest row
-//      (bottom-anchored) visible, a cropped right edge only with the "wider"
-//      hint, and no per-tile status line / prompt box (Session level has it).
-//   2. Toggling Overview <-> Session 5x does not resize the PTY back and forth.
+// Checks (the fit rule at the top of src/components/chat/Terminal.jsx)
+//   1. At 1440x900, 1920x1080, 1280x800 and in a manual 3-column grid every
+//      board tile holds its whole terminal: no horizontal overflow, the
+//      character grid is not wider than the tile, every row is visible, the
+//      PTY has exactly xterm's cols x rows, the font is 13px or, only where
+//      80x16 would not fit, smaller down to the floor (9px, 8px in tiny
+//      tiles). No per-tile status line / prompt box (the opened session has
+//      it).
+//   2. Board <-> opened session 5x: the PTY only ever gets the two expected
+//      sizes (tile, full view), one resize per switch; tiles that were not
+//      opened keep their size. The session drawer fits its box as well.
 //   3. Custom grid template: a new or newly opened session always lands
 //      somewhere visible (first free cell, else Session level + notice).
-//   4. Overview <-> Session with a Claude-like TUI (normal buffer, long
-//      scrollback, spinner redrawing every 100 ms): the new level is on
-//      screen in the first frame (no 9px preview pinned to the bottom of the
-//      Session box, no top-cropped 13px screen in a tile), the live bottom is
-//      shown, xterm and PTY keep the same size and the TUI frame is intact.
+//   4. Board <-> opened session with a Claude-like TUI (normal buffer, long
+//      scrollback, spinner redrawing every 100 ms): the new placement is on
+//      screen at its final size in the first frame, the live bottom is
+//      shown, xterm and PTY always have the same size, the TUI frame is
+//      intact after the redraws, and the wheel scrolls back inside a tile
+//      (never sideways).
 //
 //   node tests/overview-grid.mjs
 //   IVE_SHOT_DIR=../review-grid/after node tests/overview-grid.mjs
@@ -74,25 +80,39 @@ function tuiFrame(name, cols, rows) {
 // Claude Code-like output: no alternate screen, so history lands in xterm's
 // scrollback; the prompt box at the bottom is redrawn in place (Ink erases
 // its last frame line by line, then writes the new one).
+const inkHistory = (name) => {
+  let history = ` ${name} · Claude-like TUI\r\n`
+  for (let i = 0; i < 400; i++) history += `history line ${i} ${'·'.repeat((i % 7) * 15)}\r\n`
+  return history
+}
 function inkFrame(cols, status) {
   const w = cols - 1
   return '╭' + '─'.repeat(w - 2) + '╮\r\n│ > ' + ' '.repeat(w - 5) + '│\r\n╰' + '─'.repeat(w - 2) + '╯\r\n  ' + status
 }
 const INK_ERASE_FRAME = '\x1b[2K\x1b[1A'.repeat(3) + '\x1b[2K\r'
 
-async function setup(viewport, { sessions, openTabs = [], theme = 'light', templates = [], activeTemplateId = null, ink = false }) {
+async function setup(viewport, { sessions, openTabs = [], theme = 'light', templates = [], activeTemplateId = null, ink = false, gridColumns = 0 }) {
   // The Ink case runs without reduced motion: its global 0.01ms transitions
   // delay every size change by a frame or two, which is not what users see.
+  // IVE_DPR=2 emulates a Retina screen. Use it with IVE_QA_BROWSER=webkit
+  // when the screenshots matter: under Chromium's emulated scale factor
+  // xterm's GPU canvas gets a backing store in CSS pixels and paints the
+  // terminal at twice its size (the geometry checks are not affected; a real
+  // scale factor, `--force-device-scale-factor=2`, paints correctly).
   const context = await browser.newContext({ viewport, reducedMotion: ink ? 'no-preference' : 'reduce', deviceScaleFactor: Number(process.env.IVE_DPR || 1) })
-  await context.addInitScript(({ theme }) => {
+  await context.addInitScript(({ theme, gridColumns }) => {
     localStorage.setItem('cc-pwa-install-dismissed-v1', '1')
     localStorage.setItem('ive_client_name', 'Grid QA')
     localStorage.setItem('cc-soundEnabled', '0')
+    // The board with terminal tiles only exists in the Dev experience.
+    localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev' }))
     localStorage.setItem('cc-terminalBoardMode', '1')
     localStorage.setItem('ive-theme.v2', theme)
-    localStorage.removeItem('cc-gridColumns')
+    if (gridColumns) localStorage.setItem('cc-gridColumns', String(gridColumns))
+    else localStorage.removeItem('cc-gridColumns')
     localStorage.removeItem('cc-activeGridTemplateIds')
-  }, { theme })
+    localStorage.removeItem('ive.terminal-drawer')
+  }, { theme, gridColumns })
   const ptyMsgs = []
   const state = { sessions: [...sessions], created: 0, templates: JSON.parse(JSON.stringify(templates)) }
   const ptySize = {}
@@ -116,16 +136,16 @@ async function setup(viewport, { sessions, openTabs = [], theme = 'light', templ
       socket.send(JSON.stringify({ type: 'terminal_geometry', session_id: id, authoritative: true, changed, cols: msg.cols, rows: msg.rows }))
       const out = (data) => socket.send(JSON.stringify({ type: 'output', session_id: id, data }))
       if (!prev) {
-        let history = ` ${s?.name} · Claude-like TUI\r\n`
-        for (let i = 0; i < 400; i++) history += `history line ${i} ${'·'.repeat((i % 7) * 15)}\r\n`
-        setTimeout(() => out(history + inkFrame(msg.cols, '? for shortcuts')), 30)
+        setTimeout(() => out(inkHistory(s?.name) + inkFrame(msg.cols, '? for shortcuts')), 30)
         let tick = 0
         timers.push(setInterval(() => {
           tick++
           out(INK_ERASE_FRAME + (tick % 10 === 0 ? `output line ${tick}\r\n` : '') + inkFrame(ptySize[id].cols, `✻ Working ${tick}`))
         }, 100))
       } else if (changed) {
-        setTimeout(() => out(INK_ERASE_FRAME + inkFrame(msg.cols, '? for shortcuts')), 30)
+        // SIGWINCH with another width: like Claude Code, clear the screen and
+        // the scrollback and print the transcript again for the new width.
+        out('\x1b[2J\x1b[3J\x1b[H' + inkHistory(s?.name) + inkFrame(msg.cols, '? for shortcuts'))
       }
     })
   })
@@ -178,16 +198,18 @@ async function setup(viewport, { sessions, openTabs = [], theme = 'light', templ
   return { context, page, ptyMsgs, errors, state, stopOutput: () => timers.forEach(clearInterval) }
 }
 
-// Everything that decides whether a tile shows the whole terminal.
-async function tileGeometry(page, id) {
-  return page.evaluate(async (id) => {
+// Everything that decides whether a box (tile, drawer, full view) holds its
+// whole terminal. `pty` is the size the client last sent for the session.
+async function tileGeometry(page, id, ptyMsgs = null) {
+  const g = await page.evaluate(async (id) => {
     const { terminalControls } = await import('/src/lib/terminalWriters.js')
     const cell = document.querySelector(`[data-session-view="${id}"], [data-grid-cell-session="${id}"]`)
     if (!cell) return { mounted: false }
     const r = cell.getBoundingClientRect()
     const screen = cell.querySelector('.xterm-screen')
     const xterm = cell.querySelector('.xterm')
-    const wrapper = xterm?.parentElement?.parentElement
+    const host = xterm?.parentElement
+    const wrapper = host?.parentElement
     const grid = cell.parentElement
     const size = terminalControls.get(id)?.getSize?.()
     const wr = wrapper?.getBoundingClientRect()
@@ -199,26 +221,72 @@ async function tileGeometry(page, id) {
     const visibleRows = sr && wr && rowH ? Math.floor((Math.min(sr.bottom, wr.bottom) - Math.max(sr.top, wr.top)) / rowH + 0.01) : 0
     return {
       mounted: true,
-      visible: r.width > 50 && r.height > 50 && getComputedStyle(cell).display !== 'none',
+      visible: r.width > 50 && r.height > 50 && getComputedStyle(cell).display !== 'none' && !!wrapper,
       cell: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+      box: wrapper ? { w: wrapper.clientWidth, h: wrapper.clientHeight } : null,
       size,
       fontSize: terminalControls.get(id)?.getFontSize?.() ?? null,
       visibleCols,
       visibleRows,
-      hClip: !!(sr && wr && (sr.right > wr.right + 1 || sr.left < wr.left - 1 || sr.right > gr.right + 1)),
+      // The wrapper cannot be scrolled sideways and has nothing to scroll to.
+      overflowX: wrapper ? getComputedStyle(wrapper).overflowX : null,
+      scrollW: wrapper ? wrapper.scrollWidth : null,
+      clientW: wrapper ? wrapper.clientWidth : null,
+      hostScrollW: host ? host.scrollWidth : null,
+      hostClientW: host ? host.clientWidth : null,
+      scrollLeft: wrapper ? wrapper.scrollLeft + host.scrollLeft : null,
+      // The character grid lies inside the wrapper on every side.
+      screenW: sr ? Math.round(sr.width * 10) / 10 : null,
+      hClip: !!(sr && wr && (sr.right > wr.right + 0.5 || sr.left < wr.left - 0.5 || sr.right > gr.right + 1)),
       vClip: !!(sr && wr && (sr.bottom > wr.bottom + 1 || sr.top < wr.top - 1)),
-      leftEdgeVisible: !!(sr && wr && sr.left >= wr.left - 1),
-      lastRowVisible: !!(sr && wr && rowH && sr.bottom <= wr.bottom + 1 && sr.bottom - rowH >= wr.top - 1),
-      widerHint: (() => { const h = cell.querySelector('[data-preview-wider]'); return !!h && h.getBoundingClientRect().width > 0 })(),
+      vScroll: wrapper ? wrapper.scrollHeight > wrapper.clientHeight + 2 : null,
+      unusedCols: wr && sr && cellW ? Math.floor((wr.right - sr.right) / cellW) : null,
+      unusedRows: wr && sr && rowH ? Math.floor((wr.bottom - sr.bottom) / rowH) : null,
+      preview: !!host?.classList.contains('is-overview-preview'),
       composerShown: (() => { const c = cell.querySelector('[data-terminal-composer]'); return !!c && getComputedStyle(c).display !== 'none' && c.getBoundingClientRect().height > 0 })(),
-      vScroll: wrapper ? wrapper.scrollHeight > wrapper.clientHeight + 2 && getComputedStyle(wrapper).overflowY !== 'hidden' : null,
-      hScroll: wrapper ? wrapper.scrollWidth > wrapper.clientWidth + 2 && getComputedStyle(wrapper).overflowX !== 'hidden' : null,
       gridHScroll: grid.scrollWidth > grid.clientWidth + 2,
     }
   }, id)
+  if (ptyMsgs) {
+    const last = ptyMsgs.filter((m) => m.id === id).at(-1)
+    g.pty = last ? { cols: last.cols, rows: last.rows } : null
+  }
+  return g
+}
+const dims = (g) => `${g.size?.cols}x${g.size?.rows} at ${g.fontSize}px in ${g.box?.w}x${g.box?.h}px`
+// The fit rule, checked on one box. `tile`: board tile (8px floor when tiny, no prompt box).
+function checkFits(tag, g, { tile = true } = {}) {
+  const floor = tile && (g.box?.w < 360 || g.box?.h < 160) ? 8 : 9
+  check(`${tag}: no horizontal overflow, cannot scroll sideways`, g.visible && g.overflowX === 'hidden' && g.scrollW <= g.clientW && g.hostScrollW <= g.hostClientW && g.scrollLeft === 0,
+    `wrapper ${g.scrollW}/${g.clientW}px, host ${g.hostScrollW}/${g.hostClientW}px, overflow-x ${g.overflowX}`)
+  check(`${tag}: character grid not wider than the box, every column visible`, g.visible && !g.hClip && g.screenW <= g.clientW && g.visibleCols === g.size.cols, `grid ${g.screenW}px of ${g.clientW}px, ${g.visibleCols} of ${g.size?.cols} columns visible`)
+  check(`${tag}: every row visible, no vertical scrollbar`, g.visible && !g.vClip && !g.vScroll && g.visibleRows === g.size.rows, `${g.visibleRows} of ${g.size?.rows} rows visible`)
+  check(`${tag}: PTY has xterm's cols x rows`, !!g.pty && g.pty.cols === g.size.cols && g.pty.rows === g.size.rows, `PTY ${g.pty?.cols}x${g.pty?.rows}, xterm ${dims(g)}`)
+  check(`${tag}: font 13px, smaller only where 80x16 would not fit, never below ${floor}px`,
+    g.fontSize <= 13 && g.fontSize >= floor && (g.fontSize === 13 || g.fontSize === floor || (g.size.cols >= 80 && g.size.rows >= 16 && (g.size.cols <= 81 || g.size.rows <= 17))), dims(g))
+  check(`${tag}: at least 80x16 unless the font is at its ${floor}px floor`, g.fontSize === floor || (g.size.cols >= 80 && g.size.rows >= 16), dims(g))
+  check(`${tag}: the box is used (at most 2 columns / 1 row spare)`, g.unusedCols <= 2 && g.unusedRows <= 1, `spare ${g.unusedCols} columns, ${g.unusedRows} rows`)
+  if (tile) check(`${tag}: no status line / prompt box in the tile`, !g.composerShown)
+}
+// Lazy tiles adopt their terminal once they are near the viewport. Returns
+// whether the tile showed it on its own. A tile that did not (TerminalSlot's
+// lazy adoption, not a sizing question) is selected, which always adopts the
+// terminal, so that the sizing checks run on every tile.
+async function showTile(page, id) {
+  const has = () => page.evaluate((id) => !!document.querySelector(`[data-grid-cell-session="${id}"] .xterm`), id)
+  await page.evaluate((id) => document.querySelector(`[data-grid-cell-session="${id}"]`)?.scrollIntoView({ block: 'nearest' }), id)
+  await page.waitForTimeout(900)
+  const shown = await has()
+  if (!shown) {
+    await store(page, (s, id) => s.getState().setActiveSession(id), id)
+    await page.waitForTimeout(1200)
+  }
+  return shown
 }
 
 const shot = (page, name) => page.screenshot({ path: join(shotDir, `${name}.png`) })
+const sizesOf = (msgs, id, from = 0) => msgs.filter((m) => m.id === id).slice(from).map((m) => `${m.cols}x${m.rows}`)
+// Number of times consecutive messages for a session carry another size.
 const sizeChanges = (msgs, id, from = 0) => {
   const all = msgs.filter((m) => m.id === id)
   let prev = null, changes = 0
@@ -229,6 +297,11 @@ const sizeChanges = (msgs, id, from = 0) => {
   })
   return changes
 }
+const store = (page, fn, arg) => page.evaluate(async ({ src, arg }) => {
+  const s = (await import('/src/state/store.js')).default
+  // eslint-disable-next-line no-new-func
+  return new Function('store', 'arg', `return (${src})(store, arg)`)(s, arg)
+}, { src: fn.toString(), arg })
 
 const viewports = [
   { name: '1440x900', width: 1440, height: 900 },
@@ -236,57 +309,88 @@ const viewports = [
   { name: '1280x800', width: 1280, height: 800 },
 ]
 const four = [0, 1, 2, 3].map((i) => mkSession(i))
-const fonts = []
+const six = [0, 1, 2, 3, 4, 5].map((i) => mkSession(i))
+const sizesSeen = []
 
 try {
-  // 1. Overview tiles show the whole terminal.
+  // 1. Every board tile holds its whole terminal.
   for (const vp of viewports) {
     for (const theme of ['light', 'dark']) {
-      const { context, page, errors } = await setup(vp, { sessions: four, openTabs: four.map((s) => s.id), theme })
+      const { context, page, errors, ptyMsgs } = await setup(vp, { sessions: four, openTabs: four.map((s) => s.id), theme })
       await shot(page, `${vp.name}-overview-${theme}`)
       if (theme === 'light') {
-        const tiles = await Promise.all(four.map((s) => tileGeometry(page, s.id)))
-        tiles.forEach((g, i) => {
-          const tag = `${vp.name} tile ${i + 1}`
-          fonts.push(`${vp.name} ${g.fontSize}px`)
-          check(`${tag}: font >= 9px`, g.fontSize >= 9, `${g.fontSize}px, PTY ${g.size?.cols}x${g.size?.rows}, tile ${g.cell?.w}x${g.cell?.h}`)
-          check(`${tag}: >= 80 visible columns`, g.visible && g.visibleCols >= 80 && g.size.cols >= 80, `visible ${g.visibleCols}x${g.visibleRows} of ${g.size?.cols}x${g.size?.rows}`)
-          check(`${tag}: no scrollbars, left edge visible`, g.leftEdgeVisible && !g.hScroll && !g.vScroll && !g.gridHScroll)
-          check(`${tag}: cropped right edge only with "wider" hint`, (g.hClip && g.widerHint) || (!g.hClip && !g.widerHint), `cropped ${g.hClip}, hint ${g.widerHint}`)
-          check(`${tag}: latest row visible (bottom-anchored)`, g.lastRowVisible)
-          check(`${tag}: no status line / prompt box in the tile`, !g.composerShown)
-        })
+        for (const [i, s] of four.entries()) {
+          check(`${vp.name} tile ${i + 1}: shows its terminal without being selected first`, await showTile(page, s.id))
+          const g = await tileGeometry(page, s.id, ptyMsgs)
+          sizesSeen.push(`${vp.name}: ${dims(g)}`)
+          checkFits(`${vp.name} tile ${i + 1}`, g)
+        }
+        check(`${vp.name}: the grid itself does not scroll sideways`, !(await tileGeometry(page, 's0')).gridHScroll)
       }
       check(`${vp.name} ${theme}: no page errors`, errors.length === 0, errors.join(' | '))
       await context.close()
     }
   }
+  // 1b. Manual 3-column grid: narrow tiles, where 80 columns need the font
+  //     floor. Whatever fits is taken; the terminal is never wider than its tile.
+  for (const vp of [viewports[0], viewports[2]]) {
+    const { context, page, errors, ptyMsgs } = await setup(vp, { sessions: six, openTabs: six.map((s) => s.id), gridColumns: 3 })
+    await shot(page, `${vp.name}-3-columns`)
+    const columns = await page.evaluate(() => new Set([...document.querySelectorAll('[data-terminal-grid] > [data-grid-cell-session]')].map((c) => Math.round(c.getBoundingClientRect().left))).size)
+    check(`${vp.name} 3 columns: the grid has 3 columns`, columns === 3, `${columns}`)
+    for (const [i, s] of six.entries()) {
+      check(`${vp.name} 3 columns tile ${i + 1}: shows its terminal without being selected first`, await showTile(page, s.id))
+      const g = await tileGeometry(page, s.id, ptyMsgs)
+      sizesSeen.push(`${vp.name} 3 columns: ${dims(g)}`)
+      checkFits(`${vp.name} 3 columns tile ${i + 1}`, g)
+    }
+    check(`${vp.name} 3 columns: no page errors`, errors.length === 0, errors.join(' | '))
+    await context.close()
+  }
 
-  // 2. Overview <-> Session toggling must not resize the PTY back and forth.
+  // 2. Board <-> opened session: one resize per switch, two sizes in total.
   {
     const { context, page, ptyMsgs, errors } = await setup({ width: 1440, height: 900 }, { sessions: four, openTabs: four.map((s) => s.id) })
+    // The opened session shows its terminal full size (the drawer's expand button).
+    await store(page, (s) => s.getState().setTerminalExpanded('s1', true))
+    await page.waitForTimeout(400)
     const startIdx = Object.fromEntries(four.map((s) => [s.id, ptyMsgs.filter((m) => m.id === s.id).length]))
-    const before = ptyMsgs.length
+    const tileBefore = await tileGeometry(page, 's1', ptyMsgs)
+    const tileSize = `${tileBefore.size.cols}x${tileBefore.size.rows}`
+    let fullSize = null
     for (let i = 0; i < 5; i++) {
-      await page.evaluate(async () => (await import('/src/state/store.js')).default.getState().goSession('s1'))
+      await store(page, (s) => s.getState().goSession('s1'))
       await page.waitForTimeout(900)
       if (i === 0) {
         await shot(page, 'toggle-session-level')
-        const sg = await tileGeometry(page, 's1')
-        check('Session level: status line + prompt box shown, base font', sg.composerShown && sg.fontSize === 13 && !sg.widerHint, `font ${sg.fontSize}px`)
+        const sg = await tileGeometry(page, 's1', ptyMsgs)
+        fullSize = `${sg.size.cols}x${sg.size.rows}`
+        sizesSeen.push(`1440x900 full view: ${dims(sg)}`)
+        checkFits('opened session, full view', sg, { tile: false })
+        check('opened session, full view: status line + prompt box shown, base font', sg.composerShown && sg.fontSize === 13 && !sg.preview, `font ${sg.fontSize}px`)
       }
-      await page.evaluate(async () => (await import('/src/state/store.js')).default.getState().goOverview())
+      await store(page, (s) => s.getState().goOverview())
       await page.waitForTimeout(900)
     }
     await shot(page, 'toggle-back-in-overview')
-    const sent = ptyMsgs.length - before
+    const seen = sizesOf(ptyMsgs, 's1', startIdx.s1)
     const focusedChanges = sizeChanges(ptyMsgs, 's1', startIdx.s1)
     const otherChanges = four.filter((s) => s.id !== 's1').map((s) => sizeChanges(ptyMsgs, s.id, startIdx[s.id]))
-    console.log(`     resize messages during 5 toggles: ${sent}; size changes s1=${focusedChanges}, others=${otherChanges.join(',')}`)
-    check('toggle 5x: focused PTY changes size at most once', focusedChanges <= 1, `${focusedChanges} changes`)
-    check('toggle 5x: other PTYs never change size', otherChanges.every((n) => n === 0), otherChanges.join(','))
-    const g = await tileGeometry(page, 's1')
-    check('toggle 5x: tile still readable', g.fontSize >= 9 && g.visibleCols >= 80 && g.lastRowVisible && !g.composerShown, `font ${g.fontSize}px, visible ${g.visibleCols}x${g.visibleRows} of ${g.size?.cols}x${g.size?.rows}`)
+    console.log(`     s1 during 5 round trips: ${seen.length} size messages, ${focusedChanges} size changes, sizes ${[...new Set(seen)].join(' / ')}; others ${otherChanges.join(',')}`)
+    check('toggle 5x: tile and full view are different sizes', fullSize && fullSize !== tileSize, `tile ${tileSize}, full ${fullSize}`)
+    check('toggle 5x: the PTY only ever gets the two expected sizes', seen.every((k) => k === tileSize || k === fullSize), [...new Set(seen)].join(' / '))
+    check('toggle 5x: one PTY size change per switch', focusedChanges === 10, `${focusedChanges} changes in 10 switches`)
+    check('toggle 5x: tiles that were not opened keep their PTY size', otherChanges.every((n) => n === 0), otherChanges.join(','))
+    checkFits('toggle 5x: tile back on the board', await tileGeometry(page, 's1', ptyMsgs))
+    // The drawer (terminal under the chat) is a third, smaller box.
+    await store(page, (s) => { s.getState().setTerminalExpanded('s1', false); s.getState().goSession('s1') })
+    await page.waitForTimeout(900)
+    await shot(page, 'session-drawer')
+    {
+      const dg = await tileGeometry(page, 's1', ptyMsgs)
+      sizesSeen.push(`1440x900 drawer: ${dims(dg)}`)
+      checkFits('opened session, drawer', dg, { tile: false })
+    }
     check('toggle: no page errors', errors.length === 0, errors.join(' | '))
     await context.close()
   }
@@ -328,7 +432,7 @@ try {
     await shot(page, 'template-overview-full')
     for (const id of ['s0', 's1', 's100']) {
       const g = await tileGeometry(page, id)
-      check(`template overview: ${id} tile readable`, g.visible && g.fontSize >= 9 && g.visibleCols >= 80 && g.lastRowVisible && !g.composerShown && (!g.hClip || g.widerHint), `font ${g.fontSize}px, visible ${g.visibleCols}x${g.visibleRows} of ${g.size?.cols}x${g.size?.rows}`)
+      check(`template overview: ${id} tile holds its whole terminal`, g.visible && g.fontSize >= 9 && !g.hClip && !g.vClip && g.scrollW <= g.clientW && g.visibleCols === g.size.cols && g.visibleRows === g.size.rows && !g.composerShown, `${dims(g)}, visible ${g.visibleCols}x${g.visibleRows}`)
     }
     await page.evaluate(async () => (await import('/src/state/store.js')).default.getState().openSession('s4', { autoStart: false }))
     await page.waitForTimeout(1200)
@@ -344,21 +448,23 @@ try {
     await shot(page, 'template-full-back-to-overview')
     {
       const g = await tileGeometry(page, 's100')
-      check('template overview after Session level: tile readable, bottom-anchored', g.visible && g.fontSize >= 9 && g.lastRowVisible && g.leftEdgeVisible && (!g.hClip || g.widerHint), `font ${g.fontSize}px, visible ${g.visibleCols}x${g.visibleRows} of ${g.size?.cols}x${g.size?.rows}`)
+      check('template overview after Session level: tile holds its whole terminal', g.visible && g.fontSize >= 9 && !g.hClip && !g.vClip && g.scrollW <= g.clientW && g.visibleCols === g.size?.cols && g.visibleRows === g.size?.rows, `${dims(g)}, visible ${g.visibleCols}x${g.visibleRows}`)
     }
-    const pill = await page.locator('[data-template-overflow]').getByRole('button', { name: /Agent 5/ }).isVisible().catch(() => false)
-    check('template full: overview lists the session that has no cell', pill)
     check('template: no page errors', errors.length === 0, errors.join(' | '))
     await context.close()
   }
-  // 4. Overview <-> Session with a Claude-like TUI: the new level is on screen
-  //    in the first frame, at the live bottom, with an intact TUI frame.
+  // 4. Board <-> opened session with a Claude-like TUI: the new placement is
+  //    on screen at its final size in the first frame, at the live bottom,
+  //    xterm and PTY agree, and the TUI frame is intact after the redraws.
   {
     const { context, page, ptyMsgs, errors, stopOutput } = await setup({ width: 1512, height: 945 }, { sessions: four, openTabs: four.map((s) => s.id), ink: true })
+    await store(page, (s) => s.getState().setTerminalExpanded('s0', true))
     await page.waitForTimeout(600)
     const startIdx = ptyMsgs.filter((m) => m.id === 's0').length
-    // Switch inside the page and measure in the first two animation frames,
-    // i.e. what the browser paints right after the click.
+    // Switch inside the page and measure the first two animation frames in
+    // which the terminal is shown, i.e. what the user sees after the click.
+    // (A terminal that changes its place stays transparent until it has
+    // rendered at the size of its new box.)
     const switchAndSample = (action) => page.evaluate(async (action) => {
       const store = (await import('/src/state/store.js')).default
       const { terminalControls } = await import('/src/lib/terminalWriters.js')
@@ -372,8 +478,10 @@ try {
         const c = terminalControls.get('s0')
         const v = c.getViewport()
         return {
+          hidden: getComputedStyle(host).opacity === '0',
           font: c.getFontSize(), size: c.getSize(), preview: host.classList.contains('is-overview-preview'),
-          blankAbove: Math.round(sr.top - wr.top), blankBelow: Math.round(wr.bottom - sr.bottom),
+          blankAbove: Math.round(sr.top - wr.top), blankBelow: Math.round(wr.bottom - sr.bottom), blankRight: Math.round(wr.right - sr.right),
+          rowH: sr.height / c.getSize().rows, colW: sr.width / c.getSize().cols,
           atBottom: v.viewportY === v.baseY,
         }
       }
@@ -381,7 +489,11 @@ try {
       // Let React commit first: a frame is painted only after the commit.
       await new Promise((r) => setTimeout(r, 0))
       const frames = []
-      for (let i = 0; i < 2; i++) { await new Promise((r) => requestAnimationFrame(r)); frames.push(sample()) }
+      for (let i = 1; i <= 40 && frames.length < 2; i++) {
+        await new Promise((r) => requestAnimationFrame(r))
+        const f = sample()
+        if (!f.hidden) frames.push({ ...f, frame: i })
+      }
       return frames
     }, action)
     // The visible TUI rows after the last line of history output.
@@ -394,32 +506,65 @@ try {
       const v = terminalControls.get('s0').getViewport()
       return { ok: v.viewportY === v.baseY, detail: `viewport row ${v.viewportY} of ${v.baseY}` }
     })
-    const fmt = (f) => `font ${f.font}px, blank above ${f.blankAbove}px / below ${f.blankBelow}px, ${f.size.cols}x${f.size.rows}${f.preview ? ', preview' : ''}${f.atBottom ? '' : ', scrolled up'}`
+    const lastPty = () => { const m = ptyMsgs.filter((x) => x.id === 's0').at(-1); return m ? `${m.cols}x${m.rows}` : null }
+    const key = (f) => `${f.size.cols}x${f.size.rows}`
+    const fmt = (f) => `frame ${f.frame}, font ${f.font}px, blank above ${f.blankAbove}px / below ${f.blankBelow}px / right ${f.blankRight}px, ${key(f)}${f.preview ? ', tile' : ''}${f.atBottom ? '' : ', scrolled up'}`
+    // Fitted to its box: starts at the top, less than one row and three columns spare, nothing cut off.
+    const fitted = (f) => f.blankAbove >= 0 && f.blankAbove <= 8 && f.blankBelow >= 0 && f.blankBelow <= f.rowH + 8 && f.blankRight >= 0 && f.blankRight <= f.colW * 3
+    const tileSize = key((await switchAndSample('goOverview'))[0])
     let sessionSize = null
     for (let i = 0; i < 3; i++) {
       const s = await switchAndSample('goSession')
-      sessionSize ||= s[0].size
-      s.forEach((f, n) => check(`ink round ${i + 1}: Session level in frame ${n + 1} (base font, top-aligned, filled, live bottom)`,
-        f.font === 13 && !f.preview && f.blankAbove <= 8 && f.blankBelow <= 30 && f.atBottom, fmt(f)))
+      sessionSize ||= key(s[0])
+      check(`ink round ${i + 1}: opened session is shown promptly`, s.length === 2 && s[0].frame <= 8, `first shown in frame ${s[0]?.frame}`)
+      s.forEach((f, n) => check(`ink round ${i + 1}: opened session in shown frame ${n + 1} (final size, base font, fitted, live bottom)`,
+        key(f) === sessionSize && f.font === 13 && !f.preview && fitted(f) && f.atBottom, fmt(f)))
       await page.waitForTimeout(700)
-      { const b = await liveBottom(); check(`ink round ${i + 1}: Session level still follows the live output`, b.ok, b.detail) }
+      check(`ink round ${i + 1}: opened session, PTY has xterm's size`, lastPty() === sessionSize, `PTY ${lastPty()}, xterm ${sessionSize}`)
+      { const b = await liveBottom(); check(`ink round ${i + 1}: opened session still follows the live output`, b.ok, b.detail) }
       if (i === 0) await shot(page, 'ink-session-level')
       const o = await switchAndSample('goOverview')
-      o.forEach((f, n) => check(`ink round ${i + 1}: Overview tile in frame ${n + 1} (scaled font, bottom-anchored, live bottom)`,
-        f.font < 13 && f.font >= 8 && f.preview && f.blankBelow >= 0 && f.blankBelow <= 8 && f.atBottom, fmt(f)))
-      check(`ink round ${i + 1}: xterm keeps the Session-level size`, [...s, ...o].every((f) => f.size.cols === sessionSize.cols && f.size.rows === sessionSize.rows), [...s, ...o].map((f) => `${f.size.cols}x${f.size.rows}`).join(' '))
+      check(`ink round ${i + 1}: board tile is shown promptly`, o.length === 2 && o[0].frame <= 8, `first shown in frame ${o[0]?.frame}`)
+      o.forEach((f, n) => check(`ink round ${i + 1}: board tile in shown frame ${n + 1} (final size, fitted, live bottom)`,
+        key(f) === tileSize && f.font <= 13 && f.font >= 8 && f.preview && fitted(f) && f.atBottom, fmt(f)))
       await page.waitForTimeout(700)
-      { const b = await liveBottom(); check(`ink round ${i + 1}: Overview tile still follows the live output`, b.ok, b.detail) }
+      check(`ink round ${i + 1}: board tile, PTY has xterm's size`, lastPty() === tileSize, `PTY ${lastPty()}, xterm ${tileSize}`)
+      { const b = await liveBottom(); check(`ink round ${i + 1}: board tile still follows the live output`, b.ok, b.detail) }
     }
     await shot(page, 'ink-overview')
+    check('ink: tile and opened session are different sizes', sessionSize !== tileSize, `tile ${tileSize}, opened ${sessionSize}`)
+    {
+      const rows = await tail()
+      const boxTops = rows.filter((r) => r.startsWith('╭')).length
+      check('ink: TUI frame intact in the tile after 3 round trips (one prompt box, status line last)', boxTops === 1 && /✻ Working \d+$/.test(rows.at(-1)), rows.map((r) => r.slice(0, 40)).join(' | '))
+    }
+    // The wheel scrolls the scrollback inside a tile, and never sideways.
+    {
+      const box = await page.locator('[data-session-view="s0"] .xterm-screen').boundingBox()
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+      await page.mouse.wheel(0, -600)
+      await page.waitForTimeout(300)
+      const back = await liveBottom()
+      check('tile: the wheel scrolls back through the scrollback', !back.ok, back.detail)
+      await page.mouse.wheel(900, 0)
+      await page.waitForTimeout(200)
+      const side = await tileGeometry(page, 's0')
+      check('tile: a sideways wheel moves nothing', side.scrollLeft === 0 && !side.hClip, `scrollLeft ${side.scrollLeft}`)
+      await page.mouse.wheel(0, 200000)
+      await page.waitForTimeout(300)
+      const live = await liveBottom()
+      check('tile: the wheel returns to the live output', live.ok, live.detail)
+    }
     await switchAndSample('goSession')
     await page.waitForTimeout(700)
     const rows = await tail()
     const boxTops = rows.filter((r) => r.startsWith('╭')).length
-    check('ink: TUI frame intact after 3 round trips (one prompt box, status line last)', boxTops === 1 && /✻ Working \d+$/.test(rows.at(-1)), rows.map((r) => r.slice(0, 40)).join(' | '))
+    check('ink: TUI frame intact in the opened session (one prompt box, status line last)', boxTops === 1 && /✻ Working \d+$/.test(rows.at(-1)), rows.map((r) => r.slice(0, 40)).join(' | '))
+    const seen = sizesOf(ptyMsgs, 's0', startIdx)
     const changes = sizeChanges(ptyMsgs, 's0', startIdx)
-    const last = ptyMsgs.filter((m) => m.id === 's0').at(-1)
-    check('ink: PTY never resized by the switches, equals the xterm size', changes === 0 && last && last.cols === sessionSize.cols && last.rows === sessionSize.rows, `${changes} changes, PTY ${last?.cols}x${last?.rows}, xterm ${sessionSize.cols}x${sessionSize.rows}`)
+    // 3 round trips and the last opening: 7 switches.
+    check('ink: the PTY only ever got the two sizes, one change per switch', seen.every((k) => k === tileSize || k === sessionSize) && changes === 7 && lastPty() === sessionSize,
+      `${changes} changes in 7 switches, sizes ${[...new Set(seen)].join(' / ')}, PTY ${lastPty()}`)
     check('ink: no page errors', errors.length === 0, errors.join(' | '))
     stopOutput()
     await context.close()
@@ -430,6 +575,6 @@ try {
   await server.close()
   await rm(testDir, { recursive: true, force: true })
 }
-console.log(`\nOverview font sizes: ${[...new Set(fonts)].join(', ')}`)
+console.log(`\nTerminal sizes:\n  ${[...new Set(sizesSeen)].join('\n  ')}`)
 console.log(`${results.length - failures.length}/${results.length} checks passed. Screenshots: ${shotDir}`)
 if (failures.length && strict) process.exitCode = 1

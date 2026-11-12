@@ -3605,12 +3605,54 @@ async def _codex_turn_sync_loop():
         await asyncio.sleep(0.5)
 
 
+def _terminal_agent_screen(session_id: str, cli: str | None):
+    """What an agent CLI started by hand in a plain terminal shows right now.
+
+    The screen part of terminal_agent.py, read with the same functions agent
+    sessions use. Only the current emulated screen is evidence; scrollback
+    may hold an old footer or an answered dialog.
+    """
+    import hooks as _hooks
+    import terminal_agent
+    screen = capture_proc.get_screen(session_id) or ""
+    if not screen:
+        return terminal_agent.Screen()
+    menu = _session_permission_menu(screen)
+    return terminal_agent.Screen(
+        asking=bool(menu or _is_incomplete_permission_screen(screen)),
+        dialog=str((menu or {}).get("identity") or ""),
+        working=terminal_agent.screen_shows_work(screen, cli) or _looks_antigravity_busy(cli, screen),
+        interrupted=_hooks.claude_screen_shows_interrupt(screen),
+        turn_ended=cli == "codex" and _codex_screen_shows_turn_end(screen),
+    )
+
+
+async def _terminal_codex_turn_sync_loop():
+    """Plain terminals: a Codex started by hand reports no turn end by hook
+    unless that handler is switched on. Its rollout names the end, like
+    _sync_codex_turn_completion does for agent sessions."""
+    import terminal_agent
+    from codex_turn_state import read_turn_boundary
+    while True:
+        for sid, rollout in terminal_agent.open_codex_turns():
+            try:
+                boundary = await asyncio.to_thread(read_turn_boundary, rollout)
+                if boundary and terminal_agent.note_turn_boundary(sid, rollout, boundary[0], boundary[2]):
+                    logger.info("Terminal %s: Codex turn ended in its rollout", sid[:8])
+            except Exception as exc:
+                logger.debug("Terminal Codex turn sync skipped for %s: %s", sid[:8], exc)
+        await asyncio.sleep(0.5)
+
+
 async def _shell_activity_sync_loop():
     """Publish foreground-job changes even for completely silent commands.
 
     State belongs to a PTY generation: a restarted shell must be sampled and
     published afresh even if it has the same activity as its predecessor.
-    Nothing is written to the shell, its environment, or its startup files.
+    Nothing is written to the shell or its startup files. "working" is a
+    running program or the running turn of an agent CLI started by hand,
+    "waiting" that agent asking the user, "idle" the prompt or a finished
+    turn (terminal_agent.py).
     """
     previous = {}
     while True:
@@ -8710,13 +8752,23 @@ async def _create_shell_session(request, body: dict, workspace_id: str) -> web.R
     return web.json_response(result, status=201)
 
 
+def _terminal_identity_env(session_id: str) -> dict:
+    """The one thing a plain terminal's shell gets from IVE: its own identity,
+    so an agent CLI started by hand in it reports its turn state to this
+    terminal (shell_session.TERMINAL_ENV_KEYS, terminal_agent.py)."""
+    import session_proofs
+    import shell_session as _shell_session
+    return _shell_session.terminal_identity_env(
+        session_id, session_proofs.issue(session_id), f"http://{HOST}:{PORT}")
+
+
 async def _start_shell_pty(session_id: str, config: dict, cols: int = 120, rows: int = 40,
                            geometry_owner: str | None = None) -> dict:
     """Start the user's login shell for a "shell" session (no agent assembly).
 
-    No hooks, MCP, resume, native-id detection or transcript: just the shell
-    in the session's folder with a clean environment. Every (re)start is a
-    new shell.
+    No agent hooks, MCP, resume, native-id detection or transcript: just the
+    shell in the session's folder with a clean environment plus the
+    terminal's own identity. Every (re)start is a new shell.
     """
     import shell_session as _shell_session  # plain terminals (cli_type "shell")
     cwd = config.get("workspace_path") or os.path.expanduser("~")
@@ -8731,7 +8783,7 @@ async def _start_shell_pty(session_id: str, config: dict, cols: int = 120, rows:
         mark_pty_started(session_id, "full")
         _pty_start_time.pop(session_id, None)
         await pty_mgr.start_session(
-            session_id, cwd, cols, rows, cmd[1:], {}, cmd[0],
+            session_id, cwd, cols, rows, cmd[1:], _terminal_identity_env(session_id), cmd[0],
             sandbox_type="none", sandbox_network=True,
             geometry_owner=geometry_owner, plain_shell=True,
         )
@@ -32452,6 +32504,8 @@ async def on_startup(app: web.Application):
     pty_mgr.on_output(handle_pty_output)
     pty_mgr.on_output(capture_proc.process)
     pty_mgr.on_exit(handle_pty_exit)
+    import terminal_agent
+    terminal_agent.set_screen_probe(_terminal_agent_screen)
     pty_mgr.on_input_error(handle_pty_input_error)
 
     # ── Dynamic model discovery ────────────────────────────────────
@@ -32619,6 +32673,7 @@ async def on_startup(app: web.Application):
     # ── Telemetry (anonymous startup + daily heartbeat) ─────────────
     app["_codex_turn_sync_task"] = asyncio.create_task(_codex_turn_sync_loop())
     app["_shell_activity_sync_task"] = asyncio.create_task(_shell_activity_sync_loop())
+    app["_terminal_codex_turn_sync_task"] = asyncio.create_task(_terminal_codex_turn_sync_loop())
     import telemetry
     telemetry.start_background()
 
@@ -32747,13 +32802,14 @@ async def on_shutdown(app: web.Application):
 
 
 async def on_cleanup(app: web.Application):
-    shell_activity_task = app.get("_shell_activity_sync_task")
-    if shell_activity_task is not None:
-        shell_activity_task.cancel()
-        try:
-            await shell_activity_task
-        except asyncio.CancelledError:
-            pass
+    for task_key in ("_shell_activity_sync_task", "_terminal_codex_turn_sync_task"):
+        terminal_task = app.get(task_key)
+        if terminal_task is not None:
+            terminal_task.cancel()
+            try:
+                await terminal_task
+            except asyncio.CancelledError:
+                pass
     turn_sync_task = app.get("_codex_turn_sync_task")
     if turn_sync_task is not None:
         turn_sync_task.cancel()
