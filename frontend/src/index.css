@@ -1381,14 +1381,11 @@ pre {
   /* The session message box (.ive-composer) already stacks its text above its buttons. */
 }
 
-/* Overview tile preview (Terminal.jsx): the whole Session-level terminal,
-   font scaled down. One surface colour around the scaled grid, no viewport
-   scrollbar strip. */
+/* Board tile terminal (Terminal.jsx): fitted to the tile like any terminal,
+   with one surface colour around the character grid. */
 .is-overview-preview .xterm,
 .is-overview-preview .xterm-viewport,
 .is-overview-preview .xterm-screen { background: var(--x-surface-2) !important }
-.is-overview-preview .xterm-viewport { overflow-y: hidden !important }
-.is-overview-preview { display:flex; flex-direction:column; justify-content:flex-end }
 
 /* Chat view inside an Overview tile: one tidy status line at any tile width.
    The tile is a size container, so the strip adapts to the tile, not the

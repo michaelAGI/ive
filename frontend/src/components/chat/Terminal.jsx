@@ -182,40 +182,42 @@ function lineStartsMessage(text, markerSet) {
   return false
 }
 
-// Minimum PTY dimensions. Claude Code's TUI needs ~80 columns — anything
-// narrower breaks its layout (input box clipped, wrapped borders). Instead of
-// shrinking the PTY to match a tiny grid cell, we hold the PTY at this floor
-// and let the wrapper scroll inside the cell, following the cursor.
-// Height is less critical: its input box plus status line need well under 16
-// rows. The former 24-row floor was taller than the visible area in overview
-// cells and in windows below ~760px, so the terminal always opened partially
-// scrolled away with its first rows cut off.
+// ── One fit rule: a terminal is exactly as big as the box it is shown in ──
+// The box is the board tile, the session drawer or the full view. Lines wrap
+// at the box edge like in any terminal window; nothing scrolls sideways.
+//   1. Columns and rows come from the box.
+//   2. The font stays at 13px. Only when the box gives fewer than 80 columns
+//      or 16 rows does the font shrink until 80×16 fit. Claude Code's TUI
+//      needs ~80 columns (narrower clips its input box and wraps its
+//      borders); its input box plus status line need well under 16 rows.
+//      Floor: 9px, 8px in tiles narrower than 360px or lower than 160px.
+//   3. Below that floor the terminal takes the columns and rows that fit, at
+//      least 20×6 as on the phone. It is never wider than its box.
+//   4. The PTY gets exactly that size through the `resize` message, 200ms
+//      after the box last changed, so xterm and the PTY always agree.
+//   5. A viewer (another client owns the PTY size) keeps the owner's
+//      cols×rows and scales the font down to its own box, floor 6px.
+// Consequence: switching Board ⇄ opened session resizes the PTY once per
+// switch, so the CLI redraws once, as when a terminal window is dragged to
+// another size.
+// This replaces the earlier decision "the Session level owns the PTY size".
+// Under it a board tile kept the cols×rows of the full view and only scaled
+// the font down, which left tiles wider than their box once the 9px floor
+// was reached: the right part of every line was cut off or had to be
+// scrolled to.
 const MIN_COLS = 80
 const MIN_ROWS = 16
 const BASE_FONT_SIZE = 13
-// ── Who owns the PTY size in the grid (Overview ⇄ Session) ──────────────
-// Decision: the Session level owns it. A PTY has exactly one size per window
-// layout: the size its terminal gets when shown full size at the Session
-// level (base font, fitted to the focused cell). Overview tiles never fit the
-// PTY to the tile; they keep that same cols×rows and scale the *font* down
-// toward the tile, but never below a readable floor (9px, 8px in very small
-// tiles). Larger output stays scrollable in both directions. The tile follows
-// the prompt until the reader scrolls back; no text is hidden behind a fade.
-// The per-tile status line and prompt box are hidden in the overview.
-// Switching Overview ⇄ Session therefore only changes the font size, which is
-// local to xterm.js, and never sends SIGWINCH sizes back and forth (Claude
-// Code redraws/garbles on every resize). The PTY only changes size when the
-// window (and with it the Session-level box) changes.
-// For a terminal that has not been shown at Session level yet (restored tabs,
-// sessions started in the overview) the Session-level size is estimated from
-// the grid container ([data-terminal-grid] in App.jsx) and the tile chrome;
-// the first real Session-level fit is remembered per grid size, so at most
-// one correction ever happens.
-const MIN_PREVIEW_FONT_SIZE = 9
-const MIN_PREVIEW_FONT_SIZE_TINY = 8 // tiles narrower than 360px or lower than 160px
-// Grid box ("WxH" of [data-terminal-grid]) → cols×rows a Session-level fit
-// produced. Shared so never-focused terminals reuse a real measurement.
-const sessionGeometryByBox = new Map()
+const MIN_FIT_FONT_SIZE = 9
+const MIN_FIT_FONT_SIZE_TINY = 8 // tiles narrower than 360px or lower than 160px
+const MIN_VIEWER_FONT_SIZE = 6
+// Smallest grid a terminal is ever given (rule 3 and the phone).
+const FLOOR_COLS = 20
+const FLOOR_ROWS = 6
+// How long a box must keep its size before the PTY is resized to it. Rapid
+// intermediate sizes (a window edge being dragged, a board still laying out
+// its columns) never reach the CLI, which redraws on every resize.
+const RESIZE_DEBOUNCE_MS = 200
 // Output flush interval for terminals that are visible but not focused.
 const BACKGROUND_WRITE_MS = 100
 // Phone (App.jsx passes `phone` below 768px): the terminal is the Session
@@ -223,14 +225,14 @@ const BACKGROUND_WRITE_MS = 100
 // the font the user picked (pinch or A− A+, remembered), not from the 80
 // column floor, so nothing scrolls sideways. Background sessions have no
 // terminal on the phone, so their PTYs are never resized from here.
-const PHONE_MIN_COLS = 20
-const PHONE_MIN_ROWS = 6
+const PHONE_MIN_COLS = FLOOR_COLS
+const PHONE_MIN_ROWS = FLOOR_ROWS
 const LONG_PRESS_MS = 550
 
 export default function TerminalView({ sessionId, inDrawer = false, slotMode, overviewPreview = false, phone = false }) {
   const containerRef = useRef(null)
-  const composerRef = useRef(null)
-  // Overview tile: show the Session-level PTY size scaled down (see above).
+  // Board tile: same fit rule as everywhere (see above), with the 8px font
+  // floor for tiny tiles and without the prompt box below the terminal.
   const overviewPreviewRef = useRef(overviewPreview)
   overviewPreviewRef.current = overviewPreview
   const phoneRef = useRef(phone)
@@ -241,7 +243,8 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
   const [phoneScrolledBack, setPhoneScrolledBack] = useState(false)
   const phoneLiveRef = useRef(null)
   const termRef = useRef(null)
-  // Applies an Overview ⇄ Session switch to this terminal (set up below).
+  // Applies a change of placement (tile, drawer, full view) to this
+  // terminal: fit to the new box, resize the PTY (set up below).
   const applyLevelRef = useRef(null)
   const [annotatingImage, setAnnotatingImage] = useState(null) // { url, index }
   const [showForceBar, setShowForceBar] = useState(false)
@@ -733,16 +736,26 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     })
 
     // ── Scroll architecture ──────────────────────────────────────────
-    // Problem: xterm.js owns .xterm-viewport (which has overflow-y:scroll)
-    // and resets its scrollTop to 0 for alt-screen mode on every render.
-    // So we CANNOT use xterm's viewport for scrolling small grid cells.
+    // The terminal is fitted to its scroll wrapper (el.parentElement), so
+    // scrollback is xterm's own viewport and the wrapper never scrolls
+    // sideways (overflow-x: hidden).
     //
-    // Solution: the scroll wrapper (el.parentElement) handles scrolling
-    // externally. We set el's min-width/min-height to match the rendered
-    // terminal (≥ MIN_COLS×MIN_ROWS). When the cell (wrapper) is smaller, it scrolls
-    // the entire .xterm element. xterm's viewport fills .xterm at full
-    // size (no internal overflow), so its scrollTop reset is harmless.
+    // Only the height can exceed the wrapper, in two cases: a viewer showing
+    // a taller PTY at the 6px font floor, and a box smaller than 20×6. xterm
+    // resets its viewport's scrollTop for the alternate screen on every
+    // render, so the wrapper then scrolls the whole .xterm element from
+    // outside: the host gets a min-height that matches the rendered screen.
     const wrapper = el.parentElement
+    // An overflow:hidden box is still moved by the browser (focus on xterm's
+    // input helper at a stale cursor position, a selection drag). Undo that:
+    // nothing may shift the terminal sideways.
+    const pinLeft = (e) => { if (!phoneRef.current && e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0 }
+    el.addEventListener('scroll', pinLeft, { passive: true })
+    wrapper?.addEventListener('scroll', pinLeft, { passive: true })
+    const removePinLeft = () => {
+      el.removeEventListener('scroll', pinLeft)
+      wrapper?.removeEventListener('scroll', pinLeft)
+    }
     let geometryRole = 'unknown'
     let phoneFont = readPhoneFont()
     // Phone remote: this terminal holds the PTY size (claim_geometry) only
@@ -759,36 +772,20 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     }
 
     // ── Sizing helpers ───────────────────────────────────────────────
-    // Sync the .xterm element's dimensions so the wrapper can scroll it.
-    // When autoFit is ON we skip this — the container stays at height:100%
-    // so the terminal never overflows the cell (background fills any
-    // fractional-row gap).
+    // Keep the host at least as high as the wrapper (so `height: 100%`
+    // holds) and as high as the rendered screen where that is taller, so the
+    // wrapper can scroll down to it. The host is never wider than the
+    // wrapper: its width is always the wrapper's.
     const syncElementSize = () => {
       const screen = el.querySelector('.xterm-screen')
       if (!screen || !wrapper) return
-
       const paddingTop = 4
       const paddingBottom = 4
-      const paddingLeft = 6
-      const paddingRight = 6
-
-      // Ensure we keep the wrapper's dimensions as a floor (so height: 100% behaves
-      // correctly), but expand if xterm's screen + paddings actually overflows it.
-      const minW = Math.max(wrapper.clientWidth, screen.offsetWidth + paddingLeft + paddingRight)
-      const minH = Math.max(wrapper.clientHeight, screen.offsetHeight + paddingTop + paddingBottom)
-
-      el.style.minWidth = minW + 'px'
-      el.style.minHeight = minH + 'px'
+      el.style.minWidth = ''
+      el.style.minHeight = Math.max(wrapper.clientHeight, screen.offsetHeight + paddingTop + paddingBottom) + 'px'
     }
 
-    // fit() with a floor: never let the PTY shrink below MIN_COLS x MIN_ROWS.
-    // We clear min-dims first so FitAddon measures the wrapper's real available
-    // space (not the previous terminal size), then clamp up to the floor.
-    //
-    // When the user enables `terminalAutoFit`, we additionally scale the font
-    // size DOWN so the PTY floor (MIN_COLS×MIN_ROWS) fits exactly in the cell — no clipping,
-    // no scrolling, just smaller text. We never scale up (cells bigger than
-    // 80×24 at base font just get more cols/rows naturally).
+    // Columns and rows the wrapper holds at the current font.
     // FitAddon measures the parent's computed `height`. Two problems with
     // that here: (1) with Tailwind's border-box sizing that height includes
     // this container's 4px+4px padding, which FitAddon never subtracts, so it
@@ -816,7 +813,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       return dims
     }
 
-    // ── Overview preview (Session level owns the PTY size, see top) ─────
+    // ── Fit helpers (one rule for tile, drawer and full view, see top) ──
     const readCell = () => {
       try { return term._core?._renderService?.dimensions?.css?.cell } catch { return null } // disposed
     }
@@ -836,121 +833,55 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     const viewportScrollbar = () => {
       try { return term.options.scrollback === 0 ? 0 : (term._core?.viewport?.scrollBarWidth || 0) } catch { return 0 }
     }
-    const gridBox = () => {
-      const grid = el.closest('[data-terminal-grid]')
-      if (!grid) return null
-      const r = grid.getBoundingClientRect()
-      if (r.width < 20 || r.height < 20) return null
-      return { key: `${Math.round(r.width)}x${Math.round(r.height)}`, w: r.width, h: r.height }
-    }
-    let ownerGeometry = null // { key, cols, rows } from this terminal's last Session-level fit
-    const rememberSessionGeometry = () => {
-      if (overviewPreviewRef.current || !el.closest('[data-terminal-grid]')) return
-      const box = gridBox()
-      if (!box || !(term.cols > 0) || !(term.rows > 0)) return
-      ownerGeometry = { key: box.key, cols: term.cols, rows: term.rows }
-      sessionGeometryByBox.set(box.key, { cols: term.cols, rows: term.rows })
-    }
-    // What a Session-level fit would produce: App.jsx shows the focused tile
-    // at `position:absolute; inset:4px` in the grid with a 2px border; the
-    // tile chrome (header, banners) is the same as in the overview. Mirrors
-    // FitAddon (width incl. scrollbar reserve) + proposeDimensions (rows).
-    const estimateSessionGeometry = (box, cell) => {
-      const tile = el.closest('[data-session-view], [data-grid-cell-session]')
-      if (!tile || !wrapper || !cell?.width || !cell?.height) return null
-      // The composer is hidden in the overview but shown at Session level:
-      // unhide it for this synchronous measurement (no paint in between).
-      const composer = composerRef.current
-      const composerHidden = composer && composer.style.display === 'none'
-      if (composerHidden) composer.style.display = ''
-      const chromeW = tile.clientWidth - wrapper.offsetWidth
-      const chromeH = tile.clientHeight - wrapper.offsetHeight
-      if (composerHidden) composer.style.display = 'none'
-      // Grid padding (2 x 4px) and the focused cell's border (2 x 1px, see
-      // App.jsx: constant width, focus adds a shadow ring only).
-      const wrapW = box.w - 8 - 2 - chromeW
-      const wrapH = box.h - 8 - 2 - chromeH
+    // Pixels the character grid may use, by the same measure as
+    // proposeDimensions: FitAddon's width (host width minus xterm's
+    // scrollbar reserve) and the wrapper's layout height minus the host's
+    // vertical padding.
+    const gridArea = () => {
       const cs = window.getComputedStyle(el)
       const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
       return {
-        cols: Math.max(MIN_COLS, Math.floor((Math.floor(wrapW) - viewportScrollbar()) / cell.width)),
-        rows: Math.max(MIN_ROWS, Math.floor((wrapH - padV + 0.5) / cell.height)),
+        w: Math.max(0, parseInt(cs.width) - viewportScrollbar()),
+        h: (wrapper ? wrapper.clientHeight : parseInt(cs.height)) - padV + 0.5,
       }
     }
-    // Largest font (≤ base, ≥ the readable floor) at which cols×rows fit the
-    // tile. Returns which edges are cropped at that font.
-    const scaleFontToTile = (cols, rows, baseCell) => {
-      if (!wrapper || !baseCell?.width) return { right: false, top: false }
-      const cs = window.getComputedStyle(el)
-      const padH = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
-      const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
-      const wr = wrapper.getBoundingClientRect()
-      // No scrollbar reserve: .is-overview-preview hides xterm's viewport
-      // scrollbar (index.css), the preview is not scrolled by the user.
-      const availW = wr.width - padH
-      const availH = wr.height - padV
-      const minSize = wr.width < 360 || wr.height < 160 ? MIN_PREVIEW_FONT_SIZE_TINY : MIN_PREVIEW_FONT_SIZE
-      const scale = Math.min(1, availW / (cols * baseCell.width), availH / (rows * baseCell.height))
-      let size = Math.max(minSize, Math.floor(BASE_FONT_SIZE * scale * 10) / 10)
+    // xterm's cell at the base font. Remembered per device pixel ratio, so
+    // fitting a terminal that shows a smaller font does not flip it to 13px
+    // and back.
+    let baseCell = null
+    const measureBaseCell = () => {
+      const dpr = window.devicePixelRatio
+      if (baseCell?.dpr === dpr && term.options.fontSize !== BASE_FONT_SIZE) return baseCell
+      setFontSize(BASE_FONT_SIZE)
+      const c = readCell()
+      if (!c?.width || !c?.height) return null // not rendered yet
+      baseCell = { dpr, width: c.width, height: c.height }
+      return baseCell
+    }
+    // Set the largest font from 13px down to `minSize` at which cols×rows fit
+    // the area. Glyph metrics round to device pixels, so the estimate is
+    // checked against xterm's real cell and stepped down. False: xterm has
+    // no cell metrics yet.
+    const fitFont = (cols, rows, area, minSize) => {
+      const base = measureBaseCell()
+      if (!base) return false
+      const fits = (cell) => cols * cell.width <= area.w && rows * cell.height <= area.h
+      let size = BASE_FONT_SIZE
+      if (!fits(base)) {
+        const scale = Math.min(area.w / (cols * base.width), area.h / (rows * base.height))
+        size = Math.max(minSize, Math.min(BASE_FONT_SIZE, Math.floor(BASE_FONT_SIZE * scale * 10) / 10))
+      }
       setFontSize(size)
-      // Glyph metrics round to device pixels, so verify and step down.
-      const fits = (cell) => cols * cell.width <= availW + 0.5 && rows * cell.height <= availH + 0.5
-      for (let i = 0; i < 12 && size > minSize; i++) {
+      for (let i = 0; i < 40 && size > minSize; i++) {
         const cell = readCell()
         if (!cell?.width || fits(cell)) break
         size = Math.max(minSize, Math.round((size - 0.2) * 10) / 10)
         setFontSize(size)
       }
-      const cell = readCell()
-      if (!cell?.width) return { right: false, top: false }
-      return { right: cols * cell.width > availW + 0.5, top: rows * cell.height > availH + 0.5 }
-    }
-    // Bottom-anchor the preview: the latest output and the prompt sit at the
-    // bottom of the screen, which is what people scan the overview for.
-    let previewFollowing = true
-    const anchorPreview = () => {
-      if (!wrapper || !previewFollowing) return
-      wrapper.scrollTop = wrapper.scrollHeight
-    }
-    // Re-fitting an unchanged tile must not temporarily restore the base font:
-    // WebKit can treat the resulting scroll-area shrink as a user scroll.
-    let previewLayout = null
-    const fitPreview = () => {
-      const box = gridBox()
-      const layoutKey = `${wrapper?.clientWidth}x${wrapper?.clientHeight}:${box?.key}:${geometryRole}:${term.cols}x${term.rows}:${window.devicePixelRatio}`
-      if (previewLayout?.key === layoutKey && previewLayout.font === term.options.fontSize) {
-        syncElementSize()
-        anchorPreview()
-        return true
-      }
-      el.classList.add('is-overview-preview')
-      setFontSize(BASE_FONT_SIZE)
-      const c = readCell()
-      const baseCell = c?.width && c?.height ? { width: c.width, height: c.height } : null
-      if (!baseCell) return false
-      if (geometryRole !== 'viewer') {
-        const target = box && ((ownerGeometry?.key === box.key && ownerGeometry)
-          || sessionGeometryByBox.get(box.key)
-          || estimateSessionGeometry(box, baseCell))
-        if (target && (term.cols !== target.cols || term.rows !== target.rows)) {
-          try { term.resize(target.cols, target.rows) } catch {}
-        }
-      }
-      scaleFontToTile(term.cols, term.rows, baseCell)
-      previewLayout = {
-        key: `${wrapper?.clientWidth}x${wrapper?.clientHeight}:${box?.key}:${geometryRole}:${term.cols}x${term.rows}:${window.devicePixelRatio}`,
-        font: term.options.fontSize,
-      }
-      el.style.minWidth = ''
-      el.style.minHeight = wrapper ? `${wrapper.clientHeight}px` : ''
-      requestAnimationFrame(() => {
-        syncElementSize()
-        anchorPreview()
-      })
       return true
     }
 
-    // A font size change (Overview ⇄ Session, auto-fit) must not cost the
+    // A font size change (Board ⇄ Session in a small box) must not cost the
     // live bottom. xterm re-syncs its scroll area a frame or two after the
     // change and the browser moves scrollTop in between; xterm reads that
     // as "the user scrolled up" and stops following the output. The tile,
@@ -983,26 +914,33 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     }
 
     let fitRetries = 0
+    // xterm has no cell metrics before its first paint, and none while an
+    // overlay or a view switch keeps the element unmeasurable. Try again, on
+    // the desktop through the resize debounce: the box may have a new size,
+    // which the PTY has to be told once the fit works.
+    const retryFit = () => {
+      if (fitRetries >= 10) return
+      fitRetries++
+      if (phoneRef.current) setTimeout(fitWithMinimum, 100)
+      else sendResize()
+    }
+    // Result of the last fit. A refit of an unchanged box must not touch the
+    // font: WebKit can read the resulting scroll-area change as a user scroll.
+    let lastFit = null
+    const boxKey = () => `${wrapper?.clientWidth}x${wrapper?.clientHeight}`
     const fitLayout = () => {
       if (wrapper && (wrapper.clientWidth < 20 || wrapper.clientHeight < 20)) return
-      if (overviewPreviewRef.current) {
-        if (fitPreview()) fitRetries = 0
-        else if (fitRetries < 10) { fitRetries++; setTimeout(fitWithMinimum, 100) }
-        return
-      }
-      previewLayout = null
-      el.classList.remove('is-overview-preview')
+      // Tiles only differ in the surface colour around the grid (index.css).
+      el.classList.toggle('is-overview-preview', overviewPreviewRef.current)
       // Phone: always fitted to the phone's width. While shown it claims the
       // PTY size (doResize), so it is never a viewer of the Mac's 80+ columns.
       if (phoneRef.current) {
+        lastFit = null
         el.style.minHeight = wrapper ? `${wrapper.clientHeight}px` : ''
         el.style.minWidth = ''
         setFontSize(phoneFont)
         const pd = proposeDimensions()
-        if (!pd || !pd.cols || !pd.rows) {
-          if (fitRetries < 10) { fitRetries++; setTimeout(fitWithMinimum, 100) }
-          return
-        }
+        if (!pd || !pd.cols || !pd.rows) { retryFit(); return }
         fitRetries = 0
         const cols = Math.max(PHONE_MIN_COLS, pd.cols)
         const rows = Math.max(PHONE_MIN_ROWS, pd.rows)
@@ -1012,81 +950,46 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         requestAnimationFrame(() => syncElementSize())
         return
       }
-      if (geometryRole === 'viewer') {
-        setFontSize(BASE_FONT_SIZE)
-        requestAnimationFrame(syncElementSize)
+      const viewer = geometryRole === 'viewer'
+      const tile = overviewPreviewRef.current
+      const key = `${boxKey()}:${window.devicePixelRatio}:${tile ? 'tile' : 'box'}:${viewer ? `viewer ${term.cols}x${term.rows}` : 'fit'}`
+      if (lastFit?.key === key && lastFit.font === term.options.fontSize && lastFit.cols === term.cols && lastFit.rows === term.rows) {
+        fitRetries = 0
+        syncElementSize()
         return
       }
-      const autoFit = useStore.getState().terminalAutoFit
-
-      // Clear stale min-dims so proposeDimensions reads the wrapper's actual size
-      // The host has auto height, so removing its minimum makes FitAddon
-      // measure the *old terminal screen*. Seed the available wrapper height
-      // instead; otherwise expanding a grid cell never adds terminal rows.
-      el.style.minHeight = wrapper ? `${wrapper.clientHeight}px` : ''
+      // The host must not carry an older, larger size while it is measured:
+      // its width is the wrapper's, its height is seeded with the wrapper's
+      // (with an auto height FitAddon would measure the old screen).
       el.style.minWidth = ''
-
-      // Always start from the base font size before measuring
-      if (term.options.fontSize !== BASE_FONT_SIZE) {
-        try { term.options.fontSize = BASE_FONT_SIZE } catch {}
-      }
-
-      let dims = proposeDimensions()
-      if (!dims || !dims.cols || !dims.rows) {
-        // Renderer hasn't computed cell metrics yet (element not painted).
-        // Retry up to 10 times — covers view-switch remounts and returning
-        // from overlays (MissionControl, etc.) where opacity transitions
-        // delay when the element becomes measurable.
-        if (fitRetries < 10) {
-          fitRetries++
-          setTimeout(fitWithMinimum, 100)
+      el.style.minHeight = wrapper ? `${wrapper.clientHeight}px` : ''
+      const area = gridArea()
+      if (viewer) {
+        // Rule 5: the owner's cols×rows, the font scaled down to this box.
+        if (!fitFont(term.cols, term.rows, area, MIN_VIEWER_FONT_SIZE)) { retryFit(); return }
+      } else {
+        // Rule 2: 13px, unless 80×16 need a smaller font to fit.
+        const tiny = tile && wrapper && (wrapper.clientWidth < 360 || wrapper.clientHeight < 160)
+        if (!fitFont(MIN_COLS, MIN_ROWS, area, tiny ? MIN_FIT_FONT_SIZE_TINY : MIN_FIT_FONT_SIZE)) { retryFit(); return }
+        // Rules 1 and 3: the columns and rows the box holds at that font.
+        // No clamp up to 80×16: that would push the terminal past its box.
+        const dims = proposeDimensions()
+        if (!dims || !dims.cols || !dims.rows) { retryFit(); return }
+        const cols = Math.max(FLOOR_COLS, dims.cols)
+        const rows = Math.max(FLOOR_ROWS, dims.rows)
+        if (term.cols !== cols || term.rows !== rows) {
+          try { term.resize(cols, rows) } catch {}
         }
-        return
       }
       fitRetries = 0
-
-      if (autoFit) {
-        // Auto-fit: if cell is too small for the floor at base font, shrink the
-        // font proportionally. We pick the more constraining axis so both
-        // dimensions fit. When the cell is already big enough, no scaling
-        // occurs — proposeDimensions naturally gives us ≥ the floor.
-        if (dims.cols < MIN_COLS || dims.rows < MIN_ROWS) {
-          const scaleW = dims.cols / MIN_COLS
-          const scaleH = dims.rows / MIN_ROWS
-          const scale = Math.min(scaleW, scaleH)
-          const newSize = Math.max(6, Math.floor(BASE_FONT_SIZE * scale * 10) / 10)
-          if (newSize !== term.options.fontSize) {
-            try { term.options.fontSize = newSize } catch {}
-            const dims2 = proposeDimensions()
-            if (dims2 && dims2.cols && dims2.rows) dims = dims2
-          }
-        }
-        // Use proposed dims directly (already ≥ MIN after scaling).
-        // DON'T clamp with Math.max — that could push the terminal larger
-        // than the cell and cause overflow, defeating auto-fit.
-        const cols = Math.max(MIN_COLS, dims.cols)
-        const rows = dims.rows < MIN_ROWS ? MIN_ROWS : dims.rows
-        if (term.cols !== cols || term.rows !== rows) {
-          try { term.resize(cols, rows) } catch {}
-        }
-      } else {
-        // Standard mode: maintain the MIN_COLS×MIN_ROWS floor, overflow + scroll if needed.
-        const cols = Math.max(MIN_COLS, dims.cols)
-        const rows = Math.max(MIN_ROWS, dims.rows)
-        if (term.cols !== cols || term.rows !== rows) {
-          try { term.resize(cols, rows) } catch {}
-        }
-      }
-
-      rememberSessionGeometry()
-      // Always synchronize element dimensions, keeping container padded and scrollable.
+      lastFit = { key, box: boxKey(), font: term.options.fontSize, cols: term.cols, rows: term.rows }
       requestAnimationFrame(() => syncElementSize())
     }
 
-    // Scroll the external wrapper so the cursor row is visible.
+    // Scroll the external wrapper so the cursor row is visible (only where
+    // the screen is taller than the wrapper, see "Scroll architecture").
     const ensureCursorVisible = () => {
       if (!wrapper) return
-      if (el.classList.contains('is-overview-preview')) { anchorPreview(); return }
       if (wrapper.scrollHeight <= wrapper.clientHeight + 2) return
       const screen = el.querySelector('.xterm-screen')
       if (!screen) return
@@ -1106,39 +1009,22 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       }
     }
 
-    // Wheel passthrough: when the wrapper overflows (min-size mode), capture
-    // wheel before xterm's mouse-tracking mode swallows it, and scroll the
-    // wrapper. When there is no overflow, fall through so xterm handles
-    // wheel normally (scrollback in tabs view, etc.).
+    // Wheel: xterm scrolls its own scrollback, in a tile as anywhere else.
+    // Only where the screen is taller than the wrapper is the wheel taken
+    // before xterm's mouse-tracking mode swallows it, to scroll the wrapper.
+    // The wrapper never scrolls sideways.
     const wheelHandler = (e) => {
       if (!wrapper) return
-      const preview = el.classList.contains('is-overview-preview')
-      const horizontal = e.deltaX || (e.shiftKey ? e.deltaY : 0)
-      if (horizontal && wrapper.scrollWidth > wrapper.clientWidth + 2) {
-        e.preventDefault()
-        e.stopPropagation()
-        wrapper.scrollLeft += horizontal
-        return
-      }
-      if (preview && e.deltaY < 0) previewFollowing = false
       // No overflow — let xterm handle (scrollback, etc.)
-      if (wrapper.scrollHeight <= wrapper.clientHeight + 2 &&
-          wrapper.scrollWidth <= wrapper.clientWidth + 2) return
+      if (wrapper.scrollHeight <= wrapper.clientHeight + 2) return
       // At scroll boundaries, let xterm handle for scrollback navigation
       if (e.deltaY < 0 && wrapper.scrollTop <= 0) return
       if (e.deltaY > 0 && wrapper.scrollTop >= wrapper.scrollHeight - wrapper.clientHeight - 2) return
       e.preventDefault()
       e.stopPropagation()
       wrapper.scrollTop += e.deltaY
-      if (preview) previewFollowing = wrapper.scrollTop >= wrapper.scrollHeight - wrapper.clientHeight - 2
     }
     el.addEventListener('wheel', wheelHandler, { passive: false, capture: true })
-    const previewScrollHandler = () => {
-      if (wrapper && el.classList.contains('is-overview-preview')) {
-        previewFollowing = wrapper.scrollTop >= wrapper.scrollHeight - wrapper.clientHeight - 2
-      }
-    }
-    wrapper?.addEventListener('scroll', previewScrollHandler, { passive: true })
 
     // Image paste capture: xterm.js calls stopPropagation + preventDefault on
     // paste events before they reach the React onPaste handler. We intercept
@@ -1336,7 +1222,8 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         releasePhoneGeometry()
         return
       }
-      if (geometryRole !== 'viewer' || overviewPreviewRef.current || phoneRef.current) fitWithMinimum()
+      // Owner: fit to the box. Viewer: fit the font to the owner's size.
+      fitWithMinimum()
       const ws = useStore.getState().ws
       if (phoneRef.current) {
         // Phone Session level: claim the PTY at the phone's size, even from a
@@ -1386,7 +1273,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     let resizeTimer = null
     const sendResize = () => {
       if (resizeTimer) clearTimeout(resizeTimer)
-      resizeTimer = setTimeout(doResize, 200)
+      resizeTimer = setTimeout(doResize, RESIZE_DEBOUNCE_MS)
     }
 
     // Every layout/focus source shares the same debounce.
@@ -1557,6 +1444,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     // Restore geometry and scroll together before exposing that rendered frame.
     let revealPending = false
     let revealFrame = null
+    let revealSkips = 0
     const settleRevealedViewport = () => {
       syncElementSize()
       syncViewport()
@@ -1566,20 +1454,56 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       if (!revealPending || revealFrame !== null) return
       revealFrame = requestAnimationFrame(() => {
         revealFrame = null
+        // The box moved after this frame was fitted (see settlePlacement):
+        // fit again and show the next rendered frame instead of this one.
+        if (lastFit && lastFit.box !== boxKey() && isShown(wrapper) && revealSkips < 8) {
+          revealSkips++
+          fitWithMinimum()
+          forceRefresh()
+          return
+        }
         settleRevealedViewport()
         revealPending = false
         el.style.opacity = ''
       })
     })
+    // A new placement (tile, drawer, full view) is fitted at once, so its
+    // first shown frame has the right size. Its box can still move for a
+    // moment: the board lays out its columns only after it has measured
+    // itself. Until the box rests, every frame follows it, and the PTY is
+    // told the size only then, after the usual debounce: one resize per
+    // placement, never a passing size (the CLI would redraw twice).
+    let placementFrame = null
+    const cancelPlacement = () => {
+      if (placementFrame !== null) cancelAnimationFrame(placementFrame)
+      placementFrame = null
+    }
+    const settlePlacement = () => {
+      cancelPlacement()
+      const started = performance.now()
+      let box = boxKey()
+      let since = started
+      const tick = (now) => {
+        placementFrame = null
+        if (!isShown(wrapper)) return // parked again: nothing to size
+        const current = boxKey()
+        if (current !== box) { box = current; since = now; fitWithMinimum() }
+        if (now - since >= RESIZE_DEBOUNCE_MS || now - started >= 2000) { doResize(); return }
+        placementFrame = requestAnimationFrame(tick)
+      }
+      placementFrame = requestAnimationFrame(tick)
+    }
     applyLevelRef.current = () => {
       if (!isShown(wrapper)) return
       if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null }
       if (revealFrame !== null) cancelAnimationFrame(revealFrame)
       revealFrame = null
       revealPending = true
+      revealSkips = 0
       el.style.opacity = '0'
-      doResize()
-      if (overviewPreviewRef.current) keepLiveBottom()
+      // The phone has one placement and claims the PTY size as before.
+      if (phoneRef.current) doResize()
+      else { fitWithMinimum(); settlePlacement() }
       settleRevealedViewport()
       forceRefresh()
     }
@@ -1587,10 +1511,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     const observer = new ResizeObserver(() => {
       // The slot can finish laying out after the portal commit. Keep the
       // wrapper aligned before paint, while PTY resizes remain debounced.
-      if (isShown(wrapper)) {
-        syncElementSize()
-        if (overviewPreviewRef.current) anchorPreview()
-      }
+      if (isShown(wrapper)) syncElementSize()
       sendResize()
     })
     // Observe the element itself (not the wrapper) so the observer fires
@@ -1763,12 +1684,16 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         try { term.resize(cols, rows) } catch {}
       }
       requestAnimationFrame(() => {
-        if (overviewPreviewRef.current) {
+        if (!phoneRef.current) {
+          // Viewer: the font follows the owner's size. Owner: the box decides.
+          // The PTY has another size when the backend started it (never
+          // below 80x24) or when the box changed while this reply was under
+          // way. Say so at once: a CLI that is still starting then draws its
+          // first frame for the size on screen. xterm and the PTY must never
+          // differ in size: a TUI positions its cursor for the PTY size and
+          // garbles otherwise. (A placement that is settling sends its own.)
           fitWithMinimum()
-          // The preview may pick a different Session-level size (the grid
-          // box changed). xterm and the PTY must never differ in size: a TUI
-          // positions its cursor for the PTY size and garbles otherwise.
-          if (geometryRole === 'owner' && (term.cols !== cols || term.rows !== rows)) sendResize()
+          if (geometryRole === 'owner' && (term.cols !== cols || term.rows !== rows) && placementFrame === null) doResize()
         }
         syncElementSize()
         forceRefresh()
@@ -1827,6 +1752,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         clearInterval(safetyNetTimer)
         revealDisp.dispose()
         if (revealFrame !== null) cancelAnimationFrame(revealFrame)
+        cancelPlacement()
         unsubscribeTheme()
         termRef.current = null
         terminalWriters.delete(sessionId)
@@ -1841,7 +1767,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         window.removeEventListener('focus', windowFocusListener)
         removeTerminalProtocolListeners()
         el.removeEventListener('wheel', wheelHandler, { capture: true })
-        wrapper?.removeEventListener('scroll', previewScrollHandler)
+        removePinLeft()
         el.removeEventListener('paste', pasteHandler, { capture: true })
         el.removeEventListener('contextmenu', contextMenuHandler, { capture: true })
         removePhoneGestures()
@@ -1907,6 +1833,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         clearInterval(safetyNetTimer)
         revealDisp.dispose()
         if (revealFrame !== null) cancelAnimationFrame(revealFrame)
+        cancelPlacement()
         unsubscribeTheme()
         termRef.current = null
         terminalWriters.delete(sessionId)
@@ -1921,7 +1848,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         window.removeEventListener('focus', windowFocusListener)
         removeTerminalProtocolListeners()
         el.removeEventListener('wheel', wheelHandler, { capture: true })
-        wrapper?.removeEventListener('scroll', previewScrollHandler)
+        removePinLeft()
         el.removeEventListener('paste', pasteHandler, { capture: true })
         el.removeEventListener('contextmenu', contextMenuHandler, { capture: true })
         removePhoneGestures()
@@ -1949,6 +1876,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       clearInterval(safetyNetTimer)
       revealDisp.dispose()
       if (revealFrame !== null) cancelAnimationFrame(revealFrame)
+      cancelPlacement()
       unsubscribeTheme()
       termRef.current = null
       terminalWriters.delete(sessionId)
@@ -1962,7 +1890,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       window.removeEventListener('focus', windowFocusListener)
       removeTerminalProtocolListeners()
       el.removeEventListener('wheel', wheelHandler, { capture: true })
-        wrapper?.removeEventListener('scroll', previewScrollHandler)
+      removePinLeft()
       el.removeEventListener('paste', pasteHandler, { capture: true })
       el.removeEventListener('contextmenu', contextMenuHandler, { capture: true })
       removePhoneGestures()
@@ -2125,10 +2053,11 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       {inDrawer && !isReadOnly && !isShell && <div className="px-3 py-1 border-b border-x-line text-[11px]">
         <PermissionModePicker sessionId={sessionId} testId="terminal-perms" />
       </div>}
-      {/* Scroll wrapper — xterm's internal viewport resets scrollTop for
-          alt-screen, so we scroll the entire .xterm element from OUTSIDE. */}
+      {/* Scroll wrapper. The terminal is fitted to it and never scrolls
+          sideways; where the screen is taller than the box (viewer, tiny
+          box) the wrapper scrolls the entire .xterm element from OUTSIDE. */}
       <div className="flex-1 flex flex-col relative" style={{ minHeight: 0 }}>
-        <div className={`flex-1 bg-x-surface-2${phone ? ' ive-phone-terminal' : ''}`} data-phone-terminal={phone ? sessionId : undefined} data-terminal-session={sessionId} style={{ overflow: 'auto', minHeight: 0, minWidth: 0 }}>
+        <div className={`flex-1 bg-x-surface-2${phone ? ' ive-phone-terminal' : ''}`} data-phone-terminal={phone ? sessionId : undefined} data-terminal-session={sessionId} style={{ overflowX: 'hidden', overflowY: 'auto', minHeight: 0, minWidth: 0 }}>
           {/* Clip xterm's off-screen input helper to the sized host. Its stale
               cursor position must not enlarge the wrapper's scroll range. */}
           <div
@@ -2235,7 +2164,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       {/* Hidden (not unmounted) in overview tiles: the tile header shows
           name + status, the session view has the full composer. */}
       {!inDrawer && (
-        <div ref={composerRef} data-terminal-composer="" style={overviewPreview ? { display: 'none' } : undefined} className="border-t border-x-line bg-x-surface px-3 py-2 flex flex-col gap-2 shrink-0 select-none">
+        <div data-terminal-composer="" style={overviewPreview ? { display: 'none' } : undefined} className="border-t border-x-line bg-x-surface px-3 py-2 flex flex-col gap-2 shrink-0 select-none">
           {isReadOnly && (
             <div className="flex items-center gap-2 rounded-md border border-x-line bg-x-surface-2 px-2.5 py-1.5 text-[11px] text-x-accent">
               <MessageSquareQuote size={11} className="text-x-accent shrink-0" />

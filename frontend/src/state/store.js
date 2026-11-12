@@ -291,15 +291,6 @@ const useStore = create((set, get) => ({
     localStorage.setItem('cc-gridMinRowHeight', String(px))
     set({ gridMinRowHeight: px })
   },
-  // When true, terminal font size is scaled down so the PTY size floor fits
-  // exactly inside the cell (no horizontal scrolling, no clipped output).
-  terminalAutoFit: localStorage.getItem('cc-terminalAutoFit') === '1',
-  setTerminalAutoFit: (enabled) => {
-    localStorage.setItem('cc-terminalAutoFit', enabled ? '1' : '0')
-    set({ terminalAutoFit: enabled })
-    // Tell all mounted terminals to re-measure
-    window.dispatchEvent(new Event('cc-terminal-refit'))
-  },
   // Dev's board starts with terminals; an explicit previous tile preference
   // remains authoritative. Chat mode has its own focused conversation view.
   terminalBoardMode: localStorage.getItem('cc-terminalBoardMode') !== '0',
