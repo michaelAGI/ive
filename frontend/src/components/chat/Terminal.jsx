@@ -24,6 +24,7 @@ import TerminalFindBar from '../find/TerminalFindBar'
 import { applyStickyCtrl, clampPhoneFont, readPhoneFont, writePhoneFont } from '../../lib/phoneKeys'
 import { isShown, mayTakeKeyboard } from '../../lib/sessionInputFocus'
 import { canRestoreTerminalFocus } from '../../lib/gridFocus'
+import { imagesFromPaste, pastedImages, PASTE_IMAGE_FAILED } from '../../lib/clipboardImages'
 
 // GPU rendering for terminals. Browsers cap live WebGL contexts (about 16 in
 // Chromium/WebKit), so only the first few terminals get one; the rest and any
@@ -1031,42 +1032,50 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     // in capture phase (fires before xterm's bubble-phase handler) so image
     // pastes are uploaded and shown in the preview strip. Text pastes fall
     // through to xterm's normal clipboard handling.
-    const pasteHandler = async (e) => {
-      const items = e.clipboardData?.items
-      if (!items) return
-      for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault()
-          e.stopPropagation()
-          const blob = item.getAsFile()
-          if (!blob) return
-          try {
-            const formData = new FormData()
-            formData.append('file', blob, `paste.${item.type.split('/')[1]}`)
-            const res = await fetch('/api/paste-image', { method: 'POST', body: formData })
-            const data = await res.json()
-            setPastedImages((prev) => [...prev, {
-              url: data.url,
-              path: data.path,
-              filename: data.filename,
-              previewUrl: URL.createObjectURL(blob),
-            }])
-            // Type the file path into terminal so Claude can reference it
-            const targetId = getWritableSessionId()
-            const ws = useStore.getState().ws
-            if (targetId && ws?.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify({ action: 'input', session_id: targetId, data: data.path + ' ' }))
-            } else if (!targetId) {
-              notifyNoWritableTarget()
-            }
-          } catch (err) {
-            console.error('Paste upload failed:', err)
-            useStore.getState().addNotification?.({ type: 'error', message: 'Image paste failed' })
-          }
-          return
+    const uploadPastedImage = async (blob) => {
+      try {
+        const formData = new FormData()
+        formData.append('file', blob, `paste.${(blob.type || 'image/png').split('/')[1] || 'png'}`)
+        const res = await fetch('/api/paste-image', { method: 'POST', body: formData })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        setPastedImages((prev) => [...prev, {
+          url: data.url,
+          path: data.path,
+          filename: data.filename,
+          previewUrl: URL.createObjectURL(blob),
+        }])
+        // Type the file path into terminal so Claude can reference it
+        const targetId = getWritableSessionId()
+        const ws = useStore.getState().ws
+        if (targetId && ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ action: 'input', session_id: targetId, data: data.path + ' ' }))
+        } else if (!targetId) {
+          notifyNoWritableTarget()
         }
+      } catch (err) {
+        console.error('Paste upload failed:', err)
+        useStore.getState().addNotification?.({ type: 'error', message: 'Image paste failed' })
       }
-      // No image found — let xterm handle it (text paste)
+    }
+    // An image on the clipboard is uploaded and its path typed in; text goes
+    // to xterm untouched. When an image was announced but never arrived (the
+    // desktop app showed that), say so instead of doing nothing
+    // (lib/clipboardImages.js).
+    const pasteHandler = async (e) => {
+      const pasted = imagesFromPaste(e)
+      if (!pasted.offered && !pasted.empty) return // text: xterm's own paste
+      if (pasted.offered) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+      const files = await pastedImages(e)
+      if (!files) return
+      if (!files.length) {
+        useStore.getState().addNotification?.({ type: 'error', sessionId, message: PASTE_IMAGE_FAILED })
+        return
+      }
+      for (const file of files) await uploadPastedImage(file)
     }
     el.addEventListener('paste', pasteHandler, { capture: true })
 
