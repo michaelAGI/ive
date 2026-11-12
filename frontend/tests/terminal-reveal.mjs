@@ -1,6 +1,11 @@
 // Frame-level regression for parked/drawer/full/grid terminal transitions.
 // Uses an isolated Vite server and fake PTY; never touches real sessions.
 // Run with IVE_QA_BROWSER=webkit to cover the macOS WebView engine.
+//
+// Every placement gets the size of its own box (the fit rule at the top of
+// src/components/chat/Terminal.jsx): the first frame that is shown already
+// has it, and the PTY is resized to it. A viewer of another client's PTY
+// keeps that size and scales its font; nothing scrolls sideways.
 import { mkdtemp, rm, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -46,6 +51,8 @@ async function setup() {
     localStorage.setItem('cc-pwa-install-dismissed-v1', '1')
     localStorage.setItem('ive_client_name', 'KeepAlive QA')
     localStorage.setItem('cc-soundEnabled', '0')
+    // The board with terminal tiles only exists in the Dev experience.
+    localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev' }))
     // Tiles show terminals, so the board really places a terminal slot.
     localStorage.setItem('cc-terminalBoardMode', '1')
     localStorage.setItem('ive.overview-mode', 'grid')
@@ -121,7 +128,7 @@ async function sampleSwitch(page, action) {
         const viewport = wrapper?.querySelector('.xterm-viewport')
         if (wrapper && getComputedStyle(wrapper.firstElementChild).opacity !== '0') {
           const r = wrapper.getBoundingClientRect(), s = screen.getBoundingClientRect()
-          samples.push({ ms: Math.round(performance.now() - started), h: r.height, screenH: s.height, hostH: wrapper.firstElementChild.getBoundingClientRect().height, minH: wrapper.firstElementChild.style.minHeight, wrapScrollH: wrapper.scrollHeight, xtermH: wrapper.querySelector('.xterm').offsetHeight, offset: s.top - r.top, scrollTop: wrapper.scrollTop,
+          samples.push({ ms: Math.round(performance.now() - started), w: r.width, screenW: s.width, h: r.height, screenH: s.height, hostH: wrapper.firstElementChild.getBoundingClientRect().height, minH: wrapper.firstElementChild.style.minHeight, wrapScrollH: wrapper.scrollHeight, xtermH: wrapper.querySelector('.xterm').offsetHeight, offset: s.top - r.top, scrollTop: wrapper.scrollTop,
             viewportTop: viewport.scrollTop, ...terminalControls.get('s0').getViewport(), ...terminalControls.get('s0').getSize(),
             rootScroll: document.scrollingElement.scrollTop, font: terminalControls.get('s0').getFontSize() })
         }
@@ -156,6 +163,15 @@ try {
     check(`${name}: geometry is stable from first visible frame`, samples.length > 0 && samples.every(s =>
       Math.abs(s.offset - last.offset) <= 1 && Math.abs(s.h - last.h) <= 1 &&
       s.screenH === last.screenH && s.cols === last.cols && s.rows === last.rows && s.font === last.font))
+    // Fitted to the box it is shown in: nothing cut off on the right or at
+    // the bottom, less than one more row and three more columns would fit.
+    check(`${name}: the first shown frame has the size of its box`, samples.length > 0 && [samples[0], last].every(s =>
+      s.screenW <= s.w && s.screenH + 8 <= s.h + 1 && s.h - 8 - s.screenH < s.screenH / s.rows + 1 && s.w - s.screenW < 3 * s.screenW / s.cols + 12),
+    `${samples[0]?.cols}x${samples[0]?.rows} at ${samples[0]?.font}px, grid ${Math.round(samples[0]?.screenW)}x${Math.round(samples[0]?.screenH)}px in ${Math.round(samples[0]?.w)}x${Math.round(samples[0]?.h)}px`)
+    {
+      const sent = pty.filter(m => m.id === 's0').at(-1)
+      check(`${name}: the PTY is resized to that size`, !!sent && sent.cols === last?.cols && sent.rows === last?.rows, `PTY ${sent?.cols}x${sent?.rows}, xterm ${last?.cols}x${last?.rows}`)
+    }
     check(`${name}: live output stays at the bottom`, samples.length > 0 && samples.every(s => s.viewportY === s.baseY))
     check(`${name}: native viewport matches the buffer`, samples.length > 0 && samples.every(s => Math.abs(s.viewportTop - s.viewportY * s.screenH / s.rows) <= 1))
     check(`${name}: input helper cannot add blank scroll space`, samples.length > 0 && samples.every(s => s.wrapScrollH <= Math.max(s.h, s.screenH + 8) + 1))
@@ -176,33 +192,71 @@ try {
   check('history: reopening preserves every frame', reopened.length > 0 && reopened.every(s => s.viewportY === history.viewportY))
   check('history: scrollbar restored before reveal', reopened.every(s => Math.abs(s.viewportTop - history.viewportY * s.screenH / s.rows) <= 1))
   check('reopening gives keyboard focus to the terminal', await page.locator('[data-terminal-slot="s0"] .xterm-helper-textarea').evaluate(e => e === document.activeElement))
-  // A preview of a wider/taller remote terminal must expose the full screen.
+  // A viewer (another client owns the PTY size) keeps the owner's cols×rows
+  // and scales its font down to the tile; nothing scrolls sideways.
   await sampleSwitch(page, s => s.getState().goBoard())
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cc-terminal-geometry', {
-    detail: { session_id: 's0', authoritative: false, cols: 300, rows: 100 },
-  })))
-  await page.waitForTimeout(300)
-  write(frame(300, 100, Array.from({ length: 100 }, (_, i) =>
-    `Message row ${i + 1}: ` + 'Full terminal output remains readable. '.repeat(7) + ' RIGHT EDGE')))
-  await page.waitForTimeout(300)
-  const reading = await page.evaluate(() => {
-    const wrapper = document.querySelector('[data-terminal-slot="s0"] .xterm').parentElement.parentElement
+  const boardSize = await page.evaluate(async () => (await import('/src/lib/terminalWriters.js')).terminalControls.get('s0').getSize())
+  const viewerFrom = pty.length
+  const asViewer = async (cols, rows) => {
+    await page.evaluate(({ cols, rows }) => window.dispatchEvent(new CustomEvent('cc-terminal-geometry', {
+      detail: { session_id: 's0', authoritative: false, cols, rows },
+    })), { cols, rows })
+    await page.waitForTimeout(300)
+    write(frame(cols, rows, Array.from({ length: rows }, (_, i) =>
+      `Message row ${i + 1}: ` + 'Full terminal output remains readable. '.repeat(7) + ' RIGHT EDGE')))
+    await page.waitForTimeout(300)
+  }
+  const viewerState = () => page.evaluate(async () => {
+    const { terminalControls } = await import('/src/lib/terminalWriters.js')
+    const host = document.querySelector('[data-terminal-slot="s0"] .xterm').parentElement
+    const wrapper = host.parentElement
     const screen = wrapper.querySelector('.xterm-screen')
-    const wider = wrapper.scrollWidth > wrapper.clientWidth + 20
-    screen.dispatchEvent(new WheelEvent('wheel', { deltaX: 20000, bubbles: true, cancelable: true }))
-    const right = wrapper.scrollLeft
-    screen.dispatchEvent(new WheelEvent('wheel', { deltaY: -20000, bubbles: true, cancelable: true }))
-    return { wider, right, top: wrapper.scrollTop, overflow: getComputedStyle(wrapper).overflowX,
+    const wr = wrapper.getBoundingClientRect(), sr = screen.getBoundingClientRect()
+    const c = terminalControls.get('s0')
+    return { ...c.getSize(), font: c.getFontSize(), overflowX: getComputedStyle(wrapper).overflowX,
+      scrollW: wrapper.scrollWidth, clientW: wrapper.clientWidth, scrollLeft: wrapper.scrollLeft + host.scrollLeft,
+      insideRight: sr.right <= wr.right + 0.5, insideBottom: sr.bottom <= wr.bottom + 1,
+      taller: wrapper.scrollHeight > wrapper.clientHeight + 20, top: wrapper.scrollTop,
       fade: !!document.querySelector('.ive-preview-fade-right') }
   })
-  check('wide preview: overflowing content is scrollable', reading.wider && reading.overflow === 'auto')
-  check('wide preview: right edge can be reached', reading.right > 20)
-  check('tall preview: early rows can be reached', reading.top === 0)
-  check('wide preview: text is not covered by a fade', !reading.fade)
+  await asViewer(120, 40)
+  const fitsScaled = await viewerState()
+  check('viewer of 120x40: keeps the owner\'s cols x rows', fitsScaled.cols === 120 && fitsScaled.rows === 40, `${fitsScaled.cols}x${fitsScaled.rows}`)
+  check('viewer of 120x40: font scaled down until the whole screen is inside the tile', fitsScaled.font < 13 && fitsScaled.font >= 6 && fitsScaled.insideRight && fitsScaled.insideBottom && !fitsScaled.taller, `font ${fitsScaled.font}px`)
+  check('viewer of 120x40: no horizontal overflow', fitsScaled.overflowX === 'hidden' && fitsScaled.scrollW <= fitsScaled.clientW && fitsScaled.scrollLeft === 0, `${fitsScaled.scrollW}/${fitsScaled.clientW}px`)
+  await page.screenshot({ path: join(artifacts, 'viewer-120x40.png') })
+  // 300x100 would need less than the 6px floor: the font stops there.
+  await asViewer(300, 100)
+  const atFloor = await viewerState()
+  check('viewer of 300x100: keeps the owner\'s cols x rows at the 6px floor', atFloor.cols === 300 && atFloor.rows === 100 && atFloor.font === 6, `${atFloor.cols}x${atFloor.rows} at ${atFloor.font}px`)
+  check('viewer of 300x100: no horizontal overflow', atFloor.overflowX === 'hidden' && atFloor.scrollW <= atFloor.clientW && atFloor.scrollLeft === 0, `${atFloor.scrollW}/${atFloor.clientW}px, overflow-x ${atFloor.overflowX}`)
+  const reading = await page.evaluate(() => {
+    const host = document.querySelector('[data-terminal-slot="s0"] .xterm').parentElement
+    const wrapper = host.parentElement
+    const screen = wrapper.querySelector('.xterm-screen')
+    screen.dispatchEvent(new WheelEvent('wheel', { deltaX: 20000, bubbles: true, cancelable: true }))
+    wrapper.scrollLeft = 500
+    host.scrollLeft = 500
+    const wheelLeft = wrapper.scrollLeft + host.scrollLeft
+    screen.dispatchEvent(new WheelEvent('wheel', { deltaY: -20000, bubbles: true, cancelable: true }))
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() =>
+      resolve({ wheelLeft, left: wrapper.scrollLeft + host.scrollLeft, top: wrapper.scrollTop }))))
+  })
+  check('viewer of 300x100: a sideways wheel or scroll moves nothing', reading.left === 0, `scrollLeft ${reading.left}`)
+  check('viewer of 300x100: the taller screen scrolls, early rows can be reached', atFloor.taller && reading.top === 0, `scrollTop ${reading.top}`)
+  check('viewer: text is not covered by a fade', !atFloor.fade)
   await page.waitForTimeout(1100)
   const preserved = await page.locator('[data-terminal-slot="s0"] .xterm').locator('..').locator('..').evaluate(e => ({ left: e.scrollLeft, top: e.scrollTop }))
-  check('preview reading: refresh does not reset either scroll position', preserved.left === reading.right && preserved.top === reading.top)
-  await page.screenshot({ path: join(artifacts, 'terminal-full-width.png') })
+  check('viewer reading: refresh does not reset the scroll position', preserved.left === 0 && preserved.top === reading.top)
+  await page.screenshot({ path: join(artifacts, 'viewer-300x100.png') })
+  check('viewer: sends no resize of its own', pty.slice(viewerFrom).every(m => m.id !== 's0'), pty.slice(viewerFrom).filter(m => m.id === 's0').map(m => `${m.action} ${m.cols}x${m.rows}`).join(' '))
+  // The owner let go: this client fits the terminal to its own tile again.
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cc-terminal-geometry-available', { detail: { session_id: 's0' } })))
+  await page.waitForTimeout(700)
+  const owner = await viewerState()
+  const taken = pty.filter(m => m.id === 's0').at(-1)
+  check('size released: back to the size of the tile at the base font', owner.cols === boardSize.cols && owner.rows === boardSize.rows && owner.font === 13 && owner.insideRight && owner.insideBottom, `${owner.cols}x${owner.rows} at ${owner.font}px, tile ${boardSize.cols}x${boardSize.rows}`)
+  check('size released: the PTY is resized to it', taken?.action === 'resize' && taken.cols === owner.cols && taken.rows === owner.rows, `${taken?.action} ${taken?.cols}x${taken?.rows}`)
   check('no duplicate PTY starts', pty.filter(m => m.action === 'start_pty' && m.id === 's0').length === 1)
   check('no page errors', errors.length === 0, errors.join(' | '))
   await page.screenshot({ path: join(artifacts, 'terminal-history.png') })

@@ -5,8 +5,13 @@
 // Checks
 //   1. Opening a session and toggling the drawer 3× sends start_pty once and
 //      changes the PTY size at most once.
-//   2. Board ⇄ Session 5× (drawer closed): no second start_pty, the PTY size
-//      changes at most once, the scrollback written before survives.
+//   2. Board ⇄ Session 5× (drawer closed): no second start_pty; the PTY is
+//      resized to the tile once and keeps that size while the opened session
+//      shows no terminal. The scrollback written before survives.
+//      Board ⇄ Session 3× with the drawer open: every terminal has the size
+//      of the box it is shown in (Terminal.jsx), so the PTY is resized once
+//      per switch and only ever gets the two sizes (drawer, tile). The tile
+//      that is not opened keeps its size.
 //   3. The same session never has two terminal nodes; the portal node keeps
 //      its identity across the moves; a closed tab releases it.
 //
@@ -55,6 +60,8 @@ async function setup() {
     localStorage.setItem('cc-pwa-install-dismissed-v1', '1')
     localStorage.setItem('ive_client_name', 'KeepAlive QA')
     localStorage.setItem('cc-soundEnabled', '0')
+    // The board with terminal tiles only exists in the Dev experience.
+    localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev' }))
     // Tiles show terminals, so the board really places a terminal slot.
     localStorage.setItem('cc-terminalBoardMode', '1')
     localStorage.setItem('ive.overview-mode', 'grid')
@@ -123,6 +130,12 @@ const sizeChanges = (pty, id, from = 0) => {
   }
   return changes
 }
+const sizesSince = (pty, id, from = 0) => pty.slice(from).filter((m) => m.id === id && m.cols && m.rows).map((m) => `${m.cols}x${m.rows}`)
+const xtermSize = (page, id) => page.evaluate(async (id) => {
+  const { terminalControls } = await import('/src/lib/terminalWriters.js')
+  const size = terminalControls.get(id)?.getSize?.()
+  return size ? `${size.cols}x${size.rows}` : null
+}, id)
 const startCount = (pty, id) => pty.filter((m) => m.id === id && m.action === 'start_pty').length
 const termCount = (page, id) => page.evaluate((id) => document.querySelectorAll(`[data-terminal-session="${id}"] .xterm`).length, id)
 const portalIdentity = (page, id) => page.evaluate((id) => {
@@ -191,10 +204,39 @@ try {
   check('back at Session level', (await view()) === 'session')
   const toggleChanges = sizeChanges(pty, 's0', phase2From)
   const otherChanges = sizeChanges(pty, 's1', phase2From)
-  console.log(`     pty messages: ${pty.length}; size changes s0=${toggleChanges} (toggle), s1=${otherChanges}`)
-  check('toggle 5×: focused PTY changes size at most once', toggleChanges <= 1, `${toggleChanges}`)
-  check('toggle 5×: the other PTY changes size at most once', otherChanges <= 1, `${otherChanges}`)
+  console.log(`     drawer closed: s0 sizes ${[...new Set(sizesSince(pty, 's0', phase2From))].join(' / ')}, ${toggleChanges} change(s); s1 ${otherChanges} change(s)`)
+  check('toggle 5× (drawer closed): the PTY is resized to the tile once and keeps that size', toggleChanges <= 1, `${toggleChanges}`)
+  check('toggle 5× (drawer closed): the other PTY changes size at most once', otherChanges <= 1, `${otherChanges}`)
   check('toggle 5×: no second start_pty', startCount(pty, 's0') === 1 && startCount(pty, 's1') === 1, `${startCount(pty, 's0')}/${startCount(pty, 's1')}`)
+
+  // 2b. Board ⇄ Session 3× with the drawer open: drawer and tile are two
+  //     boxes, so the PTY gets two sizes, one resize per switch.
+  await page.keyboard.press('Meta+j')
+  await page.waitForTimeout(700)
+  const drawerSize = await xtermSize(page, 's0')
+  const phase2bFrom = pty.length
+  let tileSize = null
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press('Meta+Shift+E')
+    await page.waitForTimeout(700)
+    tileSize ||= await xtermSize(page, 's0')
+    await page.keyboard.press('Meta+Shift+E')
+    await page.waitForTimeout(700)
+  }
+  {
+    const seen = sizesSince(pty, 's0', phase2bFrom)
+    // Starting from the size the open drawer had before the first switch.
+    const changes = [drawerSize, ...seen].filter((k, i, all) => i > 0 && k !== all[i - 1]).length
+    console.log(`     drawer open: s0 sizes ${[...new Set(seen)].join(' / ')}, ${changes} changes in 6 switches; drawer ${drawerSize}, tile ${tileSize}`)
+    check('toggle 3× (drawer open): drawer and tile are different sizes', !!drawerSize && !!tileSize && drawerSize !== tileSize, `drawer ${drawerSize}, tile ${tileSize}`)
+    check('toggle 3× (drawer open): the PTY only ever gets the two sizes', seen.length > 0 && seen.every((k) => k === drawerSize || k === tileSize), [...new Set(seen)].join(' / '))
+    check('toggle 3× (drawer open): one PTY resize per switch', changes === 6, `${changes} changes in 6 switches`)
+    check('toggle 3× (drawer open): the PTY ends with the size the drawer shows', seen.at(-1) === drawerSize && (await xtermSize(page, 's0')) === drawerSize, `PTY ${seen.at(-1)}, xterm ${await xtermSize(page, 's0')}`)
+    check('toggle 3× (drawer open): the tile that was not opened keeps its PTY size', sizeChanges(pty, 's1', phase2bFrom) === 0, `${sizeChanges(pty, 's1', phase2bFrom)}`)
+    check('toggle 3× (drawer open): no second start_pty', startCount(pty, 's0') === 1 && startCount(pty, 's1') === 1, `${startCount(pty, 's0')}/${startCount(pty, 's1')}`)
+  }
+  await page.keyboard.press('Meta+j')
+  await page.waitForTimeout(500)
   const ident = await portalIdentity(page, 's0')
   check('node identity survived every move', ident?.mark === first.mark, JSON.stringify(ident))
   await page.keyboard.press('Meta+j')

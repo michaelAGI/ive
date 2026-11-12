@@ -6,6 +6,10 @@
 // on the last row. If the PTY size disagrees with what is visible, the box is
 // visibly cut off or wraps, which is what the screenshots are for.
 //
+// A terminal always has the size of the box it is shown in (the fit rule at
+// the top of src/components/chat/Terminal.jsx): no tile crops its terminal
+// and none scrolls sideways.
+//
 //   node tests/terminal-open.mjs            # checks + screenshots
 //   IVE_SHOT_DIR=../review-terminal/after node tests/terminal-open.mjs
 import assert from 'node:assert/strict'
@@ -75,8 +79,11 @@ async function setup(viewport, { sessions, openTabs = [], board = true, activeSe
     localStorage.setItem('cc-pwa-install-dismissed-v1', '1')
     localStorage.setItem('ive_client_name', 'Terminal QA')
     localStorage.setItem('cc-soundEnabled', '0')
+    // The board with terminal tiles only exists in the Dev experience.
+    if (board) localStorage.setItem('ive.experience-mode.v1', JSON.stringify({ mode: 'dev' }))
     localStorage.setItem('cc-terminalBoardMode', board ? '1' : '0')
     localStorage.removeItem('cc-gridColumns')
+    localStorage.removeItem('ive.terminal-drawer')
   }, board)
   const ptyMsgs = []
   const state = { sessions: [...sessions], created: 0 }
@@ -159,12 +166,14 @@ async function inspect(page, id) {
     return {
       mounted: true,
       visible: r.width > 50 && r.height > 50 && getComputedStyle(cell).display !== 'none',
+      // The terminal itself is on screen (a tile far below the fold parks it).
+      shown: !!wrapper && wrapper.clientWidth >= 20 && wrapper.clientHeight >= 20,
       inViewport: r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight + 1 && r.right <= innerWidth + 1,
       cell: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
       size,
-      // A scrollbar only exists when overflow is not hidden (overview tiles crop on purpose, with a hint).
-      hScroll: wrapper ? wrapper.scrollWidth > wrapper.clientWidth + 2 && getComputedStyle(wrapper).overflowX !== 'hidden' : null,
-      cropHinted: wrapper ? wrapper.scrollWidth <= wrapper.clientWidth + 2 || !!cell.querySelector('[data-preview-wider]') : null,
+      // Nothing to scroll to sideways, and no part of the character grid outside the box.
+      hScroll: wrapper ? wrapper.scrollWidth > wrapper.clientWidth || xterm.parentElement.scrollWidth > xterm.parentElement.clientWidth : null,
+      cropped: wr && sr ? sr.right > wr.right + 0.5 || sr.left < wr.left - 0.5 : null,
       vScroll: wrapper ? wrapper.scrollHeight > wrapper.clientHeight + 2 : null,
       lastRowCut: wr && sr ? sr.bottom > wr.bottom + 1 : null,
       unusedRows: wr && sr && size ? Math.floor((wr.bottom - sr.bottom) / (sr.height / size.rows)) : null,
@@ -189,6 +198,46 @@ const viewports = [
 const four = [0, 1, 2, 3].map((i) => mkSession(i))
 
 try {
+  // 0. The board with four restored terminals. Every tile that shows its
+  //    terminal holds all of it (nothing cropped, nothing to scroll sideways)
+  //    and its PTY has exactly xterm's size. The same holds for one of them
+  //    opened full size, and for the board after coming back.
+  for (const vp of viewports) {
+    const ids = four.map((s) => s.id)
+    const { context, page, ptyMsgs, errors } = await setup(vp, { sessions: four, openTabs: ids })
+    const call = (fn, arg) => page.evaluate(async ({ src, arg }) => {
+      const store = (await import('/src/state/store.js')).default
+      // eslint-disable-next-line no-new-func
+      return new Function('store', 'arg', `return (${src})(store, arg)`)(store, arg)
+    }, { src: fn.toString(), arg })
+    const boardChecks = async (label) => {
+      const tiles = await Promise.all(ids.map((x) => inspect(page, x)))
+      const shown = ids.filter((x, i) => tiles[i].shown)
+      const detail = shown.map((x) => { const t = tiles[ids.indexOf(x)]; const l = lastPty(ptyMsgs, x); return `${x} xterm ${t.size.cols}x${t.size.rows} pty ${l?.cols}x${l?.rows} in ${t.cell.w}x${t.cell.h}px` }).join(', ')
+      check(`${vp.name} ${label}: tiles show their terminals`, shown.length > 0, `${shown.length} of ${ids.length}`)
+      check(`${vp.name} ${label}: every shown PTY has the size of its tile's xterm`, shown.every((x) => { const t = tiles[ids.indexOf(x)]; const l = lastPty(ptyMsgs, x); return !!l && l.cols === t.size.cols && l.rows === t.size.rows }), detail)
+      check(`${vp.name} ${label}: nothing to scroll sideways, nothing cropped, last row not cut off`, shown.every((x) => { const t = tiles[ids.indexOf(x)]; return t.hScroll === false && t.cropped === false && t.lastRowCut === false }),
+        shown.map((x) => { const t = tiles[ids.indexOf(x)]; return `${t.hScroll}/${t.cropped}/${t.lastRowCut}` }).join(','))
+    }
+    await boardChecks('board')
+    await shot(page, `${vp.name}-0-board`)
+    // Open one full size (the drawer's expand button) and come back.
+    await call((store) => { store.getState().setTerminalExpanded('s0', true); store.getState().goSession('s0') })
+    await page.waitForTimeout(900)
+    {
+      const g = await inspect(page, 's0')
+      const last = lastPty(ptyMsgs, 's0')
+      await shot(page, `${vp.name}-0-opened-full`)
+      check(`${vp.name} opened full size: PTY size matches xterm`, g.shown && !!last && last.cols === g.size.cols && last.rows === g.size.rows, `pty ${last?.cols}x${last?.rows}, xterm ${g.size?.cols}x${g.size?.rows} in ${g.cell?.w}x${g.cell?.h}px`)
+      check(`${vp.name} opened full size: nothing to scroll sideways, nothing cropped, last row not cut off`, g.hScroll === false && g.cropped === false && g.lastRowCut === false, `${g.hScroll}/${g.cropped}/${g.lastRowCut}`)
+      check(`${vp.name} opened full size: no wasted rows/cols`, g.unusedRows <= 1 && g.unusedCols <= 2, `rows ${g.unusedRows} cols ${g.unusedCols}`)
+    }
+    await call((store) => store.getState().goOverview())
+    await page.waitForTimeout(900)
+    await boardChecks('back on the board')
+    check(`${vp.name} board: no page errors`, errors.length === 0, errors.join(' | '))
+    await context.close()
+  }
   for (const vp of viewports) {
     // 1. "+" in the top bar -> dialog -> Create Session, with 4 terminals already open.
     {
@@ -225,9 +274,9 @@ try {
         check(`${vp.name} overview: the session just used stays on screen`, (await inspect(page, id)).inViewport)
         const ids = ['s0', 's1', 's2', 's3', id]
         const after = await Promise.all(ids.map((x) => inspect(page, x)))
-        const mism = ids.filter((x, i) => { const l = lastPty(ptyMsgs, x); return after[i].visible && l && (l.cols !== after[i].size.cols || l.rows !== after[i].size.rows) })
+        const mism = ids.filter((x, i) => { const l = lastPty(ptyMsgs, x); return after[i].shown && l && (l.cols !== after[i].size.cols || l.rows !== after[i].size.rows) })
         check(`${vp.name} overview: every visible PTY matches its cell`, mism.length === 0, mism.join(','))
-        check(`${vp.name} overview: no scrollbars, any crop is hinted`, after.every((a) => !a.visible || (a.hScroll === false && a.cropHinted)), after.map((a) => `${a.hScroll}/${a.cropHinted}`).join(','))
+        check(`${vp.name} overview: no scrollbars, nothing cropped`, after.every((a) => !a.shown || (a.hScroll === false && a.cropped === false)), after.map((a) => `${a.hScroll}/${a.cropped}`).join(','))
       }
       check(`${vp.name} no page errors`, errors.length === 0, errors.join(' | '))
       await context.close()
