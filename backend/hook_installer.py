@@ -111,6 +111,21 @@ HOOK_SCRIPT = """\
 COMMANDER_API_URL="${COMMANDER_API_URL:-http://localhost:5111}"
 INPUT=$(cat)
 
+# A plain IVE terminal: the user started this CLI by hand in it. Report the
+# turn state to that terminal and nothing else (no discovery, no decisions).
+# Synchronous, so a turn end can never overtake an earlier event.
+if [ -z "$COMMANDER_SESSION_ID" ] && [ -n "$IVE_TERMINAL_SESSION_ID" ]; then
+  echo "$INPUT" | curl -s -X POST \\
+    "${IVE_TERMINAL_API_URL:-$COMMANDER_API_URL}/api/hooks/event" \\
+    -H "Content-Type: application/json" \\
+    -H "X-Commander-Session-Id: $IVE_TERMINAL_SESSION_ID" \\
+    -H "X-Commander-Session-Proof: ${IVE_TERMINAL_SESSION_PROOF:-}" \\
+    -H "X-IVE-Terminal: 1" \\
+    --max-time 2 \\
+    -d @- >/dev/null 2>&1
+  exit 0
+fi
+
 if [ -z "$COMMANDER_SESSION_ID" ]; then
   # Auto-discover: ask Commander if this workspace has auto-register enabled.
   # Cache the result by PID so we only call discover once per CLI process.
