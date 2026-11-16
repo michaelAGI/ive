@@ -1459,8 +1459,13 @@ pre {
 .ive-phone-view-switch button { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--x-muted); touch-action: manipulation; }
 .ive-phone-view-switch button[aria-pressed="true"] { background: var(--x-surface); color: var(--x-accent-ink); box-shadow: var(--x-shadow-1, 0 1px 2px rgba(0,0,0,.12)); }
 
-/* Terminal on the phone: our pointer handlers own swipe, pinch and long-press. */
+/* Terminal on the phone: our gesture handlers own swipe, pinch and long-press. */
 .ive-phone-terminal { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: contain; }
+/* Set this on xterm's own scroll containers too: gesture arbitration can
+   stop at a nested scroller before it reaches the phone wrapper. */
+.ive-phone-terminal .xterm,
+.ive-phone-terminal .xterm-viewport,
+.ive-phone-terminal .xterm-screen { touch-action: none; }
 .ive-phone-paste { position: absolute; z-index: 40; min-width: 80px; min-height: 44px; padding: 0 16px; border-radius: 10px; background: var(--x-ink); color: var(--x-bg); font-size: 15px; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 .ive-phone-keybar { display: flex; align-items: stretch; gap: 0; flex-shrink: 0; height: 48px; border-top: 1px solid var(--x-line); background: var(--x-surface); }
 .ive-phone-keys { flex: 1; min-width: 0; display: flex; gap: 4px; padding: 4px 6px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }

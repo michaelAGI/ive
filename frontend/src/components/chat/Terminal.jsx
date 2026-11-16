@@ -1311,18 +1311,36 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
 
     // ── Phone touch: swipe scrolls the scrollback, pinch sets the font,
     // long-press offers Paste, a tap focuses (opens the keyboard). The phone
-    // wrapper has touch-action:none, so these pointers are ours alone.
+    // wrapper has touch-action:none. TouchEvents own real finger gestures;
+    // PointerEvents remain a fallback for browsers without a touch stream.
     const pointers = new Map()
+    let touchActive = false
     let gesture = null
     let longPressTimer = null
     let scrollRest = 0
     let momentumRaf = null
+    let scrollPoint = null
     const stopMomentum = () => { if (momentumRaf) cancelAnimationFrame(momentumRaf); momentumRaf = null }
     const scrollPhoneLines = (lines) => {
       if (!lines) return
       keepLiveUntil = 0
       try {
-        if (term.buffer.active.type === 'alternate') {
+        if (['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode)) {
+          // Mouse-aware agents own their history, including in the alternate
+          // screen. Use xterm's negotiated mouse encoding instead of arrows,
+          // which would navigate the agent's prompt or command history.
+          const screen = el.querySelector('.xterm-screen')
+          const box = screen?.getBoundingClientRect()
+          if (!box?.width || !box?.height) return
+          const clientX = Math.max(box.left + 1, Math.min(box.right - 1, scrollPoint?.x ?? box.left + box.width / 2))
+          const clientY = Math.max(box.top + 1, Math.min(box.bottom - 1, scrollPoint?.y ?? box.top + box.height / 2))
+          for (let i = 0; i < Math.min(Math.abs(lines), 5); i++) {
+            screen.dispatchEvent(new WheelEvent('wheel', {
+              bubbles: true, cancelable: true, clientX, clientY,
+              deltaY: Math.sign(lines), deltaMode: WheelEvent.DOM_DELTA_LINE,
+            }))
+          }
+        } else if (term.buffer.active.type === 'alternate') {
           // Full-screen apps (less, vim) have no scrollback: page with arrows.
           const seq = (lines < 0 ? 'A' : 'B')
           const prefix = term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b['
@@ -1340,8 +1358,10 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       if (!phoneRef.current || e.pointerType !== 'touch') return
       stopMomentum()
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      scrollPoint = { x: e.clientX, y: e.clientY }
       setPhonePaste(null)
       if (pointers.size === 1) {
+        scrollRest = 0
         gesture = { type: 'press', x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, t: performance.now(), v: 0 }
         clearTimeout(longPressTimer)
         longPressTimer = setTimeout(() => {
@@ -1360,6 +1380,7 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
       const p = pointers.get(e.pointerId)
       if (!p || !gesture) return
       p.x = e.clientX; p.y = e.clientY
+      scrollPoint = { x: e.clientX, y: e.clientY }
       if (gesture.type === 'pinch') {
         if (pointers.size < 2) return
         const size = clampPhoneFont(gesture.f0 * distance() / gesture.d0)
@@ -1413,9 +1434,36 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
         momentumRaf = requestAnimationFrame(step)
       }
     }
-    // xterm scrolls its own viewport on touchmove; on the phone the pointer
-    // handlers above own the gesture, so its handlers must not run as well.
-    const swallowTouch = (e) => { if (phoneRef.current) { e.stopPropagation(); if (e.cancelable && e.type === 'touchmove') e.preventDefault() } }
+    // A WebView can cancel its pointer stream while still delivering touch
+    // events. Previously touchmove was swallowed without doing any scrolling.
+    // Take over once touchstart arrives, then ignore duplicate pointer events
+    // (including pointercancel) until every finger has left the screen.
+    const touchEvent = (e, type, handler) => {
+      if (!phoneRef.current) return
+      e.stopPropagation() // xterm must not handle the same gesture again
+      if (type === 'pointerdown' && !touchActive) {
+        clearTimeout(longPressTimer)
+        pointers.clear()
+        gesture = null
+        touchActive = true
+      }
+      if (!touchActive) return
+      const moved = gesture && gesture.type !== 'press'
+      for (const point of e.changedTouches) handler({
+        type, pointerType: 'touch', pointerId: point.identifier,
+        clientX: point.clientX, clientY: point.clientY,
+        preventDefault: () => { if (e.cancelable) e.preventDefault() },
+      })
+      if (e.cancelable && (type === 'pointermove' || moved)) e.preventDefault()
+      if (!e.touches.length) touchActive = false
+    }
+    const pointerDown = (e) => { if (!touchActive) onPointerDown(e) }
+    const pointerMove = (e) => { if (!touchActive) onPointerMove(e) }
+    const pointerEnd = (e) => { if (!touchActive) onPointerEnd(e) }
+    const touchStart = (e) => touchEvent(e, 'pointerdown', onPointerDown)
+    const touchMove = (e) => touchEvent(e, 'pointermove', onPointerMove)
+    const touchEnd = (e) => touchEvent(e, 'pointerup', onPointerEnd)
+    const touchCancel = (e) => touchEvent(e, 'pointercancel', onPointerEnd)
     const gestureHost = wrapper || el
     // Lines between the shown rows and the live bottom (data attribute for
     // tests, a "Live" button when > 0).
@@ -1431,22 +1479,28 @@ export default function TerminalView({ sessionId, inDrawer = false, slotMode, ov
     const scrollDisp = term.onScroll(updateBehind)
     const writeDisp = term.onWriteParsed(updateBehind)
     phoneLiveRef.current = () => { stopMomentum(); try { term.scrollToBottom() } catch { /* disposed */ } updateBehind() }
-    gestureHost.addEventListener('pointerdown', onPointerDown, { capture: true })
-    gestureHost.addEventListener('pointermove', onPointerMove, { capture: true, passive: false })
-    gestureHost.addEventListener('pointerup', onPointerEnd, { capture: true })
-    gestureHost.addEventListener('pointercancel', onPointerEnd, { capture: true })
-    gestureHost.addEventListener('touchmove', swallowTouch, { capture: true, passive: false })
+    gestureHost.addEventListener('pointerdown', pointerDown, { capture: true })
+    gestureHost.addEventListener('pointermove', pointerMove, { capture: true, passive: false })
+    gestureHost.addEventListener('pointerup', pointerEnd, { capture: true })
+    gestureHost.addEventListener('pointercancel', pointerEnd, { capture: true })
+    gestureHost.addEventListener('touchstart', touchStart, { capture: true, passive: false })
+    gestureHost.addEventListener('touchmove', touchMove, { capture: true, passive: false })
+    gestureHost.addEventListener('touchend', touchEnd, { capture: true, passive: false })
+    gestureHost.addEventListener('touchcancel', touchCancel, { capture: true, passive: false })
     const removePhoneGestures = () => {
       releasePhoneGeometry()
       scrollDisp.dispose()
       writeDisp.dispose()
       clearTimeout(longPressTimer)
       stopMomentum()
-      gestureHost.removeEventListener('pointerdown', onPointerDown, { capture: true })
-      gestureHost.removeEventListener('pointermove', onPointerMove, { capture: true })
-      gestureHost.removeEventListener('pointerup', onPointerEnd, { capture: true })
-      gestureHost.removeEventListener('pointercancel', onPointerEnd, { capture: true })
-      gestureHost.removeEventListener('touchmove', swallowTouch, { capture: true })
+      gestureHost.removeEventListener('pointerdown', pointerDown, { capture: true })
+      gestureHost.removeEventListener('pointermove', pointerMove, { capture: true })
+      gestureHost.removeEventListener('pointerup', pointerEnd, { capture: true })
+      gestureHost.removeEventListener('pointercancel', pointerEnd, { capture: true })
+      gestureHost.removeEventListener('touchstart', touchStart, { capture: true })
+      gestureHost.removeEventListener('touchmove', touchMove, { capture: true })
+      gestureHost.removeEventListener('touchend', touchEnd, { capture: true })
+      gestureHost.removeEventListener('touchcancel', touchCancel, { capture: true })
     }
     // Reparenting resets DOM scroll offsets. xterm also pauses its renderer
     // while parked, so a resize may not reach the canvas until its next render.

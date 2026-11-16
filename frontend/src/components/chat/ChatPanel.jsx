@@ -2833,6 +2833,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
   const composerHandlersRef = useRef(null)
   const lastMessageHashRef = useRef('')
   const isPinnedRef = useRef(true)
+  const scrollTouchRef = useRef(null)
   const handleFindNavigate = useCallback(() => { isPinnedRef.current = false }, [])
   const pendingOptimisticMessagesRef = useRef([])
   const optimisticBusyStartedAtRef = useRef(null)
@@ -3956,6 +3957,23 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     }
   }, [renderLimit, messages])
 
+  // Release follow before native scrolling starts. During streaming, every
+  // new chunk extends the reflow grace period below; waiting for onScroll
+  // alone would keep snapping an intentional swipe back to the live bottom.
+  const handleScrollIntent = (deltaY) => {
+    if (deltaY < 0 && scrollContainerRef.current?.scrollTop > 0) isPinnedRef.current = false
+  }
+  const handleTranscriptTouchStart = (e) => {
+    const point = e.touches.length === 1 ? e.touches[0] : null
+    scrollTouchRef.current = point ? { x: point.clientX, y: point.clientY } : null
+  }
+  const handleTranscriptTouchMove = (e) => {
+    const start = scrollTouchRef.current
+    if (!start || e.touches.length !== 1) return
+    const point = e.touches[0]
+    const dy = point.clientY - start.y
+    if (dy > 4 && dy > Math.abs(point.clientX - start.x)) handleScrollIntent(-dy)
+  }
   const handleScroll = () => {
     const container = scrollContainerRef.current
     if (!container) return
@@ -3969,7 +3987,9 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
       container.scrollTop = container.scrollHeight
       return
     }
-    const threshold = 45
+    // Once the reader has left follow, resume only at the actual bottom.
+    // A small first swipe must not re-pin inside the old 45px tolerance.
+    const threshold = isPinnedRef.current ? 45 : 2
     const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     isPinnedRef.current = distanceToBottom < threshold
 
@@ -4009,6 +4029,7 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
     fetchMessages(true)
     lastMessageHashRef.current = '' // Reset scroll tracker on session change
     isPinnedRef.current = true // Reset pin state on session switch
+    scrollTouchRef.current = null
     optimisticBusyStartedAtRef.current = null
   }, [sessionId])
 
@@ -4791,6 +4812,11 @@ export default function ChatPanel({ sessionId, onToggleTerminal, onOpenTerminal 
         ref={scrollContainerRef}
         data-session-scroll={sessionId}
         onScroll={handleScroll}
+        onWheelCapture={(e) => { if (!e.ctrlKey) handleScrollIntent(e.deltaY) }}
+        onTouchStartCapture={handleTranscriptTouchStart}
+        onTouchMoveCapture={handleTranscriptTouchMove}
+        onTouchEndCapture={() => { scrollTouchRef.current = null }}
+        onTouchCancelCapture={() => { scrollTouchRef.current = null }}
         onMouseUp={handleTranscriptMouseUp}
         className="flex-1 overflow-y-auto px-3 md:px-4 py-3 scrollbar-thin flex flex-col"
       >
