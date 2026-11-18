@@ -1,7 +1,7 @@
 
 ▗ ▗   ▖ ▖  Claude Code v2.1.310
            Haiku 5.5 · Claude Max
- ▘▘   ▝▝   /…/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1
+ ▘▘   ▝▝   /…/tmp/claude-501/-Users-fixture-user_____/11111111-1111-4111-8111-111111111111/scratchpad/lane-a/proj-1
 
 
 ❯ Run the shell command echo hello-ive > hello.txt with the Bash tool. Do not explain.

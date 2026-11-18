@@ -1,6 +1,6 @@
 
   Folder access
-  /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-3
+  /private/tmp/claude-501/-Users-fixture-user_____/11111111-1111-4111-8111-111111111111/scratchpad/lane-a/proj-3
 
   Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings
   can run code automatically, even without a model request. Continue only if you trust these files. Your trust

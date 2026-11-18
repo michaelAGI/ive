@@ -1,6 +1,6 @@
 
   >_ OpenAI Codex (v0.164.0)
-     /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-3
+     /private/tmp/claude-501/-Users-fixture-user_____/11111111-1111-4111-8111-111111111111/scratchpad/lane-a/proj-3
 
 
 › Run the command touch created.txt
@@ -36,5 +36,5 @@
 
 › Ask Codex to do anything
 
-  GPT-6-Astra default · /private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpa…
+  GPT-6-Astra default · /private/tmp/claude-501/-Users-fixture-user_____/11111111-1111-4111-8111-111111111111/scratchpa…
   ← for agents · ? for shortcuts

@@ -2,7 +2,7 @@
 [38;2;150;108;30m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[39m
 [2G[38;2;150;108;30m[1mAccessing[12Gworkspace:[22m[39m
 
-[2G[1m/private/tmp/claude-501/-Users-maximilianschwarz/3dce79b6-f875-44f6-8e51-73091afdbdfd/scratchpad/lane-a/proj-1[22m
+[2G[1m/private/tmp/claude-501/-Users-fixture-user_____/11111111-1111-4111-8111-111111111111/scratchpad/lane-a/proj-1[22m
 
 [2GQuick[8Gsafety[15Gcheck:[22GIs[25Gthis[30Ga[32Gproject[40Gyou[44Gcreated[52Gor[55Gone[59Gyou[63Gtrust?[70G(Like[76Gyour[81Gown[85Gcode,[91Ga[93Gwell-known[104Gopen[109Gsource
 [2Gproject,[11Gor[14Gwork[19Gfrom[24Gyour[29Gteam).[36GIf[39Gnot,[44Gtake[49Ga[51Gmoment[58Gto[61Greview[68Gwhat's[75Gin[78Gthis[83Gfolder[90Gfirst.

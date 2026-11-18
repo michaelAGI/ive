@@ -43,6 +43,19 @@ def load_parser():
     return ns
 
 
+class FixturePrivacyTests(unittest.TestCase):
+    def test_capture_paths_use_synthetic_usernames(self):
+        for path in FIXTURES.rglob("*"):
+            if not path.is_file() or path.suffix not in {".txt", ".json"}:
+                continue
+            text = path.read_text()
+            for match in re.finditer(r"(?:/Users/|-Users-|/home/)([A-Za-z0-9_-]+)", text):
+                self.assertTrue(
+                    match.group(1).startswith(("fixture-", "example-", "test-")),
+                    f"Sanitize the captured home directory in {path.name}",
+                )
+
+
 class _Screen(pyte.Screen):
     """pyte answers CPR itself; the CLIs' private DECXCPR query would raise."""
 
