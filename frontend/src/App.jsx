@@ -10,6 +10,7 @@ import useTaskAttention from './hooks/useTaskAttention'
 import { isShellSession } from './lib/sessionStatus'
 import AppShell from './components/shell/AppShell'
 import NavSidebar from './components/shell/NavSidebar'
+import DeviceHub from './components/devices/DeviceHub'
 import AttentionBar from './components/session/AttentionBar'
 import { Modal } from './components/ui'
 import HeaderBar from './components/shell/HeaderBar'
@@ -571,6 +572,7 @@ export default function App() {
   const [marketplaceTab, setMarketplaceTab] = useState(null)
   const [marketplaceSuggestedSkills, setMarketplaceSuggestedSkills] = useState(null)
   const [showQuickActionPalette, setShowQuickActionPalette] = useState(false)
+  const [showDeviceHub, setShowDeviceHub] = useState(false)
   const [settingsSection, setSettingsSection] = useState(null)
   const [showGlobalLogs, setShowGlobalLogs] = useState(false)
   // Discovery owns passive Observatory signal; ResearchHub owns user-initiated research.
@@ -645,6 +647,7 @@ export default function App() {
   // to enforce mutual exclusion — only one overlay at a time. Inline panels
   // and the unified session sidebar are excluded since they coexist with modals.
   const closeExclusivePanels = useCallback(() => {
+    setShowDeviceHub(false)
     setTaskFlow(null)
     setShowWorkspacePicker(false)
     setShowCommand(false); setCommandQuery('')
@@ -854,6 +857,7 @@ export default function App() {
       if (panel === 'experimental') setSettingsSection('experimental')
       if (panel === 'safety') setSettingsSection('safety')
       if (panel === 'api-keys') setSettingsSection('api-keys')
+      if (panel === 'device-hub') setShowDeviceHub(true)
       if (panel === 'phone-access') setSettingsSection('phone-access')
       if (panel === 'sharing' || panel === 'multiplayer-share' || panel === 'invites' || panel === 'auth-sessions' || panel === 'runtime-controls') {
         setSharingInitialTab(requestedTab || (panel === 'invites' ? 'invites' : panel === 'auth-sessions' ? 'sessions' : 'online'))
@@ -987,7 +991,7 @@ export default function App() {
   // being consumed by xterm.js.
   const deletingSession = useSessionDelete((state) => !!state.request)
   const renamingSession = useSessionRename((state) => !!state.request)
-  const anyModalOpen = deletingSession || renamingSession || onboarding.open || showCheatSheet || !!taskFlow || showWorkspacePicker || quickStartOpen || !!newSessionWorkspaceId || showDistill || showQuickFeature || showAnnotator || showCommand || showPrompts || showGuidelines || showBroadcast || showSearch || showMission || showHistory || showInbox || showAttention || showPlan || showBoard || showPipelineEditor || showTree || showTemplates || showCapabilities || showResearchHub || showDiscoveryHub || showGovernance || showDocs || showKnowledge || showCodeCatalog || showSecure || showAgentSystems || showPeerMessages || showMemory || showPreviewPalette || !!livePreviewUrl || showMarketplace || showQuickActionPalette || !!settingsSection || showGlobalLogs || !!screenshotData
+  const anyModalOpen = showDeviceHub || deletingSession || renamingSession || onboarding.open || showCheatSheet || !!taskFlow || showWorkspacePicker || quickStartOpen || !!newSessionWorkspaceId || showDistill || showQuickFeature || showAnnotator || showCommand || showPrompts || showGuidelines || showBroadcast || showSearch || showMission || showHistory || showInbox || showAttention || showPlan || showBoard || showPipelineEditor || showTree || showTemplates || showCapabilities || showResearchHub || showDiscoveryHub || showGovernance || showDocs || showKnowledge || showCodeCatalog || showSecure || showAgentSystems || showPeerMessages || showMemory || showPreviewPalette || !!livePreviewUrl || showMarketplace || showQuickActionPalette || !!settingsSection || showGlobalLogs || !!screenshotData
   anyModalOpenRef.current = anyModalOpen
   useEffect(() => {
     if (anyModalOpen) {
@@ -1169,6 +1173,7 @@ export default function App() {
       'dictation': () => setSettingsSection('dictation'),
       'workspace-settings': () => { setWsSettingsInitialId(useStore.getState().activeWorkspaceId); setSettingsSection('workspace-settings') },
       'api-keys': () => setSettingsSection('api-keys'),
+      'device-hub': () => setShowDeviceHub(true),
       'phone-access': () => setSettingsSection('phone-access'),
       'sharing': () => { setSharingInitialTab('online'); setSettingsSection('sharing') },
       // Legacy aliases — the three split panels were unified into Multiplayer Share.
@@ -1316,7 +1321,7 @@ export default function App() {
   const sideChatToggle = isOwner ? () => setShowSideChat((value) => !value) : undefined
   // Review and Knowledge are overlays (D.1): the sidebar entry stays current
   // while they are open; Settings, Connectors and Phone follow the same rule.
-  const activeOverlay = settingsSection
+  const activeOverlay = showDeviceHub ? 'devices' : settingsSection
     ? (['connectors', 'accounts', 'api-keys', 'mcp-servers', 'apis-integrations'].includes(settingsSection) ? 'connectors'
       : settingsSection === 'phone-access' ? 'phone' : 'settings')
     : showMemory ? 'knowledge'
@@ -1644,6 +1649,7 @@ export default function App() {
           {showMemory && <MemoryWindow initialTab={memoryInitialTab} onClose={() => setShowMemory(false)} />}
           {showMarketplace && <MarketplacePanel onClose={() => { setShowMarketplace(false); setMarketplaceTab(null); setMarketplaceSuggestedSkills(null) }} initialTab={marketplaceTab} suggestedSkills={marketplaceSuggestedSkills} />}
           {showQuickActionPalette && <QuickActionPalette onClose={() => setShowQuickActionPalette(false)} />}
+          {showDeviceHub && <DeviceHub onClose={() => setShowDeviceHub(false)} />}
           {settingsSection && (
             <SettingsShell
               sectionId={settingsSection}

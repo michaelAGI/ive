@@ -2,6 +2,10 @@ import { Plus, SquareTerminal, FolderOpen, X, ToggleLeft, Settings, BookOpen, Fi
 import { isSurfaceAvailable } from './extensionRegistry';
 import { getKeybindings, formatKeyCombo } from './keybindings';
 export const ACTIONS = [{
+  id: 'device-hub', label: 'Devices', icon: Smartphone, section: 'Set up',
+  hint: 'Connect an iPhone and let an agent set it up and control it',
+  keywords: 'device hub iphone usb pair setup control phone agent'
+}, {
   id: 'command-palette',
   label: 'Command Palette',
   icon: Search,

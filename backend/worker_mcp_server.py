@@ -53,7 +53,7 @@ def api_call(method: str, path: str, body: dict | None = None) -> dict | list:
         headers["X-IVE-Workspace-Id"] = WORKSPACE_ID
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60 if path.startswith("/device-hub/") else 30) as resp:
             try:
                 return json.loads(resp.read())
             except (ValueError, UnicodeDecodeError):
@@ -2541,6 +2541,9 @@ def handle_request(req: dict) -> dict:
             }
         try:
             result_text = spec["handler"](arguments)
+            if isinstance(result_text, dict) and "_mcp_content" in result_text:
+                return {"jsonrpc": "2.0", "id": rid, "result": {
+                    "content": result_text["_mcp_content"], "isError": result_text.get("_mcp_error", False)}}
         except Exception as e:
             result_text = json.dumps({"error": str(e)})
         return {
@@ -2919,6 +2922,10 @@ def compose_tool_registry(
     def add(group: str, tools: dict) -> None:
         registry.update(tools)
         sources.update({name: group for name in tools})
+
+    if stype not in ("brainstormer", "secure", "planner", "architect"):
+        from device_tools import build_tools
+        add("device-hub", build_tools(api_call))
 
     if stype not in ("brainstormer", "secure"):
         if flags.get("comms"):

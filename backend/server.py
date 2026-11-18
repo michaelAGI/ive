@@ -34017,6 +34017,9 @@ def create_app() -> web.Application:
     middlewares.append(csp_middleware)
     app = web.Application(middlewares=middlewares)
     import db as _phone_db
+    import device_hub_routes
+    device_hub_routes.register(app, data_dir=_phone_db.DATA_DIR,
+        get_session=get_session_config, local_owner=_is_local_owner)
     app[_PHONE_SETUP] = PhoneSetup(_phone_db.DATA_DIR)
     app[_PHONE_AVAILABILITY] = PhoneAvailability(connected=lambda: bool(_tunnel_proc and _tunnel_proc.returncode is None))
     async def _stop_phone_availability(application):

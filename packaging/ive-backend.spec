@@ -52,7 +52,7 @@ modules += ["playwright.__main__", "playwright.async_api", "playwright.sync_api"
 datas = []
 for name in ("skills_catalog.json", "mcp_config_template.json", "avcp.sh", "dictation_worker.py", "dictation-requirements.txt"):
     datas.append((str(BACKEND / name), "backend"))
-for folder in ("frontend/dist", "extensions/sandbox", "anti-vibe-code-pwner", "backend/skills"):
+for folder in ("frontend/dist", "extensions/sandbox", "anti-vibe-code-pwner", "backend/skills", "packaging/device-control/ipb"):
     for path in sorted((ROOT / folder).rglob("*")):
         if path.is_file() and not any(part in {"__pycache__", ".git", "node_modules"} for part in path.parts):
             if path.suffix in {".pyc", ".log", ".db"} or path.name.startswith(".env"):
@@ -60,6 +60,7 @@ for folder in ("frontend/dist", "extensions/sandbox", "anti-vibe-code-pwner", "b
             datas.append((str(path), str(path.relative_to(ROOT).parent)))
 datas.append((str(ROOT / "plugins/deep-research/SKILL.md"), "plugins/deep-research"))
 datas.append((str(ROOT / "frontend/src/lib/informationArchitecture.js"), "frontend/src/lib"))
+datas.append((str(ROOT / "scripts/photo_duplicate_report.py"), "scripts"))
 for distribution in ("keyring", "playwright", "aiohttp"):
     datas += copy_metadata(distribution)
 

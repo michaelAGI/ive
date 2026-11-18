@@ -1,0 +1,19 @@
+{
+  "upstream": "https://github.com/ipbtools/ipb",
+  "revision": "8c227a10710dad479852aa0203de729fed57471b",
+  "version": "0.6.0",
+  "files": {
+    "LICENSE": "38dcff9bcea33309058194429c7c852a8fc50c26fd0d9706fc511262cb2f0b93",
+    "VERSION": "97a5d6e540a6120d09c39ddb667e0e8e2bac7fcc2ffef813b82e08fd60365bce",
+    "Makefile": "17e2c0c580329ef5c96bcb69dda0ac3c31bc11d8d9b771c63fdfd9870af46bfd",
+    "bin/ipb": "34a28f5e5d7d7c62c99d904251b493ff2479f02cbd565fd01b8f31dbdb646464",
+    "Sources/action_sender.m": "847755916e742e8134e06a44fdac12e8cfdcfe6ca0d44faab7084182240635fd",
+    "Sources/mercury_glue.swift": "a455b86a9c54ab1453de724cd29f99fed6b3011143771efba940dda13218e993",
+    "Sources/mercury_abi.S": "b76a3f58f6b3176dee9da943c59a556153e46eb6203cfb5faeb272300edcc756",
+    "Sources/universalhid_glue.swift": "a91f06ee4aba4104bb3c89ca2235f35d0840ac061da9a2d982e19b01178f4ebf",
+    "Sources/universalhid_abi.S": "e00b8f0921d0d1dc6f91701f8b5945730862f3bbf544be3d8f616565422da4f9",
+    "Sources/uhid_request_abi.S": "ac9be56caa3c9feaa9322424c7bf9f27528bb41877edb57fd10f244633f8504d",
+    "scripts/check_report_sizes.py": "f29acd5d9b1921ccb1fe5de6b1e6a5a31c39cdd7aadd629956a150fd0b30c902",
+    "Experiments/hid-descriptors/descriptors.txt": "191cd3df487c2457205a0fad82002277b8da05c7e9076dc5c632fd5673642f48"
+  }
+}

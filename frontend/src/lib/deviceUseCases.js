@@ -1,0 +1,23 @@
+// Task templates, not claims of successful automation on a real phone.
+export const deviceUseCases = [
+  { id: 'photo-duplicates', title: 'Find duplicate photos', benefit: 'Review duplicates before reclaiming space.',
+    prompt: 'Open Apple Photos on my iPhone and review the Duplicates collection, if available. Summarize the visible duplicate groups and show me representative examples. Distinguish exact duplicates from similar shots. Ask me to confirm specific groups before merging or deleting anything; never empty Recently Deleted. If Photos has no results, explain that instead of claiming there are no duplicates. For a deeper scan, ask me to choose an exported folder on the Mac; USB pairing does not grant filesystem access to my entire photo library.' },
+  { id: 'screenshots', title: 'Sort saved screenshots', benefit: 'Turn forgotten screenshots into useful next steps.',
+    prompt: 'Review up to 30 recent screenshots in my iPhone Photos app. Group them into tasks, useful references and possible cleanup candidates. Extract dates and next steps into a concise list here. Do not delete images, create reminders or share content until I choose what to do with the report.' },
+  { id: 'storage', title: 'Find wasted storage', benefit: 'See which cleanup would free the most space.',
+    prompt: 'Open iPhone Storage in Settings. Report the largest apps and the cleanup recommendations actually shown, with their displayed sizes. Rank practical ways to free space and explain what data each would affect. Do not uninstall, offload or delete anything. Do not count a recommendation twice or invent a storage saving.' },
+  { id: 'receipts', title: 'Organize receipts', benefit: 'Make an expense list from a selected album.',
+    prompt: 'Ask me which album or folder of receipts to review and for what period. Read only that selection on my iPhone. Create a table here with date, merchant, amount, currency and source image; flag unclear values and possible duplicate receipts. Sum each currency separately. Do not upload, submit, delete or modify the receipts.' },
+  { id: 'reminders', title: 'Turn notes into reminders', benefit: 'Capture tasks that are easy to miss.',
+    prompt: 'Ask me which note or screenshot contains the tasks I want to capture. Extract actions, dates and priorities; mark ambiguities instead of guessing. Show the proposed reminders and check for existing duplicates in my chosen list. Create only the reminders I approve, then verify them on the phone.' },
+  { id: 'calendar', title: 'Review the coming week', benefit: 'Spot clashes and preparation time early.',
+    prompt: 'Review the next seven days in the iPhone Calendar app for the calendars I choose. Give me a daily briefing, highlight overlapping events and suggest preparation or travel buffers without assuming locations. Do not move events, create invitations or notify anyone.' },
+  { id: 'focus', title: 'Reduce distractions', benefit: 'Prepare a Focus setup for work or study.',
+    prompt: 'Help me prepare a work or study Focus on my iPhone. First ask when it should run and which people and apps must still get through. Review the relevant settings and show a concrete change list. Apply only the choices I approve and verify the resulting settings. Keep emergency and security alerts intact.' },
+  { id: 'trip', title: 'Prepare for a trip', benefit: 'Collect the details you need before leaving.',
+    prompt: 'Ask me which trip and which saved tickets, calendar events or notes I want to use. Review only those sources on my iPhone and assemble a checklist with dates, departure times, booking references and unresolved details here. Clearly distinguish confirmed details from suggestions. Do not purchase, check in, send messages or upload tickets.' },
+  { id: 'subscriptions', title: 'Review subscriptions', benefit: 'See upcoming renewals in one place.',
+    prompt: 'Review the subscriptions shown in my iPhone Apple Account settings. List the visible service, price, billing period and renewal or expiry date, keeping currencies separate. Mark any unknown values and explain that this does not include every subscription bought outside Apple. Do not cancel, renew, purchase or change a plan.' },
+  { id: 'app-testing', title: 'Test an app on iPhone', benefit: 'Reproduce a bug with real screen evidence.',
+    prompt: 'Ask which app and flow I want tested on this iPhone. Use a test account or disposable data that I approve. Reproduce the issue, record the exact steps and screen observations, and check the same flow after a fix if available. Stop before purchases, real messages, production changes or deleting app data. Report what was actually observed and what remains untested.' },
+]

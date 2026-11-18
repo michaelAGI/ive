@@ -29,6 +29,7 @@ notice('IVE', json.loads((ROOT/'frontend/src-tauri/tauri.conf.json').read_text()
 notice('Python', sys.version.split()[0], Path(sys.base_prefix)/'lib/python3.12')
 notice('cloudflared (https://github.com/cloudflare/cloudflared)', '2026.10.4',
        ROOT/'packaging/artifacts/cloudflared-2026.10.4')
+notice('ipb (https://github.com/ipbtools/ipb)', '0.6.0', ROOT/'packaging/device-control/ipb')
 for distribution in sorted(importlib.metadata.distributions(),key=lambda d:d.metadata['Name']):
     for item in distribution.files or []:
         if str(item).endswith('.dist-info/METADATA'):

@@ -160,6 +160,10 @@ export const IA_GROUPS = [{
     paletteLabel: 'Config Files & Tool Permissions',
     description: 'Inspect the configuration and tool access used by your agents.'
   }, {
+    id: 'device-hub',
+    label: 'Devices',
+    description: 'Connect your iPhone, let an agent set it up and assign control.'
+  }, {
     id: 'phone-access',
     label: 'iPhone & Devices',
     description: 'Pair your phone as a remote for this Mac and manage paired devices.'

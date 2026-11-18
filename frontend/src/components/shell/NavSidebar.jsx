@@ -285,6 +285,7 @@ export default function NavSidebar({
       <nav className="ive-nav-group ive-nav-group--setup" aria-label={t('nav.setup')}>
         <div className="t-label ive-nav-group-title">{t('nav.setup')}</div>
         <NavItem id="settings" icon={Settings} label={t('nav.settings')} current={activeOverlay === 'settings'} onClick={() => onOpenPanel?.('general-settings')} />
+        <NavItem id="devices" icon={Smartphone} label="Devices" current={activeOverlay === 'devices'} onClick={() => onOpenPanel?.('device-hub')} />
         <NavItem id="connectors" icon={Plug} label={t('nav.connectors')} current={activeOverlay === 'connectors'} onClick={() => onOpenPanel?.('connectors')} />
         {isSurfaceAvailable('phone-access') && (
           <NavItem id="phone" icon={Smartphone} label={t('nav.phone')} current={activeOverlay === 'phone'} onClick={() => onOpenPanel?.('phone-access')} />

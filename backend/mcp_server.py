@@ -51,7 +51,7 @@ def api_call(method: str, path: str, body: dict | None = None) -> dict:
         headers["X-IVE-Workspace-Id"] = WORKSPACE_ID
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=60 if path.startswith("/device-hub/") else 30) as resp:
             try:
                 return json.loads(resp.read())
             except (ValueError, UnicodeDecodeError):
@@ -2287,6 +2287,9 @@ def handle_jsonrpc(request: dict) -> dict:
             }
         try:
             handler_result = spec["handler"](tool_args)
+            if isinstance(handler_result, dict) and "_mcp_content" in handler_result:
+                return {"jsonrpc": "2.0", "id": req_id, "result": {
+                    "content": handler_result["_mcp_content"], "isError": handler_result.get("_mcp_error", False)}}
             # Most tools return a string. Tools that return an image return
             # a dict with _image/_mime (or _error) so the dispatcher can emit
             # an MCP image content block.
@@ -2334,6 +2337,10 @@ def handle_jsonrpc(request: dict) -> dict:
         "id": req_id,
         "error": {"code": -32601, "message": f"Unknown method: {method}"},
     }
+
+
+from device_tools import build_tools as _device_tools
+TOOLS.update(_device_tools(api_call))
 
 
 def main():

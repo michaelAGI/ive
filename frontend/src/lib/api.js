@@ -42,6 +42,10 @@ export async function request(path, opts = {}) {
   return body;
 }
 export const api = {
+  deviceHubStatus: () => request('/device-hub/status'),
+  deviceHubAction: (operation, data = {}) => request(`/device-hub/${operation}`, {
+    method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(30000),
+  }),
   getSidechatOptions: () => request('/sidechat/options', { signal: AbortSignal.timeout(15000) }),
   askSidechat: data => request('/sidechat/ask', { method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(15000) }),
   getSidechatRequest: id => request(`/sidechat/requests/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(15000) }),

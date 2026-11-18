@@ -3,6 +3,7 @@ ive-local.json
 .venv/
 frontend/node_modules/
 frontend/dist/
+frontend/device-hub-review/
 frontend/src-tauri/target/
 __pycache__/
 *.py[cod]

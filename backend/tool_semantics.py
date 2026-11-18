@@ -306,6 +306,11 @@ def semantic(operation: str, *target_keys: str) -> dict[str, Any]:
 IVE_MCP_SERVERS = frozenset({"worker-board", "documentor", "ive", "builtin-worker-board", "builtin-documentor"})
 
 IVE_MCP_TOOL_SEMANTICS: dict[str, dict[str, Any]] = {
+    "device_list": semantic("read"),
+    "device_observe": semantic("read", "device_id"),
+    "device_setup": semantic("execute", "device_id"),
+    "device_act": semantic("execute", "device_id"),
+    "device_release": semantic("execute", "device_id"),
     # Memory: notes live in IVE's database, never in the project files.
     "save_memory": semantic("store", "name"),
     "search_memory": semantic("read", "query"),

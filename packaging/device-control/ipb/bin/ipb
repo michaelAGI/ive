@@ -1,0 +1,1283 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+SELF="${0:A}"
+ROOT="${0:A:h:h}"
+# Helper lives in libexec/ when installed (Homebrew) and in build/ in a source checkout.
+if [[ -n "${IPB_HELPER:-}" ]]; then BIN="$IPB_HELPER"
+elif [[ -x "$ROOT/libexec/ipb-helper" ]]; then BIN="$ROOT/libexec/ipb-helper"
+else BIN="$ROOT/build/ipb-helper"; fi
+IPB_VERSION_FILE="$ROOT/VERSION"; [[ -f "$IPB_VERSION_FILE" ]] || IPB_VERSION_FILE="$ROOT/share/ipb/VERSION"
+UHID_SERVICE_ID="${UHID_SERVICE_ID:-auto}"
+# Set UHID_SERVICE_FALLBACK (for example 0x101) to keep going with a fixed service id when
+# descriptor discovery fails. Unset, discovery failure is an error.
+UHID_SERVICE_FALLBACK="${UHID_SERVICE_FALLBACK:-}"
+XCODE="${DEVELOPER_DIR:-$(xcode-select -p)}"
+# devicectl ships inside the CoreDevice package; prefer it so no Xcode is needed at runtime.
+DEVICECTL="${DEVICECTL:-/Library/Developer/PrivateFrameworks/CoreDevice.framework/Resources/bin/devicectl}"
+[[ -x "$DEVICECTL" ]] || DEVICECTL="xcrun devicectl"
+# Helper exit codes (see Sources/action_sender.m): 4 means the device tunnel is not connected.
+HIDCTL_EXIT_TUNNEL=4
+TUNNEL_WARMED=0
+
+ACTION="com.apple.coredevice.action.createservicesocket"
+UHID_FEATURE="com.apple.coredevice.feature.remote.universalhidservice"
+BUTTON_FEATURE="com.apple.coredevice.feature.remote.hid.button"
+DIGITIZER_FEATURE="com.apple.coredevice.feature.remote.hid.digitizer"
+SCROLL_FEATURE="com.apple.coredevice.feature.remote.hid.scroll"
+VENDOR_FEATURE="com.apple.coredevice.feature.remote.hid.vendordefined"
+
+quiet_env=(HIDCTL_QUIET=1 HIDCTL_WAIT_MS="${HIDCTL_WAIT_MS:-700}")
+
+usage() {
+  cat <<'EOF'
+usage: ipb [-s <device>] <command> [args...]
+
+ipb drives a physical iPhone from a Mac over Apple's CoreDevice HID path: no
+XCTest, no WebDriverAgent, nothing installed on the phone. Commands marked
+(devicectl) are thin verbs over Apple's own devicectl; the rest speak the HID
+protocol directly.
+
+device selection
+  -s, --device <id>     CoreDevice UUID, a unique prefix of one, or part of the
+                        device name ("12 mini"). DEVICE_ID does the same; the
+                        flag wins. Default: the one wired or tunnelled device.
+  devices               list physical devices: uuid, name, os, transport, tunnel, model
+  device                print the UUID the other commands would use
+  doctor                layered self-check: install, Apple stack, device, DDI, HID services
+  version               ipb, macOS and CoreDevice versions
+  update                host-only update of this Homebrew install or git checkout
+  mcp [--state-dir DIR]  stdio MCP server; tools select a full CoreDevice UUID
+  support --json        static ipb implementation inventory; no device query
+
+input
+  tap <x> <y>                                  a touch, down and up
+  long <x> <y> [seconds]                       press and hold (default 1.0)
+  swipe <x1> <y1> <x2> <y2> [seconds] [hold_seconds]
+  scroll <x> <y> <dx> <dy> [seconds]           drag-style scroll: dx/dy are normalized distances
+  scroll-gesture <x> <y> [dx] [dy] [service_id] [steps]
+                                               trackpad-style scroll; dx/dy are wheel deltas
+  home                                         SpringBoard
+  recents                                      App Switcher
+  power [hold_seconds]                         side button: locks a lit screen, wakes a dark one
+  lock | wake                                  the same press, under the name you want
+  key <usage_or_name> [hold_seconds] [service_id]        one keyboard key
+  text <text>                                   paste at caret/selection; replaces device clipboard
+  text --replace-all <text>                     select all, then paste; replaces device clipboard
+  key-down <usage_or_name> [service_id]        hold a key (paired with key-up)
+  key-up [usage_or_name] [service_id]          release it, or all keys
+  button <usage_page> <usage_code> [hold_seconds]        a hardware button by HID usage
+  pointer <dx> <dy> [button_mask] [service_id] relative pointer probe; effect unverified
+  abs-pointer <x> <y> [buttons] [service_id]   absolute pointer probe (iOS 27 only)
+
+screen
+  screenshot <path>                            (devicectl)
+  screenrecord <path> [seconds]                (devicectl; unsupported on the tested iOS 27.0)
+  stream --dir DIR [--count N] [--fps F] [--seconds S] | --stdout
+                                               live JPEG frames, no DeviceHub
+  mirror [--seconds S] [--csv PATH]            live screen, mouse, keyboard and text clipboard (GUI)
+  ui [--deep [--full-state]] [--json] [--pid PID | --point X Y] read AX tree/frames; --full-state adds separate state (USB)
+  ui hit-test [--point X Y] [--json]           read the actual AX element at a point
+  ui locate <selectors> [--json]               find exact native matches in a fresh snapshot
+  ui wait <selectors> [--wait-for present|absent] [--timeout SECONDS] [--json]
+                                               wait up to 15 seconds; never sends an action
+  ui press <selectors> [--json]                resolve one fresh element and press once
+  ui scroll-to-visible <selectors> [--json]    send one native scroll action; verify its postcondition
+  ui alert-press --pid PID --alert-label TITLE --label BUTTON --json
+                                               explicitly press one visible SpringBoard alert button;
+                                               inspect first with: ui --deep --pid PID
+  ui input <selectors> --text TEXT --replace-all [--json]
+                                               replace all text only in the already-focused native first responder;
+                                               no automatic focus; verify exact post-value, never auto-repeat
+
+  <selectors> = [--identifier ID] [--label TEXT] [--value TEXT] [--class CLASS]
+  Selectors are exact and conjunctive; ambiguous matches fail. --class uses native AX attribute 5003.
+  Repeated labels (for example a button and its child label) can be ambiguous; use an observed
+  identifier or combine known selectors. No fuzzy matching or automatic coordinate fallback.
+  alert-press is a separate semantic action (not a point press); it requires exact alert title and
+  button labels, with no automatic dialog handling, retry, or HID fallback.
+
+apps and processes (devicectl)
+  apps                                         installed apps
+  ps                                           running processes
+  install <app|ipa> | uninstall <bundle-id>
+  launch <bundle-id> [args...]                 terminates a running instance first
+  open <url>                                   open a URL or deep link
+  kill <pid> [signal]
+
+files (devicectl)
+  ls <remote-path> [--app <bundle-id>]         --app reads an app's data container
+  push <local> <remote> [--app <bundle-id>]
+  pull <remote> <local> [--app <bundle-id>]
+
+system (devicectl)
+  info | lock-state                            device details, passcode/lock state
+  displays [--json]                            live displays, orientation and backlight
+  capabilities [--json]                        advertised CoreDevice features (not session guarantees)
+  clipboard get | clipboard set <text>         device pasteboard
+  location <lat> <lon> | location clear        simulate location
+  orientation [portrait|landscapeLeft|landscapeRight|portraitUpsideDown]
+  reboot | sysdiagnose <dir> | pair | unpair
+
+escape hatches
+  devicectl <args...>                          raw devicectl with --device filled in
+  raw <feature> <helper_kind> [args...]        raw helper call
+  help hid                                     the low-level HID report commands
+
+Coordinates are normalized: 0..1 from top-left to bottom-right. Seconds are
+decimal. Set DEVICE_ID in your shell to make a device the default for the
+session; UHID_SERVICE_ID overrides the UniversalHID service (default auto,
+which resolves the touchscreen service from the device's own descriptors), and
+UHID_SERVICE_FALLBACK=0x101 tolerates a discovery failure instead of erroring
+out. IPB_HELPER overrides the built helper path.
+
+Exit codes: 0 ok, 1 the device or connection reported failure, 2 usage or local
+error, 3 device selection or service socket refused, 4 the device tunnel is not
+connected, 5 watchdog timeout. ui press: 6 failure after action submission;
+never retry automatically. stream and mirror define more; see README.md.
+EOF
+}
+
+# The HID report commands: one report on the wire per call, arguments in protocol
+# units. These are for protocol work, not for driving a phone; see docs/protocol.md.
+usage_hid() {
+  cat <<'EOF'
+usage: ipb [-s <device>] <command> [args...]   -- low-level HID commands
+
+service discovery
+  services                                     the device's connected HID descriptors
+  service-ids                                  the service ids UniversalHID knows (host-side)
+  service-id <role>                            resolve one: touchscreen, gesture, keyboard, buttons, avp
+  reset-gesture [service_id]                   clear a stuck gesture state
+
+one report per call
+  uhid-report <service_id> <x> <y> <touching> [in_range]
+  uhid-swipe-report <service_id> <x> <y> <touching> <in_range> <pending> <locked> <up>
+  keyboard-report <service_id> <usage_or_name> <pressed>
+  pointer-report <service_id> <dx> <dy> [button_mask] [accel_x] [accel_y] [flags]
+  scroll-report <service_id> <dx> <dy> [phase] [momentum] [flags] [accel_x] [accel_y]
+  nav-report <service_id> <phase> <swipe_mask> <gesture_motion> <flavor> <progress> <x> <y>
+  dock-report <service_id> <phase> <swipe_mask> <gesture_motion> <flavor> <progress> <x> <y>
+
+standalone HID features
+  digitizer-event <x1> <y1> <x2> <y2> <point2_tag> <event_type|start|position|end> <edge|none|bottom> [target_low] [target_high]
+  scroll-event <x> <y> <z> [phase] [momentum] [target]
+  vendor-defined <usage_page> <usage> <version> [hex_payload]
+
+Pointer dx/dy are signed relative deltas; button_mask is the raw PointerReport
+button mask. Scroll phases follow the captured sequence in docs/protocol.md:
+0x80 mayBegin, 0x01 began, 0x02 changed, 0x04 ended, 0x00 momentum.
+EOF
+}
+
+devicectl() {
+  DEVELOPER_DIR="$XCODE" ${=DEVICECTL} "$@"
+}
+
+# List physical devices: UUID, name, OS, transport, tunnel state (one per line, tab separated).
+list_devices() {
+  local json
+  json="$(mktemp -t ipb-devices)"
+  devicectl list devices --json-output "$json" --quiet >/dev/null 2>&1 || true
+  python3 - "$json" <<'PY'
+import json, sys
+try:
+    devices = json.load(open(sys.argv[1]))["result"]["devices"]
+except Exception as e:
+    print(f"could not list devices: {e}", file=sys.stderr); sys.exit(3)
+for d in devices:
+    hw = d.get("hardwareProperties", {}); cp = d.get("connectionProperties", {}); dp = d.get("deviceProperties", {})
+    if hw.get("reality", "physical") != "physical":
+        continue
+    print("\t".join([d["identifier"], dp.get("name", "?"), f'{dp.get("osVersionNumber", "?")} {dp.get("osBuildUpdate", "")}'.strip(),
+                     cp.get("transportType", "?"), cp.get("tunnelState", "?"), hw.get("marketingName") or hw.get("productType", "?")]))
+PY
+  local rc=$?
+  rm -f "$json"
+  return $rc
+}
+
+# Pick the device. A full CoreDevice UUID is used as given, so the common case costs no
+# enumeration; anything else (a UUID prefix, part of a device name) is matched against the
+# device list here, because devicectl --device accepts neither. With no selector at all,
+# the single wired or tunnelled physical device is used.
+resolve_device() {
+  local sel="${DEVICE_SELECTOR:-}"
+  if [[ "$sel" =~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' ]]; then
+    print -r -- "$sel"
+    return 0
+  fi
+  local json
+  json="$(mktemp -t ipb-devices)"
+  devicectl list devices --json-output "$json" --quiet >/dev/null 2>&1 || true
+  local picked
+  picked="$(python3 - "$json" "$sel" <<'PY'
+import json, sys
+
+HINT = 'pick one with -s <uuid|uuid-prefix|name> or by setting DEVICE_ID'
+
+try:
+    devices = json.load(open(sys.argv[1]))["result"]["devices"]
+except Exception:
+    print("could not list devices; is the CoreDevice package installed?", file=sys.stderr)
+    sys.exit(3)
+selector = sys.argv[2]
+
+physical = []
+for d in devices:
+    hw = d.get("hardwareProperties", {}); cp = d.get("connectionProperties", {})
+    if hw.get("reality", "physical") != "physical":
+        continue
+    physical.append({
+        "id": d["identifier"],
+        "name": d.get("deviceProperties", {}).get("name", "?"),
+        "model": hw.get("marketingName") or hw.get("productType", "?"),
+        "transport": cp.get("transportType", "?"),
+        "tunnel": cp.get("tunnelState", "?"),
+    })
+
+def bail(head, candidates):
+    print(f"{head}; {HINT}:", file=sys.stderr)
+    for c in candidates:
+        print(f"  {c['id']}  {c['name']}  {c['model']}  ({c['transport']}, tunnel {c['tunnel']})",
+              file=sys.stderr)
+    sys.exit(3)
+
+if selector:
+    needle = selector.lower()
+    # Most specific match first: whole id, then a prefix of one, then part of a name or model.
+    for match in (lambda c: c["id"].lower() == needle,
+                  lambda c: c["id"].lower().startswith(needle),
+                  lambda c: needle in c["name"].lower() or needle in c["model"].lower()):
+        hits = [c for c in physical if match(c)]
+        if len(hits) == 1:
+            print(hits[0]["id"])
+            sys.exit(0)
+        if len(hits) > 1:
+            bail(f'"{selector}" matches {len(hits)} devices', hits)
+    bail(f'no device matches "{selector}"', physical)
+
+usable = [c for c in physical if c["transport"] == "wired" or c["tunnel"] == "connected"]
+if len(usable) == 1:
+    print(usable[0]["id"])
+elif physical:
+    bail("no device is wired or tunnelled; connect one over USB", physical)
+elif not usable:
+    print("no physical device found; plug one in over USB, unlock it, and accept Trust",
+          file=sys.stderr)
+    sys.exit(3)
+else:
+    bail(f"{len(usable)} devices are connected", usable)
+PY
+)" || { rm -f "$json"; return 3; }
+  rm -f "$json"
+  print -r -- "$picked"
+}
+
+# Warm the CoreDevice tunnel once; any devicectl device action brings it up and it then persists.
+warm_tunnel() {
+  (( TUNNEL_WARMED )) && return 1
+  TUNNEL_WARMED=1
+  print -u2 "ipb: device tunnel not connected, warming it via devicectl..."
+  devicectl device info details --device "$DEVICE" --timeout 30 >/dev/null 2>&1 || true
+  return 0
+}
+
+# The CoreDevice tunnel is a lease, not a link: it drops roughly 10 s after the last
+# `devicectl device ...` call, and traffic on a service socket does NOT renew it. When it drops,
+# every RemoteXPC connection riding it goes invalid at once, and an in-flight synchronous sender
+# blocks for hundreds of ms to seconds before returning a misleading success
+# (docs/verification.md, 2026-09-14). A short command never notices, because it warms the tunnel and
+# finishes in about a second. A session that runs for minutes has to keep renewing it.
+#
+# The lease is bound to the lifetime of a checked-in devicectl client, not to individual calls:
+# one resident `devicectl device notification observe` holds the tunnel for as long as it runs, and
+# renews nothing -- it simply stays checked in. So this is one child, not a spawn loop. Its own
+# --session-timeout bounds it, so even a SIGKILL of this wrapper cannot leave it holding the device
+# indefinitely. The notification name is never posted; observing is just the cheapest way to stay
+# checked in.
+#
+# TODO(tunnel-keepalive): still a workaround -- it holds the lease by proxy instead of by our own
+# process. No in-process path was found: opening a service socket does not renew, sending actions
+# does not renew, and devicectl never calls the assertion API itself (a daemon takes it at
+# DeviceManagerCheckIn). See docs/verification.md 2026-09-14.
+TUNNEL_KEEPALIVE_PID=""
+start_tunnel_keepalive() {
+  [[ -n "$DEVICE" ]] || return 0
+  local budget="${1:-300}"
+  # Invoke the binary directly, NOT the devicectl() wrapper function: backgrounding a function runs
+  # it in a subshell, so $! would be the subshell and killing it would orphan the real devicectl.
+  DEVELOPER_DIR="$XCODE" ${=DEVICECTL} device notification observe --device "$DEVICE" \
+    --name com.apple.ipb.tunnel.keepalive \
+    --session-timeout "$budget" --timeout "$budget" >/dev/null 2>&1 &
+  TUNNEL_KEEPALIVE_PID=$!
+}
+
+stop_tunnel_keepalive() {
+  [[ -n "$TUNNEL_KEEPALIVE_PID" ]] || return 0
+  # Sweep children too, in case the command ever ends up under an intermediate process.
+  local kid
+  for kid in $(pgrep -P "$TUNNEL_KEEPALIVE_PID" 2>/dev/null); do kill "$kid" 2>/dev/null || true; done
+  kill "$TUNNEL_KEEPALIVE_PID" 2>/dev/null || true
+  wait "$TUNNEL_KEEPALIVE_PID" 2>/dev/null || true
+  TUNNEL_KEEPALIVE_PID=""
+  return 0
+}
+
+# Signals must reach the helper. A foreground child would defer our trap until it returned, so
+# `kill <ipb pid>` could not end a session before --seconds elapsed; the helper therefore runs in
+# the background and we wait on it, which a trapped signal interrupts.
+MIRROR_HELPER_PID=""
+shutdown_mirror() {
+  if [[ -n "$MIRROR_HELPER_PID" ]]; then kill "$MIRROR_HELPER_PID" 2>/dev/null || true; fi
+  stop_tunnel_keepalive
+  return 0
+}
+
+# Resolve the CoreDevice tunnel (device IP, host IP, host utun interface) for the media stream.
+# The device address is connectionProperties.tunnelIPAddress; the host address is the utun
+# interface on this Mac that carries the same /64 (its ::2). Prints "hostIP utun deviceIP".
+# mirror requests a fourth field, productType, from the same device JSON snapshot.
+resolve_tunnel() {
+  local json
+  json="$(mktemp -t ipb-tunnel)"
+  devicectl list devices --json-output "$json" --quiet >/dev/null 2>&1 || true
+  local devip device_metadata product_type=""
+  device_metadata="$(python3 - "$json" "$DEVICE" <<'PY2'
+import json, sys
+try:
+    devs = json.load(open(sys.argv[1]))["result"]["devices"]
+except Exception:
+    sys.exit(3)
+for d in devs:
+    if d.get("identifier") == sys.argv[2]:
+        ip = d.get("connectionProperties", {}).get("tunnelIPAddress")
+        if ip:
+            hardware = d.get("hardwareProperties")
+            product = hardware.get("productType", "") if isinstance(hardware, dict) else ""
+            print(ip + " " + (product if isinstance(product, str) else ""))
+            sys.exit(0)
+sys.exit(3)
+PY2
+)" || { rm -f "$json"; return 3; }
+  rm -f "$json"
+  devip="${device_metadata%% *}"
+  [[ "$device_metadata" == *" "* ]] && product_type="${device_metadata#* }"
+  [[ -n "$devip" ]] || return 3
+  # device IP is <prefix>::1; find the host utun holding <prefix>::2
+  local prefix="${devip%::*}"
+  python3 - "$prefix" "${1:-}" "$product_type" <<'PY3'
+import subprocess, sys
+prefix = sys.argv[1].lower()
+out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
+iface = None
+for line in out.splitlines():
+    if line and not line[0].isspace():
+        iface = line.split(":")[0]
+    s = line.strip()
+    if s.startswith("inet6 ") and iface and iface.startswith("utun"):
+        addr = s.split()[1].split("%")[0].lower()
+        if addr.startswith(prefix + "::"):
+            suffix = " " + sys.argv[3] if sys.argv[2] == "mirror" else ""
+            print(f"{addr} {iface} {prefix}::1" + suffix)
+            sys.exit(0)
+sys.exit(3)
+PY3
+  return $?
+}
+
+# Run the helper; if the service socket cannot be created because the tunnel is down,
+# warm the tunnel and retry once. Nothing has been sent to the device at that point.
+run_helper() {
+  local rc=0
+  "$@" || rc=$?
+  if (( rc == HIDCTL_EXIT_TUNNEL )) && warm_tunnel; then
+    rc=0
+    "$@" || rc=$?
+  fi
+  return $rc
+}
+
+run_uhid() {
+  run_helper env HIDCTL_MERCURY_SERVICE="${HIDCTL_MERCURY_SERVICE:-com.apple.coredevice.hid.universal}" "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$UHID_FEATURE" 0 "$@"
+}
+
+run_button() {
+  run_helper env "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$BUTTON_FEATURE" 0 "$@"
+}
+
+run_digitizer() {
+  run_helper env "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$DIGITIZER_FEATURE" 0 "$@"
+}
+
+run_scroll() {
+  run_helper env "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$SCROLL_FEATURE" 0 "$@"
+}
+
+run_vendor() {
+  run_helper env "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$VENDOR_FEATURE" 0 "$@"
+}
+
+query_metadata() {
+  local kind="$1" format="$2" json rc=0
+  json="$(mktemp -t ipb-metadata)"
+  local verb=displays
+  [[ "$kind" == capabilities ]] && verb=details
+  devicectl device info "$verb" --device "$DEVICE" --timeout 30 --json-output "$json" --quiet >/dev/null || rc=$?
+  if (( rc )); then rm -f "$json"; return $rc; fi
+  python3 - "$json" "$kind" "$format" "$DEVICE" <<'PY' || rc=$?
+import json, sys
+try:
+    result = json.load(open(sys.argv[1]))['result']
+    kind, fmt, device = sys.argv[2:]
+    if kind == 'displays':
+        fields = ('displays', 'orientation', 'backlightState')
+        output = {k: result[k] for k in fields}
+        if not isinstance(output['displays'], list) or not isinstance(output['orientation'], dict):
+            raise ValueError('invalid display metadata')
+    else:
+        entries = result['capabilities']
+        if not isinstance(entries, list) or any(not isinstance(e.get('featureIdentifier'), str) for e in entries):
+            raise ValueError('invalid capability metadata')
+        output = {'capabilities': sorted(entries, key=lambda e: e['featureIdentifier'])}
+    if fmt == '--json':
+        print(json.dumps({'schemaVersion': 1, 'deviceIdentifier': device, **output}, ensure_ascii=False, indent=2))
+    elif kind == 'capabilities':
+        for entry in output['capabilities']:
+            print(entry['featureIdentifier'] + '\t' + entry.get('name', ''))
+    else:
+        print(json.dumps(output, ensure_ascii=False, indent=2))
+except (OSError, KeyError, TypeError, ValueError) as error:
+    print('ipb: invalid device metadata: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+PY
+  rm -f "$json"
+  return $rc
+}
+
+query_ui() {
+  local script="$ROOT/Sources/ipb_ax.py" interpreter="${IPB_AX_PYTHON:-}"
+  if [[ -z "$interpreter" ]]; then
+    interpreter="${XDG_DATA_HOME:-$HOME/.local/share}/ipb/ax-venv/bin/python"
+    [[ -x "$interpreter" ]] || interpreter=python3
+  fi
+  command -v "$interpreter" >/dev/null 2>&1 || { print -u2 "ipb: IPB_AX_PYTHON must name a Python executable"; return 2; }
+  [[ -r "$ROOT/libexec/ipb-ax.py" ]] && script="$ROOT/libexec/ipb-ax.py"
+  [[ -r "$script" ]] || { print -u2 "ipb: AX helper is missing; rebuild/install ipb"; return 2; }
+  if [[ "$*" == *--help* || "$*" == '-h' ]]; then
+    "$interpreter" "$script" "$@"
+    return $?
+  fi
+  DEVICE="$(resolve_device)" || return 3
+  local json udid rc=0
+  json="$(mktemp -t ipb-ui-device)"
+  devicectl list devices --timeout 10 --json-output "$json" --quiet >/dev/null || rc=$?
+  if (( rc )); then rm -f "$json"; return 3; fi
+  udid="$(python3 - "$json" "$DEVICE" <<'PY'
+import json, sys
+try:
+    devices = json.load(open(sys.argv[1]))['result']['devices']
+    matches = [d for d in devices if d.get('identifier') == sys.argv[2]]
+    if len(matches) != 1:
+        raise ValueError('selected device is absent or ambiguous')
+    udid = matches[0]['hardwareProperties']['udid']
+    if not isinstance(udid, str) or not udid:
+        raise ValueError('selected device has no USB identifier')
+    print(udid)
+except (KeyError, ValueError, TypeError, OSError) as error:
+    print('ipb: cannot resolve AX device: ' + str(error), file=sys.stderr)
+    sys.exit(3)
+PY
+  )" || rc=$?
+  rm -f "$json"
+  (( rc == 0 )) || return $rc
+  PYTHONDONTWRITEBYTECODE=1 IPB_AX_DEVICE_ID="$DEVICE" IPB_AX_UDID="$udid" IPB_AX_CLI="$SELF" \
+    "$interpreter" "$script" "$@"
+}
+
+descriptor_output() {
+  run_uhid cd_connected_descriptors_async_raw
+}
+
+service_pattern_for_role() {
+  case "$1" in
+    touchscreen|touch|main-touchscreen|main)
+      print -r -- 'string:"CoreDevice touchscreen('
+      ;;
+    gesture|touchscreen-gesture|trackpad)
+      print -r -- 'string:"CoreDevice touchscreenGesture"'
+      ;;
+    keyboard|main-keyboard)
+      print -r -- 'string:"CoreDevice keyboard"'
+      ;;
+    buttons|screen-buttons|main-screen-buttons)
+      print -r -- 'string:"CoreDevice mainScreenButtons"'
+      ;;
+    avp|avp-custom)
+      print -r -- 'string:"CoreDevice avpCustom"'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+fallback_for_role() {
+  case "$1" in
+    touchscreen|touch|main-touchscreen|main) print -r -- "${UHID_SERVICE_FALLBACK:-0x101}" ;;
+    gesture|touchscreen-gesture|trackpad) print -r -- "0x501" ;;
+    keyboard|main-keyboard) print -r -- "0x200" ;;
+    buttons|screen-buttons|main-screen-buttons) print -r -- "0x402" ;;
+    avp|avp-custom) print -r -- "0x500" ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_service_id() {
+  local role="${1:-touchscreen}"
+  local pattern fallback output resolved
+
+  if [[ "$role" == <-> || "$role" == 0x* ]]; then
+    print -r -- "$role"
+    return 0
+  fi
+
+  pattern="$(service_pattern_for_role "$role")" || {
+    print -u2 "unknown service role: $role"
+    return 2
+  }
+  fallback="$(fallback_for_role "$role")"
+  local discovery_rc=0
+  output="$(descriptor_output)" || discovery_rc=$?
+  resolved="$(
+    print -r -- "$output" | awk -v pattern="$pattern" '
+      $0 ~ /^connectedDescriptor\[/ && index($0, pattern) > 0 {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^serviceID:/) {
+            sub(/^serviceID:/, "", $i)
+            print $i
+            exit
+          }
+        }
+      }
+    '
+  )"
+
+  if [[ -n "$resolved" ]]; then
+    print -r -- "$resolved"
+  elif [[ -n "$UHID_SERVICE_FALLBACK" && -n "$fallback" ]]; then
+    print -u2 "ipb: descriptor discovery failed (rc=$discovery_rc); using fallback $fallback for role $role"
+    print -r -- "$fallback"
+  else
+    print -u2 "ipb: could not resolve service id for role $role (discovery rc=$discovery_rc); set UHID_SERVICE_ID or UHID_SERVICE_FALLBACK"
+    return 3
+  fi
+}
+
+resolve_uhid_service_id() {
+  local requested="${1:-$UHID_SERVICE_ID}"
+  case "$requested" in
+    ""|auto)
+      resolve_service_id touchscreen
+      ;;
+    *)
+      resolve_service_id "$requested"
+      ;;
+  esac
+}
+
+keyboard_usage() {
+  local key="${1:l}"
+
+  if [[ "$key" == <-> || "$key" == 0x* ]]; then
+    print -r -- "$key"
+    return 0
+  fi
+
+  case "$key" in
+    a) print -r -- "0x04" ;; b) print -r -- "0x05" ;; c) print -r -- "0x06" ;;
+    d) print -r -- "0x07" ;; e) print -r -- "0x08" ;; f) print -r -- "0x09" ;;
+    g) print -r -- "0x0a" ;; h) print -r -- "0x0b" ;; i) print -r -- "0x0c" ;;
+    j) print -r -- "0x0d" ;; k) print -r -- "0x0e" ;; l) print -r -- "0x0f" ;;
+    m) print -r -- "0x10" ;; n) print -r -- "0x11" ;; o) print -r -- "0x12" ;;
+    p) print -r -- "0x13" ;; q) print -r -- "0x14" ;; r) print -r -- "0x15" ;;
+    s) print -r -- "0x16" ;; t) print -r -- "0x17" ;; u) print -r -- "0x18" ;;
+    v) print -r -- "0x19" ;; w) print -r -- "0x1a" ;; x) print -r -- "0x1b" ;;
+    y) print -r -- "0x1c" ;; z) print -r -- "0x1d" ;;
+    1) print -r -- "0x1e" ;; 2) print -r -- "0x1f" ;; 3) print -r -- "0x20" ;;
+    4) print -r -- "0x21" ;; 5) print -r -- "0x22" ;; 6) print -r -- "0x23" ;;
+    7) print -r -- "0x24" ;; 8) print -r -- "0x25" ;; 9) print -r -- "0x26" ;;
+    0) print -r -- "0x27" ;;
+    enter|return) print -r -- "0x28" ;;
+    escape|esc) print -r -- "0x29" ;;
+    delete|backspace) print -r -- "0x2a" ;;
+    tab) print -r -- "0x2b" ;;
+    space) print -r -- "0x2c" ;;
+    minus|hyphen|dash) print -r -- "0x2d" ;;
+    equal|equals) print -r -- "0x2e" ;;
+    left-bracket|lbracket) print -r -- "0x2f" ;;
+    right-bracket|rbracket) print -r -- "0x30" ;;
+    backslash) print -r -- "0x31" ;;
+    semicolon) print -r -- "0x33" ;;
+    quote|apostrophe) print -r -- "0x34" ;;
+    grave|backtick) print -r -- "0x35" ;;
+    comma) print -r -- "0x36" ;;
+    period|dot) print -r -- "0x37" ;;
+    slash) print -r -- "0x38" ;;
+    caps-lock|capslock) print -r -- "0x39" ;;
+    f1) print -r -- "0x3a" ;; f2) print -r -- "0x3b" ;; f3) print -r -- "0x3c" ;;
+    f4) print -r -- "0x3d" ;; f5) print -r -- "0x3e" ;; f6) print -r -- "0x3f" ;;
+    f7) print -r -- "0x40" ;; f8) print -r -- "0x41" ;; f9) print -r -- "0x42" ;;
+    f10) print -r -- "0x43" ;; f11) print -r -- "0x44" ;; f12) print -r -- "0x45" ;;
+    right|arrow-right) print -r -- "0x4f" ;;
+    left|arrow-left) print -r -- "0x50" ;;
+    down|arrow-down) print -r -- "0x51" ;;
+    up|arrow-up) print -r -- "0x52" ;;
+    left-control|lctrl|ctrl) print -r -- "0xe0" ;;
+    left-shift|lshift|shift) print -r -- "0xe1" ;;
+    left-option|loption|alt|option) print -r -- "0xe2" ;;
+    left-command|lcommand|cmd|command) print -r -- "0xe3" ;;
+    right-control|rctrl) print -r -- "0xe4" ;;
+    right-shift|rshift) print -r -- "0xe5" ;;
+    right-option|roption) print -r -- "0xe6" ;;
+    right-command|rcommand) print -r -- "0xe7" ;;
+    *)
+      print -u2 "unknown keyboard usage: $1"
+      return 2
+      ;;
+  esac
+}
+
+scroll_phase() {
+  local phase="${1:l}"
+  case "$phase" in
+    ""|undefined|none) print -r -- "0x0" ;;
+    began|begin|start) print -r -- "0x1" ;;
+    changed|change|move|moved) print -r -- "0x2" ;;
+    ended|end) print -r -- "0x4" ;;
+    cancelled|canceled|cancel) print -r -- "0x8" ;;
+    may-begin|maybegin) print -r -- "0x80" ;;
+    <->|0x*) print -r -- "$phase" ;;
+    *)
+      print -u2 "unknown scroll phase: $1"
+      return 2
+      ;;
+  esac
+}
+
+scroll_momentum() {
+  local momentum="${1:l}"
+  case "$momentum" in
+    ""|undefined|none) print -r -- "0x0" ;;
+    continue|continued) print -r -- "0x1" ;;
+    start|began|begin) print -r -- "0x2" ;;
+    end|ended) print -r -- "0x4" ;;
+    will-begin|willbegin) print -r -- "0x8" ;;
+    interrupted|interrupt) print -r -- "0x10" ;;
+    <->|0x*) print -r -- "$momentum" ;;
+    *)
+      print -u2 "unknown scroll momentum: $1"
+      return 2
+      ;;
+  esac
+}
+
+scroll_target() {
+  local target="${1:l}"
+  case "$target" in
+    ""|digital-crown|digitalcrown|crown) print -r -- "0x0" ;;
+    dial) print -r -- "0x1" ;;
+    <->|0x*) print -r -- "$target" ;;
+    *)
+      print -u2 "unknown scroll target: $1"
+      return 2
+      ;;
+  esac
+}
+
+digitizer_event_type() {
+  local event="${1:l}"
+  case "$event" in
+    start|begin|began) print -r -- "0x0" ;;
+    position|move|moved|change|changed) print -r -- "0x1" ;;
+    end|ended) print -r -- "0x2" ;;
+    <->|0x*) print -r -- "$event" ;;
+    *)
+      print -u2 "unknown digitizer event type: $1"
+      return 2
+      ;;
+  esac
+}
+
+digitizer_edge() {
+  local edge="${1:l}"
+  case "$edge" in
+    none|undefined|no-edge) print -r -- "0x0" ;;
+    bottom|bottom-edge|from-bottom|from-bottom-edge) print -r -- "0x3" ;;
+    <->|0x*) print -r -- "$edge" ;;
+    *)
+      print -u2 "unknown digitizer edge: $1"
+      return 2
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# doctor: layered self-check. Each line is PASS / FAIL / WARN / UNKNOWN with a next step.
+DOCTOR_FAILS=0
+d_line() { printf '%-7s %-28s %s\n' "$1" "$2" "$3"; [[ "$1" == FAIL ]] && DOCTOR_FAILS=$((DOCTOR_FAILS + 1)); return 0; }
+d_pass() { d_line PASS "$1" "$2"; }
+d_fail() { d_line FAIL "$1" "$2"; }
+d_warn() { d_line WARN "$1" "$2"; }
+d_unk()  { d_line UNKNOWN "$1" "$2"; }
+
+doctor() {
+  local v cd_ver merc_ver uhid_ver arch dev_line os transport tunnel name model ddi lock desc count gesture os_major
+
+  print -r -- "== ipb doctor =="
+  print -r -- "-- local install"
+  v="$(cat "$IPB_VERSION_FILE" 2>/dev/null || print -r -- unknown)"
+  d_pass "ipb" "$v at $SELF"
+  if [[ -x "$BIN" ]]; then
+    arch="$(lipo -archs "$BIN" 2>/dev/null || print -r -- '?')"
+    d_pass "helper" "$BIN ($arch)"
+  else
+    d_fail "helper" "$BIN missing or not executable; run make, or brew reinstall --HEAD ipb"
+  fi
+  command -v python3 >/dev/null 2>&1 && d_pass "python3" "$(python3 --version 2>&1)" || d_fail "python3" "needed for device selection; install Xcode CLT or python3"
+
+  print -r -- "-- Apple host stack"
+  if [[ -x "${DEVICECTL%% *}" ]] || command -v ${=DEVICECTL} >/dev/null 2>&1; then
+    d_pass "devicectl" "$(devicectl --version 2>/dev/null || print -r -- '?') at ${DEVICECTL}"
+  else
+    d_fail "devicectl" "not found; install Xcode 27 beta (it installs the CoreDevice package)"
+  fi
+  cd_ver="$(plutil -p /Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/Info.plist 2>/dev/null | awk -F'"' '/CFBundleVersion/ {print $4}')"
+  if [[ -z "$cd_ver" ]]; then d_fail "CoreDevice" "package absent; install Xcode 27 beta and launch it once"
+  elif (( ${cd_ver%%.*} < 636 )); then d_fail "CoreDevice" "$cd_ver is older than 636; HID services need the Xcode 27 beta package"
+  else d_pass "CoreDevice" "$cd_ver (verified: 642.15)"; fi
+  merc_ver="$(plutil -p /Library/Apple/System/Library/PrivateFrameworks/Mercury.framework/Versions/A/Resources/Info.plist 2>/dev/null | awk -F'"' '/CFBundleVersion/ {print $4}')"
+  [[ -n "$merc_ver" ]] && d_pass "Mercury" "$merc_ver" || d_fail "Mercury" "missing; comes with Xcode's MobileDevice package"
+  uhid_ver="$(plutil -p /Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Frameworks/UniversalHID.framework/Versions/A/Resources/Info.plist 2>/dev/null | awk -F'"' '/CFBundleVersion/ {print $4}')"
+  [[ -n "$uhid_ver" ]] && d_pass "UniversalHID" "$uhid_ver (embedded in CoreDevice)" || d_fail "UniversalHID" "embedded framework missing; CoreDevice package too old"
+  d_line INFO "macOS" "$(sw_vers -productVersion) $(sw_vers -buildVersion) (verified: 27.0 beta 8, 26.5.1)"
+
+  print -r -- "-- device"
+  local devices; devices="$(list_devices 2>/dev/null)" || devices=""
+  if [[ -z "$devices" ]]; then
+    d_fail "enumeration" "no physical device listed; plug in over USB, unlock, accept Trust"
+  else
+    d_pass "enumeration" "$(print -r -- "$devices" | wc -l | tr -d ' ') physical device(s) known to CoreDevice"
+  fi
+  local selected="" sel_rc=0
+  selected="$(resolve_device 2>/tmp/ipb-doctor-sel.err)" || sel_rc=$?
+  if (( sel_rc != 0 )); then
+    d_fail "selection" "$(tr '\n' ' ' </tmp/ipb-doctor-sel.err)"
+    rm -f /tmp/ipb-doctor-sel.err
+    print -r -- "== result: $DOCTOR_FAILS failure(s); device checks skipped =="
+    return 1
+  fi
+  rm -f /tmp/ipb-doctor-sel.err
+  DEVICE="$selected"
+  dev_line="$(print -r -- "$devices" | awk -F'\t' -v id="$DEVICE" '$1 == id')"
+  if [[ -z "$dev_line" ]]; then
+    d_fail "selection" "$DEVICE is not a device CoreDevice knows; use a UUID from 'ipb devices'"
+    print -r -- "== result: $DOCTOR_FAILS failure(s); device checks skipped =="
+    return 1
+  fi
+  name="$(print -r -- "$dev_line" | cut -f2)"; os="$(print -r -- "$dev_line" | cut -f3)"
+  transport="$(print -r -- "$dev_line" | cut -f4)"; tunnel="$(print -r -- "$dev_line" | cut -f5)"; model="$(print -r -- "$dev_line" | cut -f6)"
+  d_pass "selected" "$DEVICE  $name ($model) iOS $os"
+  os_major="${os%%.*}"
+  if [[ "$os_major" == <27-> || "$os_major" == 26 ]]; then d_pass "iOS version" "$os (verified: 27.0, 26.6.1)"
+  else d_warn "iOS version" "$os not in the verified matrix"; fi
+  [[ "$transport" == wired ]] && d_pass "transport" "wired" || d_warn "transport" "$transport; DDI mounting was seen to fail over the network, prefer USB"
+  d_line INFO "tunnel (before)" "$tunnel"
+
+  print -r -- "-- developer disk image"
+  ddi="$(devicectl device info ddiServices --device "$DEVICE" --timeout 60 2>&1)"
+  if print -r -- "$ddi" | grep -q 'isUsable: true'; then
+    d_pass "DDI" "$(print -r -- "$ddi" | awk '/buildUpdate:/ {b=$3} /CoreDevice-/ {c=$2} END {print b, c}') usable and compatible"
+  else
+    d_fail "DDI" "$(print -r -- "$ddi" | grep -E 'ERROR|Error' | head -1 | cut -c1-160); is Developer Mode on and the phone unlocked?"
+  fi
+  lock="$(devicectl device info lockState --device "$DEVICE" --timeout 30 2>/dev/null | awk '/passcodeRequired:/ {print $3}')"
+  case "$lock" in
+    false) d_pass "lock state" "unlocked" ;;
+    true)  d_warn "lock state" "locked: HID reports are accepted but nothing is shown; unlock before tapping" ;;
+    *)     d_unk "lock state" "could not read lockState" ;;
+  esac
+
+  print -r -- "-- HID services (opens a service socket; warms the tunnel if needed)"
+  desc="$(run_uhid cd_connected_descriptors_async_raw 2>&1)" || {
+    d_fail "descriptors" "$(print -r -- "$desc" | grep -E 'refused|failed|error' | head -1 | cut -c1-160)"
+    print -r -- "== result: $DOCTOR_FAILS failure(s) =="
+    return 1
+  }
+  count="$(print -r -- "$desc" | awk '/connected descriptors count=/ {sub(/.*count=/, ""); print}')"
+  d_pass "descriptors" "$count service(s): $(print -r -- "$desc" | grep '^connectedDescriptor' | grep -o 'string:"[^"]*"' | sed 's/string://' | tr '\n' ' ')"
+  gesture=0; print -r -- "$desc" | grep -q touchscreenGesture && gesture=1
+  if [[ "$os_major" == <27-> && $gesture -eq 0 ]]; then d_fail "touchscreenGesture" "expected on iOS $os_major but absent; pointer/scroll-report will fail"
+  elif (( gesture )); then d_pass "touchscreenGesture" "present (pointer, scroll-report available)"
+  else d_line INFO "touchscreenGesture" "absent on iOS $os_major; pointer and scroll-report are iOS 27 only"; fi
+  d_line INFO "tunnel (after)" "$(list_devices 2>/dev/null | awk -F'\t' -v id="$DEVICE" '$1 == id {print $5}')"
+
+  print -r -- "== result: $DOCTOR_FAILS failure(s) =="
+  (( DOCTOR_FAILS == 0 ))
+}
+# ---------------------------------------------------------------------------
+
+# Device selection comes from -s/--device or DEVICE_ID; the flag wins. It is read before the
+# command so that the deferred resolutions (doctor, mirror) see the same selector.
+DEVICE_SELECTOR="${DEVICE_ID:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s|--device)
+      [[ $# -ge 2 ]] || { print -u2 "ipb: $1 needs a device (uuid, uuid prefix, or part of a name)"; exit 2; }
+      DEVICE_SELECTOR="$2"; shift 2 ;;
+    --device=*) DEVICE_SELECTOR="${1#--device=}"; shift ;;
+    *) break ;;
+  esac
+done
+
+cmd="${1:-}"
+[[ -n "$cmd" ]] || { usage; exit 2; }
+shift || true
+
+case "$cmd" in
+  service-ids|ids|help|-h|--help|version|--version|devices|doctor|mirror|ui|update|mcp|support) DEVICE="" ;;
+  *) DEVICE="$(resolve_device)" || exit 3 ;;
+esac
+
+case "$cmd" in
+  mcp)
+    mcp_script="$ROOT/Sources/ipb_mcp.py"
+    [[ -r "$ROOT/libexec/ipb_mcp.py" ]] && mcp_script="$ROOT/libexec/ipb_mcp.py"
+    [[ -r "$mcp_script" ]] || { print -u2 "ipb: MCP helper is missing; rebuild/install ipb"; exit 2; }
+    exec "${IPB_MCP_PYTHON:-${IPB_AX_PYTHON:-python3}}" "$mcp_script" "$@" --cli "$SELF"
+    ;;
+  support)
+    [[ $# -eq 1 && "$1" == --json ]] || { print -u2 "usage: ipb support --json"; exit 2; }
+    support_script="$ROOT/Sources/ipb_support.py"
+    [[ -r "$ROOT/libexec/ipb-support.py" ]] && support_script="$ROOT/libexec/ipb-support.py"
+    [[ -r "$support_script" ]] || { print -u2 "ipb: support helper is missing; rebuild/install ipb"; exit 2; }
+    python3 "$support_script" --json
+    ;;
+  ui)
+    query_ui "$@"
+    ;;
+  tap|click)
+    [[ $# -eq 2 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id)"
+    run_uhid cd_uhid_tap "$service_id" "$1" "$2"
+    ;;
+  long|press|longpress)
+    [[ $# -eq 2 || $# -eq 3 ]] || { usage; exit 2; }
+    run_digitizer cd_digitizer_long "$1" "$2" 0 0 "${3:-0.9}"
+    ;;
+  swipe|drag)
+    [[ $# -ge 4 && $# -le 6 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id)"
+    run_uhid cd_uhid_swipe "$service_id" "$1" "$2" "$3" "$4" "${5:-0.30}" "${6:-0}"
+    ;;
+  scroll)
+    [[ $# -ge 4 && $# -le 5 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id)"
+    run_uhid cd_uhid_scroll "$service_id" "$1" "$2" "$3" "$4" "${5:-0.35}"
+    ;;
+  home)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    run_button cd_home_button
+    ;;
+  power|lock|wake)
+    # Consumer page 0x0c, usage 0x30 (kHIDUsage_Csmr_Power), held. This is the
+    # side button, and like the side button it TOGGLES: a screen that is on goes
+    # off and locks, a screen that is off wakes to the lock screen. `lock` and
+    # `wake` are the same press under the two names people reach for.
+    #
+    # The hold is not cosmetic. The side button is duration-gated and the boundary is sharp:
+    # 0.28 s does nothing, 0.29 s locks (measured 2026-09-15), and it is the SAME on wired and
+    # localNetwork, so this is not a transport parameter. A 0.08 s press does nothing at all.
+    #
+    # Default 0.4 s: ~1.38x the boundary, which buys margin because press and release are two
+    # separate sends with the network between them and jitter shortens the interval the device
+    # actually sees. 0.7 s once opened Siri, so the usable band is roughly 0.3-0.6 s.
+    #
+    # This supersedes an earlier sweep recorded here that called 0.40 and 0.45 s inert and only
+    # 0.60 s a lock. That sweep is contradicted by three later measurements -- a screenshot-verified
+    # 0.40 s lock, a 0.35 s lock on two devices, and the 0.28/0.29 boundary above -- and its own
+    # comment already warned the mapping was "measured but not settled". The likely error is the one
+    # this repo hit again on 2026-09-15: a screenshot that failed to write being read as "no change".
+    #
+    # Waking stops at the lock screen; the passcode is still the user's to enter.
+    run_button cd_button_click 0x0c 0x30 "${1:-0.4}"
+    ;;
+  recents|app-switcher|switcher)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    # AppleVendorKeyboard 0xff01/0x10 opens the switcher directly. The digitizer swipe this
+    # replaced took 1.66 s and only approximated the real gesture; see docs/verification.md.
+    run_button cd_recents_button
+    ;;
+  stream)
+    # ipb stream --dir DIR [--count N] [--fps F] [--seconds S] | --stdout
+    (( $# >= 1 )) || { usage; exit 2; }
+    warm_tunnel >/dev/null 2>&1 || true
+    tun="$(resolve_tunnel)" || { print -u2 "ipb: could not resolve the device tunnel (is the device connected?)"; exit 4; }
+    hostip="${tun%% *}"; rest="${tun#* }"; utun="${rest%% *}"; devip="${rest##* }"
+    VBIN="${IPB_VIDEO_HELPER:-}"
+    if [[ -z "$VBIN" ]]; then
+      if [[ -x "$ROOT/libexec/ipb-video" ]]; then VBIN="$ROOT/libexec/ipb-video"
+      else VBIN="$ROOT/build/ipb-video"; fi
+    fi
+    [[ -x "$VBIN" ]] || { print -u2 "ipb: video helper not built; run 'make' (expected $VBIN)"; exit 2; }
+    exec "$VBIN" "$DEVICE" "$utun" "$hostip" "$devip" "$@"
+    ;;
+  mirror)
+    MBIN="${IPB_MIRROR_HELPER:-}"
+    if [[ -z "$MBIN" ]]; then
+      if [[ -x "$ROOT/libexec/ipb-mirror" ]]; then MBIN="$ROOT/libexec/ipb-mirror"
+      else MBIN="$ROOT/build/ipb-mirror"; fi
+    fi
+    [[ -x "$MBIN" ]] || { print -u2 "ipb: mirror helper not built; run 'make' (expected $MBIN)"; exit 2; }
+    if [[ $# -eq 1 && ( "$1" == --help || "$1" == -h ) ]]; then
+      exec "$MBIN" --help
+    fi
+    (( $# % 2 == 0 )) || { usage; exit 2; }
+    DEVICE="$(resolve_device)" || exit 3
+    warm_tunnel >/dev/null 2>&1 || true
+    tun="$(resolve_tunnel mirror)" || { print -u2 "ipb: could not resolve the device tunnel (is the device connected?)"; exit 4; }
+    hostip="${tun%% *}"; rest="${tun#* }"; utun="${rest%% *}"; rest="${rest#* }"
+    devip="${rest%% *}"; product_type=""
+    [[ "$rest" == *" "* ]] && product_type="${rest#* }"
+    # Bound the keepalive to this session: mirror's own default is 300 s and its cap is 3600 s.
+    keepalive_budget=300
+    for ((i = 1; i <= $#; i++)); do
+      if [[ "${(P)i}" == --seconds ]]; then
+        next=$((i + 1)); (( next <= $# )) && keepalive_budget="${(P)next}"
+      fi
+    done
+    [[ "$keepalive_budget" == <-> ]] || keepalive_budget=300
+    keepalive_budget=$(( keepalive_budget + 30 ))
+    (( keepalive_budget > 3630 )) && keepalive_budget=3630
+
+    IPB_DEVICECTL_PATH="$DEVICECTL" "$MBIN" "$DEVICE" "$utun" "$hostip" "$devip" "$product_type" "$@" &
+    MIRROR_HELPER_PID=$!
+    start_tunnel_keepalive "$keepalive_budget"
+    trap 'shutdown_mirror' INT TERM
+    trap 'stop_tunnel_keepalive' EXIT
+    wait "$MIRROR_HELPER_PID"
+    mirror_rc=$?
+    stop_tunnel_keepalive
+    exit $mirror_rc
+    ;;
+  screenshot)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    devicectl device capture screenshot --device "$DEVICE" --destination "$1" --quiet
+    ;;
+  services|descriptors|probe-descriptors)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    descriptor_output
+    ;;
+  probe-services|probe-connected-services)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    run_uhid cd_connected_services
+    ;;
+  service-id|resolve-service)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    resolve_service_id "$1"
+    ;;
+  update)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    # A Homebrew install has no .git; a source checkout does. Update whichever this is.
+    if [[ -d "$ROOT/.git" ]]; then
+      print -r -- "ipb: source checkout at $ROOT"
+      git -C "$ROOT" pull --ff-only || { print -u2 "ipb: git pull failed (local changes?); resolve and re-run"; exit 1; }
+      make -C "$ROOT" || { print -u2 "ipb: build failed"; exit 1; }
+      print -r -- "ipb: updated to $(cat "$IPB_VERSION_FILE" 2>/dev/null || print -r -- unknown)"
+    elif command -v brew >/dev/null 2>&1 && brew list --formula ipb >/dev/null 2>&1 &&
+         brew_root="$(brew --prefix ipb 2>/dev/null)" && [[ "${brew_root:A}" == "$ROOT" ]]; then
+      print -r -- "ipb: Homebrew install; updating tap and formula"
+      brew update || true
+      installed="$(brew list --versions ipb 2>/dev/null | awk '{print $2}')"
+      formula_info="$(brew info --json=v2 ipb 2>/dev/null || true)"
+      if [[ "$installed" == HEAD-* ]]; then
+        head_url="$(print -r -- "$formula_info" | python3 -c \
+          'import json,sys; print(json.load(sys.stdin)["formulae"][0]["urls"]["head"]["url"])' 2>/dev/null)"
+        remote=""
+        [[ -n "$head_url" ]] && remote="$(git ls-remote "$head_url" HEAD 2>/dev/null | awk 'NR==1 {print substr($1, 1, 7)}')"
+        if [[ -n "$remote" && "$installed" == "HEAD-$remote" ]]; then
+          print -r -- "ipb: already at the latest HEAD ($installed)"
+          exit 0
+        fi
+        # brew upgrade --fetch-HEAD can compare against a stale cached clone. Compare the
+        # live remote SHA and reinstall only this formula when its main branch has moved.
+        brew reinstall ipb || { print -u2 "ipb: brew reinstall failed"; exit 1; }
+        updated="$(brew list --versions ipb 2>/dev/null | awk '{print $2}')"
+        if [[ -n "$remote" && "$updated" != "HEAD-$remote" ]]; then
+          print -u2 -- "ipb: reinstall finished at ${updated:-unknown}, but the remote HEAD is $remote"
+          exit 1
+        fi
+      else
+        stable="$(print -r -- "$formula_info" | python3 -c \
+          'import json,sys; print(json.load(sys.stdin)["formulae"][0].get("versions",{}).get("stable") or "")' 2>/dev/null)"
+        if [[ -z "$installed" || -z "$stable" ]]; then
+          print -u2 -- "ipb: could not determine the installed and current stable Homebrew versions"
+          exit 1
+        fi
+        if [[ "$installed" == "$stable" ]]; then
+          print -r -- "ipb: already at the latest stable release ($installed)"
+          exit 0
+        fi
+        brew upgrade ipb || { print -u2 "ipb: brew upgrade failed"; exit 1; }
+        updated="$(brew list --versions ipb 2>/dev/null | awk '{print $2}')"
+        if [[ "$updated" != "$stable" ]]; then
+          print -u2 -- "ipb: upgrade finished at ${updated:-unknown}, but the formula stable version is $stable"
+          exit 1
+        fi
+      fi
+      brew_prefix="$(brew --prefix ipb 2>/dev/null || true)"
+      brew_ipb="${brew_prefix}/bin/ipb"
+      print -r -- "ipb: updated ${installed:-unknown} -> ${updated:-unknown} $("$brew_ipb" version 2>/dev/null || true)"
+    else
+      print -u2 "ipb: manual install at $ROOT; update manually from its source checkout"
+      print -u2 "  git -C <checkout> pull --ff-only"
+      print -u2 "  make -C <checkout> install PREFIX=\"$ROOT\""
+      exit 2
+    fi
+    ;;
+  help|-h|--help)
+    [[ $# -le 1 ]] || { usage; exit 2; }
+    case "${1:-}" in
+      "") usage ;;
+      hid|protocol|reports) usage_hid ;;
+      *) print -u2 "ipb: no help topic \"$1\"; try 'ipb help' or 'ipb help hid'"; exit 2 ;;
+    esac
+    ;;
+  devices)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    list_devices
+    ;;
+  doctor)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    doctor
+    ;;
+  device)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    print -r -- "$DEVICE"
+    ;;
+  version|--version)
+    v="$(cat "$IPB_VERSION_FILE" 2>/dev/null || print -r -- unknown)"
+    cd_ver="$(plutil -p /Library/Developer/PrivateFrameworks/CoreDevice.framework/Versions/A/Resources/Info.plist 2>/dev/null | awk -F'"' '/CFBundleVersion/ {print $4}')"
+    print -r -- "ipb $v (macOS $(sw_vers -productVersion) $(sw_vers -buildVersion), CoreDevice ${cd_ver:-absent})"
+    ;;
+  service-ids|ids)
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    env "${quiet_env[@]}" "$BIN" "${DEVICE_SELECTOR:-host}" "$ACTION" "$UHID_FEATURE" 0 cd_hid_service_ids
+    ;;
+  reset-gesture)
+    [[ $# -le 1 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id "${1:-$UHID_SERVICE_ID}")"
+    run_uhid cd_reset_gesture "$service_id"
+    ;;
+  pointer|mouse-move)
+    [[ $# -ge 2 && $# -le 4 ]] || { usage; exit 2; }
+    service_id="$(resolve_service_id "${4:-gesture}")"
+    run_uhid cd_pointer_report "$service_id" "$1" "$2" "${3:-0}"
+    ;;
+  key)
+    [[ $# -ge 1 && $# -le 3 ]] || { usage; exit 2; }
+    usage_code="$(keyboard_usage "$1")"
+    service_id="$(resolve_service_id "${3:-keyboard}")"
+    run_uhid cd_key "$service_id" "$usage_code" "${2:-0.08}"
+    ;;
+  text)
+    if [[ $# -eq 1 && -n "$1" ]]; then
+      paste_text="$1"
+      paste_kind=cd_paste
+      paste_mode=paste
+    elif [[ $# -eq 2 && "$1" == --replace-all && -n "$2" ]]; then
+      paste_text="$2"
+      paste_kind=cd_replace_paste
+      paste_mode=replace-all
+    else
+      print -u2 'usage: ipb text <non-empty text> | ipb text --replace-all <non-empty text>'
+      exit 2
+    fi
+    # Discover before changing the clipboard. Copy exactly once, then submit one
+    # captured keyboard sequence. No automatic retry of a partially sent action.
+    service_id="$(resolve_service_id keyboard)"
+    print -rn -- "$paste_text" | devicectl device pasteboard copy --device "$DEVICE" --timeout 30 --quiet || {
+      print -u2 'ipb text: clipboard write failed; paste was not sent'; exit 1;
+    }
+    run_uhid "$paste_kind" "$service_id" || {
+      paste_rc=$?
+      print -u2 "ipb text: clipboard was written, but $paste_mode failed; do not blindly retry"; exit $paste_rc;
+    }
+    if [[ "$paste_mode" == replace-all ]]; then
+      print -u2 'ipb text: replace-all paste submitted; clipboard replaced. Verify the focused field to confirm insertion.'
+    else
+      print -u2 'ipb text: paste submitted at the focused field caret/selection; clipboard replaced. Verify the field to confirm insertion.'
+    fi
+    ;;
+  key-down|keyboard-down)
+    [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 2; }
+    usage_code="$(keyboard_usage "$1")"
+    service_id="$(resolve_service_id "${2:-keyboard}")"
+    run_uhid cd_key_report "$service_id" "$usage_code" 1
+    ;;
+  key-up|keyboard-up)
+    [[ $# -le 2 ]] || { usage; exit 2; }
+    usage_code="$(keyboard_usage "${1:-0x0}")"
+    service_id="$(resolve_service_id "${2:-keyboard}")"
+    run_uhid cd_key_report "$service_id" "$usage_code" 0
+    ;;
+  button)
+    [[ $# -eq 2 || $# -eq 3 ]] || { usage; exit 2; }
+    run_button cd_button_click "$1" "$2" "${3:-0.08}"
+    ;;
+  scroll-event)
+    [[ $# -ge 3 && $# -le 6 ]] || { usage; exit 2; }
+    phase="$(scroll_phase "${4:-undefined}")"
+    momentum="$(scroll_momentum "${5:-undefined}")"
+    target="$(scroll_target "${6:-digital-crown}")"
+    run_scroll cd_scroll_event "$1" "$2" "$3" "$phase" "$momentum" "$target"
+    ;;
+  vendor-defined)
+    [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
+    run_vendor cd_vendor_defined "$1" "$2" "$3" "${4:-}"
+    ;;
+  keyboard-report)
+    [[ $# -eq 3 ]] || { usage; exit 2; }
+    usage_code="$(keyboard_usage "$2")"
+    run_uhid cd_key_report "$1" "$usage_code" "$3"
+    ;;
+  pointer-report)
+    [[ $# -ge 3 && $# -le 7 ]] || { usage; exit 2; }
+    run_uhid cd_pointer_report "$1" "$2" "$3" "${4:-0}" "${5:-0}" "${6:-0}" "${7:-0}"
+    ;;
+  scroll-gesture)
+    # A trackpad-style scroll as Device Hub performs it: an AbsolutePointer
+    # report placing the cursor, then the phase sequence and a momentum tail.
+    # `ipb scroll-report` sends a single bare movement report, which the device
+    # accepts and ignores; see docs/protocol.md.
+    [[ $# -ge 2 && $# -le 6 ]] || { usage; exit 2; }
+    run_uhid cd_scroll_gesture "${5:-0x501}" "$1" "$2" "${3:-0}" "${4:--6}" "${6:-12}" 8
+    ;;
+  abs-pointer)
+    [[ $# -ge 2 && $# -le 4 ]] || { usage; exit 2; }
+    run_uhid cd_abs_pointer "${4:-0x501}" "$1" "$2" "${3:-0}"
+    ;;
+  scroll-report)
+    [[ $# -ge 3 && $# -le 8 ]] || { usage; exit 2; }
+    run_uhid cd_scroll_report "$1" "$2" "$3" "${4:-0}" "${5:-0}" "${6:-0}" "${7:-0}" "${8:-0}"
+    ;;
+  uhid-report)
+    [[ $# -eq 4 || $# -eq 5 ]] || { usage; exit 2; }
+    run_uhid cd_uhid_report "$1" "$2" "$3" "$4" "${5:-$4}"
+    ;;
+  uhid-swipe-report)
+    [[ $# -eq 8 ]] || { usage; exit 2; }
+    run_uhid cd_uhid_swipe_report "$@"
+    ;;
+  digitizer-event)
+    [[ $# -eq 7 || $# -eq 9 ]] || { usage; exit 2; }
+    event_type="$(digitizer_event_type "$6")"
+    edge="$(digitizer_edge "$7")"
+    run_digitizer cd_digitizer_ext "$1" "$2" "$3" "$4" "$5" "$event_type" "$edge" "${8:-0}" "${9:-0}"
+    ;;
+  nav-report)
+    [[ $# -eq 8 ]] || { usage; exit 2; }
+    run_uhid cd_nav_report "$@"
+    ;;
+  dock-report)
+    [[ $# -eq 8 ]] || { usage; exit 2; }
+    run_uhid cd_dock_report "$@"
+    ;;
+  recents-nav)
+    [[ $# -le 3 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id "${1:-$UHID_SERVICE_ID}")"
+    run_uhid cd_recents_nav "$service_id" "${2:-0x01}" "${3:-0x05}"
+    ;;
+  recents-dock)
+    [[ $# -le 3 ]] || { usage; exit 2; }
+    service_id="$(resolve_uhid_service_id "${1:-$UHID_SERVICE_ID}")"
+    run_uhid cd_recents_dock "$service_id" "${2:-0x01}" "${3:-0x03}"
+    ;;
+  screenrecord)
+    [[ $# -eq 1 || $# -eq 2 ]] || { usage; exit 2; }
+    duration_opt=(); [[ -n "${2:-}" ]] && duration_opt=(--duration "$2")
+    devicectl device capture screen-record --device "$DEVICE" --destination "$1" "${duration_opt[@]}"
+    ;;
+  apps)        devicectl device info apps --device "$DEVICE" "$@" ;;
+  ps)          devicectl device info processes --device "$DEVICE" "$@" ;;
+  info)        devicectl device info details --device "$DEVICE" "$@" ;;
+  displays|capabilities)
+    [[ $# -eq 0 || ( $# -eq 1 && "$1" == --json ) ]] || { usage; exit 2; }
+    query_metadata "$cmd" "${1:-}"
+    ;;
+  lock-state)  devicectl device info lockState --device "$DEVICE" "$@" ;;
+  install)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    devicectl device install app --device "$DEVICE" "$1"
+    ;;
+  uninstall)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    devicectl device uninstall app --device "$DEVICE" "$1"
+    ;;
+  launch)
+    [[ $# -ge 1 ]] || { usage; exit 2; }
+    devicectl device process launch --device "$DEVICE" --terminate-existing --activate "$@"
+    ;;
+  open|open-url)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    devicectl device process openURL --device "$DEVICE" "$1"
+    ;;
+  kill)
+    [[ $# -eq 1 || $# -eq 2 ]] || { usage; exit 2; }
+    devicectl device process signal --device "$DEVICE" --pid "$1" --signal "${2:-SIGKILL}"
+    ;;
+  ls|push|pull)
+    # optional trailing "--app <bundle-id>" selects that app's data container
+    # iOS exposes no global filesystem; every file verb targets one app's data container.
+    if [[ $# -ge 3 && "${@[-2]}" == "--app" ]]; then app_domain=(--domain-type appDataContainer --domain-identifier "${@[-1]}"); set -- "${@[1,-3]}"
+    else print -u2 "ipb $cmd: add --app <bundle-id> (iOS files live in per-app containers)"; exit 2; fi
+    case "$cmd" in
+      ls)   [[ $# -eq 1 ]] || { usage; exit 2; }; devicectl device info files --device "$DEVICE" "${app_domain[@]}" --subdirectory "$1" ;;
+      push) [[ $# -eq 2 ]] || { usage; exit 2; }; devicectl device copy to --device "$DEVICE" "${app_domain[@]}" --source "$1" --destination "$2" ;;
+      pull) [[ $# -eq 2 ]] || { usage; exit 2; }; devicectl device copy from --device "$DEVICE" "${app_domain[@]}" --source "$1" --destination "$2" ;;
+    esac
+    ;;
+  clipboard|pasteboard)
+    case "${1:-}" in
+      get)  devicectl device pasteboard paste --device "$DEVICE" ;;
+      set)  [[ $# -eq 2 ]] || { usage; exit 2; }; print -rn -- "$2" | devicectl device pasteboard copy --device "$DEVICE" ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  location)
+    if [[ "${1:-}" == "clear" ]]; then devicectl device simulate location clear --device "$DEVICE"
+    else [[ $# -eq 2 ]] || { usage; exit 2; }; devicectl device simulate location coordinate --device "$DEVICE" --latitude="$1" --longitude="$2"; fi
+    ;;
+  orientation)
+    if [[ $# -eq 0 ]]; then devicectl device orientation get --device "$DEVICE"
+    else devicectl device orientation set --device "$DEVICE" "$1"; fi
+    ;;
+  reboot)      devicectl device reboot --device "$DEVICE" ;;
+  sysdiagnose) [[ $# -eq 1 ]] || { usage; exit 2; }; devicectl device sysdiagnose --device "$DEVICE" --destination "$1" ;;
+  pair)        devicectl manage pair --device "$DEVICE" ;;
+  unpair)      devicectl manage unpair --device "$DEVICE" ;;
+  devicectl)
+    [[ $# -ge 1 ]] || { usage; exit 2; }
+    devicectl "$@" --device "$DEVICE"
+    ;;
+  raw)
+    [[ $# -ge 2 ]] || { usage; exit 2; }
+    feature="$1"
+    shift
+    run_helper env "${quiet_env[@]}" "$BIN" "$DEVICE" "$ACTION" "$feature" 0 "$@"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
