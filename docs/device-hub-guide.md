@@ -31,11 +31,12 @@ werden. [Upstream-Projekt ipb](https://github.com/ipbtools/ipb)
    iPhone **Diesem Computer vertrauen** bestätigen und den Gerätecode selbst eingeben.
 4. Das gewünschte iPhone wählen. Sind mehrere Geräte angeschlossen, entscheidet
    der Agent nicht stillschweigend, welches er verwenden soll.
-5. Claude Code oder Codex wählen. **Full access** erlaubt diesem Agenten Befehle
+5. Claude Code oder Codex wählen. **Full access on this Mac** erlaubt diesem Agenten Befehle
    und Änderungen auf dem Mac ohne Einzelabfragen. Ohne das Häkchen gelten die
    normalen Freigaben der Agent-Sitzung.
-6. Optional unten eine der zehn Aufgaben auswählen oder einen eigenen Auftrag
-   eingeben. Dann **Let an agent set it up** anklicken.
+6. Optional über **Choose a task idea** eine Vorlage auswählen oder einen eigenen
+   Auftrag eingeben. Dann **Connect iPhone** anklicken. Ist das iPhone bereits
+   eingerichtet, startet **Start control** direkt eine neue Agent-Sitzung.
 7. Der Agent prüft den Mac, baut den gebündelten Helper und startet Pairing und
    gegebenenfalls die Anforderung des Entwicklermodus.
 8. Wenn nötig am iPhone **Einstellungen → Datenschutz & Sicherheit →
@@ -55,11 +56,11 @@ ist mit dieser Verbindung nicht eingerichtet.
 
 ## Benutzen und stoppen
 
-- **What could your agent do?**: Eine Vorlage auswählen, den Auftrag bearbeiten
+- **Choose a task idea**: Eine Vorlage auswählen, den Auftrag bearbeiten
   und an den zugewiesenen Agenten senden. Die Auswahl allein startet nichts.
 - **Open agent**: Die normale IVE-Sitzung öffnen und den Fortschritt verfolgen.
-- **Show preview**: Eine echte Vorschau anfordern. Sie wird alle paar Sekunden
-  aktualisiert; **Pause preview** hält nur die Vorschau an.
+- **Show screen**: Eine echte Vorschau anfordern. Sie wird alle paar Sekunden
+  aktualisiert; **Pause** hält nur die Vorschau an.
 - **Stop control**: Die IVE-Gerätezuweisung widerrufen, laufende Adapterprozesse
   stoppen und gespeicherte Beobachtungen verwerfen. Bereits übermittelte
   Eingaben können dadurch nicht rückgängig gemacht werden.
