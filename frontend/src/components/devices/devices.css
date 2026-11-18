@@ -25,7 +25,7 @@
 .device-hub-device.is-selected > svg:last-child { color: var(--x-accent-ink); }
 .device-hub-field { display: grid; gap: 7px; font-size: 12px; font-weight: 500; margin: 18px 0 0; }
 .device-hub-field select, .device-hub-field textarea { width: 100%; padding: 10px 12px; border: 1px solid var(--x-line-strong); border-radius: var(--x-radius); background: var(--x-bg); color: inherit; font: inherit; font-size: 13px; line-height: 1.55; font-weight: 400; min-width: 0; }
-.device-hub-field select { min-height: 38px; }
+.device-hub-field select { min-height: 38px; appearance: none; padding-right: 34px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath d='m4 5 3 3 3-3' fill='none' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 11px center; }
 .device-hub-field textarea { resize: vertical; min-height: 90px; }
 .device-hub-field textarea::placeholder { color: var(--x-muted); }
 .device-hub-permission { display: flex; gap: 9px; align-items: flex-start; margin-top: 14px; font-size: 12px; cursor: pointer; }

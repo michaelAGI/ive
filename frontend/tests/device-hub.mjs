@@ -93,6 +93,7 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     await page.locator('#frame').evaluate(el => { el.style.height = '844px' })
     await state('initial')
     assert.equal(await frame.locator('.device-hub-body').evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    assert.ok((await frame.getByRole('combobox', { name: 'Agent', exact: true }).boundingBox()).height >= 44)
     await capture('mobile-initial')
     await frame.getByText('Connection help', { exact: true }).click()
     await frame.getByText('Developer Mode ↗', { exact: true }).scrollIntoViewIfNeeded()
