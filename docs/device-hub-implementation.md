@@ -1,8 +1,10 @@
 # Device Hub integration handoff
 
 Prepared 2026-11-18 on `feat/device-hub-integration-20261118`, based on public
-`main` / IVE 1.0.31 (`f30c134`). This is source integration and verification,
-not a signed desktop release. See [the user guide](device-hub-guide.md).
+`main` / IVE 1.0.31 (`f30c134`). Release candidate 1.0.32 is prepared on
+`release/1.0.32`. Release artifacts and validation reports belong in
+`packaging/artifacts/`; a source commit alone is not a signed desktop release.
+See [the user guide](device-hub-guide.md).
 
 ## Included
 
@@ -116,9 +118,10 @@ Observed checks: 82 tests passed in total (70 backend, 6 photo-report,
 
 ## Still required before calling the release phone-tested
 
-No desktop app was packaged, notarized, published or installed in this task.
-The installed 1.0.31 app remains unchanged. Sandbox restrictions prevented a
-local HTTP server test; the UI fixture is not an end-to-end live IVE session.
+At source integration commit `03d270b`, no desktop app had been packaged,
+notarized, published or installed; the installed app was still 1.0.31.
+Sandbox restrictions prevented a local HTTP server test; the UI fixture is not
+an end-to-end live IVE session.
 CoreDevice enumeration timed out in this environment, so no real screenshot,
 touch or text input was asserted for this integration.
 

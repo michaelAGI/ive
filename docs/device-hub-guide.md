@@ -1,9 +1,8 @@
 # iPhone mit einem IVE-Agenten benutzen
 
-Stand: 18. November 2026. Die Implementierung liegt im Entwicklungszweig
-`feat/device-hub-integration-20261118`. Die installierte IVE-Version 1.0.31
-enthält sie noch nicht. Die folgenden Schritte gelten für ein IVE-Build mit
-dieser Integration. Ein vollständiger Test mit einem echten iPhone steht aus.
+Stand: 18. November 2026. Diese Anleitung gilt für den Device Hub ab IVE 1.0.32.
+IVE 1.0.31 enthält ihn noch nicht. Ein vollständiger Test mit einem echten
+iPhone steht aus.
 
 ## Brauche ich Xcode?
 
