@@ -9,6 +9,7 @@ import { openQuickStart, openSessionSetup } from '../lib/quickStart'
 import { openNewTerminal } from '../lib/shellSession'
 import { openFindInSession } from '../lib/findRouter'
 import { focusNextPromptMenu } from '../lib/promptFocus'
+import { getOpenTabIds } from '../lib/sessionTabs'
 
 // Move keyboard focus to the first chrome button (tab bar / TopBar / QuickActions).
 // Returns true if focus was moved, false if no chrome button is in the DOM.
@@ -254,10 +255,8 @@ export default function useKeyboard({
       if (/^[1-9]$/.test(e.key) && matchesKey(e, getTabSwitchCombo(e.key))) {
         e.preventDefault()
 
-        const idx = parseInt(e.key) - 1
-        if (idx < store.openTabs.length) {
-          store.setActiveSession(store.openTabs[idx])
-        }
+        const id = getOpenTabIds(store)[Number(e.key) - 1]
+        if (id) store.goSession(id)
         return
       }
 

@@ -12,6 +12,7 @@ import { normalizeNeedsYouMode } from '../lib/needsYou'
 import { isHelperSession } from '../lib/visibleSessions'
 import { beginReplyWait, hasNewReply } from '../lib/replyPending'
 import { touchSession, staleSessionSnapshot, acceptSessionSnapshot } from '../lib/sessionSnapshots'
+import { getOpenTabIds, moveOpenTab } from '../lib/sessionTabs'
 
 const OVERVIEW_MODE_KEY = 'ive.overview-mode'
 const BOARD_FILTERS_KEY = 'ive.board-filters'
@@ -1028,10 +1029,18 @@ const useStore = create((set, get) => ({
 
   reorderTabs: (fromIdx, toIdx) =>
     set((s) => {
-      const tabs = [...s.openTabs]
-      const [moved] = tabs.splice(fromIdx, 1)
-      tabs.splice(toIdx, 0, moved)
-      return { openTabs: tabs }
+      if (!Number.isInteger(fromIdx) || !Number.isInteger(toIdx)
+          || fromIdx < 0 || toIdx < 0 || fromIdx >= s.openTabs.length || toIdx >= s.openTabs.length) return s
+      const tabs = moveOpenTab(s.openTabs, s.openTabs[fromIdx], s.openTabs[toIdx], fromIdx < toIdx ? 'after' : 'before')
+      return tabs === s.openTabs ? s : { openTabs: tabs }
+    }),
+
+  moveTab: (fromId, toId, position = 'before') =>
+    set((s) => {
+      const visible = getOpenTabIds(s)
+      if (!visible.includes(fromId) || !visible.includes(toId)) return s
+      const tabs = moveOpenTab(s.openTabs, fromId, toId, position)
+      return tabs === s.openTabs ? s : { openTabs: tabs }
     }),
 
   removeSession: (id) =>
@@ -1100,7 +1109,7 @@ const useStore = create((set, get) => ({
       if (s.activeSessionId !== id) return { openTabs: tabs, terminalFocusRequest: focusRequest }
       // Pick the next active tab from the scope-visible set so the user
       // doesn't jump to a tab from another workspace they can't see.
-      const visible = tabs.filter((t) => s.sessions[t] &&
+      const visible = getOpenTabIds({ openTabs: tabs, sessions: s.sessions }).filter((t) =>
         (s.tabScope !== 'workspace' || !s.activeWorkspaceId || s.sessions[t].workspace_id === s.activeWorkspaceId))
       // Prefer the next visible tab to the right, then the nearest to the left.
       const oldIdx = s.openTabs.indexOf(id)

@@ -91,6 +91,70 @@ try {
       await until(() => f.data.sessions[3].pty_alive, 'The new terminal has a running PTY')
       await page.waitForTimeout(150) // let the fixture's prompt reach xterm and paint
       await page.screenshot({ path: `${shots}/${mode}-tabs.png` })
+
+      const fourth = f.data.sessions[3].id
+      const tabOrder = () => page.locator('[data-terminal-tabs] [role="tab"]').evaluateAll((tabs) => tabs.map((tab) => tab.dataset.tabId))
+      const expectOrder = async (expected, label) => {
+        await until(async () => JSON.stringify(await tabOrder()) === JSON.stringify(expected), label)
+        const keys = await page.locator('[data-terminal-tabs] .ive-terminal-tab-shortcut').allTextContents()
+        assert.deepEqual(keys, expected.slice(0, 9).map((_, i) => `${desktop ? '⌘' : '⌃'}${i + 1}`), `${mode}: displayed positions follow ${label}`)
+        check(true, `${mode}: ${label}`)
+      }
+      const switchTo = async (position, id) => {
+        await page.keyboard.press(`${mod}+${position}`, { delay: 80 })
+        await page.locator(`[data-session-view="${id}"] .xterm`).waitFor({ state: 'visible' })
+        check(await page.locator(`[data-terminal-tabs] [data-tab-id="${id}"]`).getAttribute('aria-selected') === 'true', `${mode}: ${mod}+${position} activates visible tab ${position}`)
+      }
+      await page.evaluate(() => {
+        window.__tabOrderTerminalNodes = Object.fromEntries([...document.querySelectorAll('.ive-terminal-portal .xterm')]
+          .map((node) => [node.closest('.ive-terminal-portal').dataset.terminalSession, node]))
+      })
+      const startsBeforeReorder = f.data.pty.filter((p) => p.action === 'start_pty').length
+      await page.locator(`[data-terminal-tabs] [data-tab-id="${first}"]`).dragTo(page.locator(`[data-session-view="${fourth}"] .xterm`))
+      await expectOrder([first, second, third, fourth], 'dropping outside the tab bar cancels the move')
+      check(await page.locator(`[data-terminal-tabs] [data-tab-id="${fourth}"]`).getAttribute('aria-selected') === 'true', `${mode}: cancelled dragging does not select a different terminal`)
+      await page.locator(`[data-terminal-tabs] [data-tab-id="${fourth}"]`).dragTo(
+        page.locator(`[data-terminal-tabs] [data-tab-id="${first}"]`), { targetPosition: { x: 3, y: 15 } })
+      await expectOrder([fourth, first, second, third], 'drag last tab before the first')
+      await switchTo(1, fourth)
+      const thirdTab = page.locator(`[data-terminal-tabs] [data-tab-id="${third}"]`)
+      const thirdBox = await thirdTab.boundingBox()
+      await page.locator(`[data-terminal-tabs] [data-tab-id="${first}"]`).dragTo(thirdTab,
+        { targetPosition: { x: thirdBox.width - 3, y: 15 } })
+      await expectOrder([fourth, second, third, first], 'drag a tab after the last')
+      check(await page.locator(`[data-terminal-tabs] [data-tab-id="${fourth}"]`).getAttribute('aria-selected') === 'true', `${mode}: dragging changes order without changing the active terminal`)
+      for (const [index, id] of [fourth, second, third, first].entries()) await switchTo(index + 1, id)
+      check(f.data.pty.filter((p) => p.action === 'start_pty').length === startsBeforeReorder,
+        `${mode}: reordering and shortcuts never restart a terminal`)
+      check(await page.evaluate(() => Object.entries(window.__tabOrderTerminalNodes).every(([id, node]) =>
+        document.querySelector(`.ive-terminal-portal[data-terminal-session="${id}"] .xterm`) === node)), `${mode}: reordering preserves the xterm instances`)
+
+      // A keyboard alternative to dragging uses the same identity-based ordering.
+      await page.locator(`[data-terminal-tabs] [data-tab-id="${first}"]`).focus()
+      await page.keyboard.press('Alt+Shift+ArrowLeft')
+      await expectOrder([fourth, second, first, third], 'keyboard reorder moves the same session')
+      await switchTo(3, first)
+      // Close a tab before the active one, then the active first tab: labels and
+      // shortcuts must compact immediately, with no gaps or stale indices.
+      await page.locator(`[data-terminal-tabs] .ive-terminal-tab`).filter({ has: page.locator(`[data-tab-id="${second}"]`) })
+        .getByRole('button', { name: /^Close Terminal/ }).click()
+      await expectOrder([fourth, first, third], 'closing a preceding tab renumbers remaining tabs')
+      await switchTo(2, first)
+      await switchTo(1, fourth)
+      await page.keyboard.press(`${mod}+w`, { delay: 80 })
+      await expectOrder([first, third], 'closing the first tab makes its right neighbor number one')
+      await switchTo(1, first)
+      // Returning to the app keeps the reordered sequence, not creation order.
+      await until(async () => page.evaluate((expected) => JSON.parse(localStorage.getItem('ive.operator-desk') || '{}').openTabs?.join(',') === expected, [first, third].join(',')), 'Reordered tabs persisted')
+      await page.reload()
+      await expectOrder([first, third], 'tab order survives reload')
+      await switchTo(1, first)
+      await page.keyboard.press(`${mod}+t`, { delay: 80 })
+      await until(() => f.data.sessions.length === 5, 'New tab opens after reordered tabs')
+      const fifth = f.data.sessions[4].id
+      await expectOrder([first, third, fifth], 'new tab gets the next available shortcut')
+      await switchTo(3, fifth)
+      await page.screenshot({ path: `${shots}/${mode}-reordered.png` })
       await page.locator('[data-sidebar-new-chat]').click()
       await chooser.getByRole('button', { name: /^Session Choose an agent/ }).click()
       await page.getByRole('button', { name: 'Create Session', exact: true }).waitFor()
@@ -114,7 +178,11 @@ try {
       await page.locator(`[data-tab-id="${retryId}"]`).waitFor()
       await page.locator('[data-terminal-tabs] .ive-terminal-tab').last().getByRole('button', { name: /^Close Terminal/ }).click()
       await page.locator(`[data-tab-id="${retryId}"]`).waitFor({ state: 'detached' })
-      check(f.data.sessions.find((s) => s.id === retryId)?.archived === 1 && await page.getByRole('tab').count() === count, `${mode}: closing a tab preserves other tabs and archives its history`)
+      check(f.data.sessions.find((s) => s.id === retryId)?.archived === 1 && await page.getByRole('tab').count() === count - 2, `${mode}: closing a tab preserves other tabs and archives its history`)
+      await page.setViewportSize({ width: 390, height: 844 })
+      await page.locator('[data-terminal-tabs]').waitFor({ state: 'detached' })
+      await page.screenshot({ path: `${shots}/${mode}-mobile.png` })
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${mode}: narrow layout has no horizontal overflow`)
       check(f.errors.length === 0, `${mode}: no browser exceptions: ${f.errors.join('; ')}`)
     } finally { await f.context.close() }
 
