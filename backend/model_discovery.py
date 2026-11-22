@@ -4,9 +4,9 @@ Queries available models at server startup so the UI dropdown stays current
 without hardcoding. Falls back to the static list in cli_profiles.py if
 discovery fails (no API key, network error, CLI not installed).
 
-Claude: Uses aliases (haiku/sonnet/opus) which auto-resolve to latest.
+Claude: Uses aliases (haiku/sonnet/opus/fable) which resolve through Claude Code.
         Full model IDs discovered via Anthropic API if ANTHROPIC_API_KEY is set,
-        or by parsing `claude --model` help text.
+        Subscription accounts use the static aliases without API discovery.
 
 Gemini: Queries the Google GenAI REST API using GEMINI_API_KEY / GOOGLE_API_KEY,
         or falls back to the static list.
@@ -335,7 +335,7 @@ def _model_quality(label: str) -> int:
 def discover_claude_models() -> list[dict] | None:
     """Discover Claude model aliases.
 
-    Claude Code uses aliases (haiku, sonnet, opus) that auto-resolve to the
+    Claude Code uses aliases (haiku, sonnet, opus, fable) that resolve to the
     latest version. We also try to discover full model IDs via the Anthropic API
     if available. Returns None if discovery adds nothing beyond the static list.
     """
@@ -359,9 +359,9 @@ def discover_claude_models() -> list[dict] | None:
             # Only claude models
             if "claude" not in mid:
                 continue
-            # Group by family (haiku/sonnet/opus)
+            # Keep Claude Code's native alias, including Fable, for launching.
             family = None
-            for f in ("opus", "sonnet", "haiku"):
+            for f in ("fable", "opus", "sonnet", "haiku"):
                 if f in mid:
                     family = f
                     break
@@ -376,8 +376,7 @@ def discover_claude_models() -> list[dict] | None:
             })
 
         if models:
-            # Sort: opus > sonnet > haiku
-            order = {"opus": 0, "sonnet": 1, "haiku": 2}
+            order = {"fable": 0, "opus": 1, "sonnet": 2, "haiku": 3}
             models.sort(key=lambda m: order.get(m["id"], 9))
             logger.info("Discovered %d Claude models via API", len(models))
             return models

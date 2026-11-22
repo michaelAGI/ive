@@ -4,7 +4,8 @@ import { EFFORT_LEVELS, effortOptions, effortDisplay } from './effort'
 export const MODELS = [
   { id: 'haiku', label: 'Haiku', description: 'Fast & cheap' },
   { id: 'sonnet', label: 'Sonnet', description: 'Balanced' },
-  { id: 'opus', label: 'Opus', description: 'Maximum capability' },
+  { id: 'opus', label: 'Opus', description: 'Complex reasoning' },
+  { id: 'fable', label: 'Fable', description: 'Demanding, long-running tasks' },
 ]
 
 export const PERMISSION_MODES = [

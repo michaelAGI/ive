@@ -42,7 +42,7 @@ export async function request(path, opts = {}) {
   return body;
 }
 export const api = {
-  deviceHubStatus: () => request('/device-hub/status'),
+  deviceHubStatus: (refresh = false) => request('/device-hub/status' + (refresh ? '?refresh=1' : '')),
   deviceHubAction: (operation, data = {}) => request(`/device-hub/${operation}`, {
     method: 'POST', body: JSON.stringify(data), signal: AbortSignal.timeout(30000),
   }),

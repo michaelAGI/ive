@@ -63,13 +63,13 @@ def register(app, *, data_dir, get_session, local_owner):
                     if sid and not (hub.setup and hub.setup["session_id"] == sid) and not any(
                             g["session_id"] == sid for g in hub.assignments.values()):
                         raise DeviceError("assignment_required", "Ask the user to assign an iPhone or start setup in Devices.", 403)
-                    result = await hub.status(sid)
+                    result = await hub.status(sid, refresh=request.query.get("refresh") == "1")
                 elif operation == "setup":
                     if not sid:
                         raise DeviceError("agent_required", "Start the setup agent in Devices first.", 400)
                     if row.get("permission_mode") in {"plan", "read-only"} and body.get("action") != "check":
                         raise DeviceError("plan_mode", "Setup actions are unavailable in plan mode.", 403)
-                    result = await hub.setup_action(sid, body.get("action", "check"), body.get("device_id"))
+                    result = await hub.setup_action(sid, body.get("action", "check"), body.get("device_id"), body.get("wait_seconds", 0))
                 elif operation == "observe":
                     result = await hub.observe(body.get("device_id"), sid)
                 elif operation == "act":

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 from collections import OrderedDict
 import hashlib
 import json
@@ -21,6 +22,7 @@ DEVICE_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-
 COMMAND_ID = re.compile(r"^[A-Za-z0-9_-]{8,100}$")
 LEASE_SECONDS = 3600
 FRAME_SECONDS = 45
+INVENTORY_SECONDS = 2
 
 
 def device_id(value):
@@ -64,6 +66,9 @@ class DeviceHub:
         self.setup = None
         self.setup_task = None
         self.scan_task = None
+        self.inventory_cache = None
+        self.inventory_at = 0
+        self.inventory_generation = 0
         self.journal = self.root / "commands.json"
         self.results = OrderedDict()
         self.journal_error = False
@@ -98,15 +103,32 @@ class DeviceHub:
         finally:
             path.unlink(missing_ok=True)
 
-    async def inventory(self):
+    def invalidate_inventory(self):
+        self.inventory_cache = None
+        self.inventory_generation += 1
+
+    async def inventory(self, *, refresh=False):
+        if refresh:
+            self.invalidate_inventory()
+        if self.inventory_cache is not None and 0 <= self.clock() - self.inventory_at < INVENTORY_SECONDS:
+            return copy.deepcopy(self.inventory_cache)
         if self.scan_task is None or self.scan_task.done():
             self.scan_task = asyncio.create_task(self.adapter.inventory())
-        devices = await asyncio.shield(self.scan_task)
-        return [{**d, "id": d["provider_device_id"]} for d in devices]
+        generation = self.inventory_generation
+        try:
+            devices = await asyncio.shield(self.scan_task)
+        except Exception:
+            self.invalidate_inventory()
+            raise
+        rows = [{**d, "id": d["provider_device_id"]} for d in devices]
+        if generation == self.inventory_generation:
+            self.inventory_cache = copy.deepcopy(rows)
+            self.inventory_at = self.clock()
+        return rows
 
-    async def find(self, identifier):
+    async def find(self, identifier, *, refresh=False):
         device_id(identifier)
-        devices = await self.inventory()
+        devices = await self.inventory(refresh=refresh)
         found = next((d for d in devices if d["id"] == identifier), None)
         if not found:
             self.revoke(identifier)
@@ -123,7 +145,7 @@ class DeviceHub:
         return grant
 
     async def assign(self, identifier, session_id):
-        await self.find(identifier)
+        await self.find(identifier, refresh=True)
         current = self.assignments.get(identifier)
         if current and current["expires_at"] > self.clock() and current["session_id"] != session_id:
             raise DeviceError("device_busy", "Stop the current agent before assigning another one.")
@@ -137,6 +159,7 @@ class DeviceHub:
         self.assignments.pop(identifier, None)
         self.frames.pop(identifier, None)
         self.adapter.cancel(identifier)
+        self.invalidate_inventory()
         if self.setup and self.setup.get("device_id") == identifier and self.setup.get("state") == "ready":
             self.stop_setup()
 
@@ -161,10 +184,24 @@ class DeviceHub:
             self.setup_task.cancel()
         self.adapter.cancel("setup")
 
-    async def setup_action(self, session_id, action, identifier=None):
+    async def setup_action(self, session_id, action, identifier=None, wait_seconds=0):
         grant = self.require_setup(session_id)
+        if (isinstance(wait_seconds, bool) or not isinstance(wait_seconds, (int, float))
+                or not math.isfinite(wait_seconds) or not 0 <= wait_seconds <= 20):
+            raise DeviceError("invalid_wait", "wait_seconds must be between 0 and 20.", 400)
         if action == "check":
+            if wait_seconds and self.setup_task and not self.setup_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(self.setup_task), wait_seconds)
+                except asyncio.TimeoutError:
+                    pass
+                except asyncio.CancelledError:
+                    if self.setup is grant:
+                        raise
+                self.require_setup(session_id)
             return await self.status(session_id)
+        if wait_seconds:
+            raise DeviceError("invalid_wait", "Use wait_seconds only with check.", 400)
         if self.setup_task and not self.setup_task.done():
             return dict(grant)
         if action not in {"prepare", "pair", "developer_mode", "open_xcode", "verify"}:
@@ -187,6 +224,10 @@ class DeviceHub:
             "prepare": "Preparing Mac support…", "pair": "Pairing with your iPhone…",
             "developer_mode": "Requesting Developer Mode…", "open_xcode": "Opening Xcode in the App Store…",
             "verify": "Checking a fresh screenshot…"}[action])
+        self.invalidate_inventory()
+        invalidate_checks = getattr(self.adapter, "invalidate_prerequisites", None)
+        if invalidate_checks:
+            invalidate_checks()
         async def work():
             try:
                 if action == "verify":
@@ -217,6 +258,10 @@ class DeviceHub:
             except Exception:
                 if self.setup is grant:
                     grant.update(state="failed", code="setup_failed", message="Setup could not finish. Check Xcode and reconnect the iPhone, then continue.")
+            finally:
+                self.invalidate_inventory()
+                if invalidate_checks:
+                    invalidate_checks()
         self.setup_task = asyncio.create_task(work())
         return dict(grant)
 
@@ -231,7 +276,12 @@ class DeviceHub:
         if device["developer_mode"] != "enabled":
             raise DeviceError("developer_mode_required", "Enable Developer Mode in Settings → Privacy & Security on your iPhone, restart and confirm.")
 
-    async def status(self, session_id=None):
+    async def status(self, session_id=None, *, refresh=False):
+        if refresh:
+            self.invalidate_inventory()
+            invalidate_checks = getattr(self.adapter, "invalidate_prerequisites", None)
+            if invalidate_checks:
+                invalidate_checks()
         checks = await self.adapter.prerequisites()
         error = None
         try:
@@ -270,19 +320,37 @@ class DeviceHub:
         async with self.locks.setdefault(identifier, asyncio.Lock()):
             device = await self.find(identifier)
             self.validate_device(device)
+            return await self.capture_frame(identifier, session_id, grant)
+
+    async def capture_frame(self, identifier, session_id, grant):
+        """Capture while the caller holds the device lock; never rediscover mid-step."""
+        if self.assignments.get(identifier) is not grant or grant["expires_at"] <= self.clock():
+            raise DeviceError("control_stopped", "Control was stopped.", 403)
+        try:
             image, width, height = await self.adapter.observe(identifier, identifier)
-            if self.assignments.get(identifier) is not grant or grant["expires_at"] <= self.clock():
-                raise DeviceError("control_stopped", "Control was stopped. The screenshot was discarded.", 403)
-            frame = {"frame_id": secrets.token_hex(16), "observed_at": self.clock(),
-                     "width": width, "height": height, "lease_id": grant["lease_id"]}
-            # The owner's preview must not invalidate a frame the agent is
-            # currently reasoning about; each actor has its own observation.
+        except (DeviceError, OSError) as exc:
+            self.invalidate_inventory()
             if session_id is not None:
-                self.frames[identifier] = frame
-            return {**frame, "device_id": identifier, "image_base64": base64.b64encode(image).decode(), "mime_type": "image/png"}
+                self.frames.pop(identifier, None)
+            if isinstance(exc, OSError):
+                raise DeviceError("capture_failed", "The screenshot could not be read. Observe again before another input.") from exc
+            raise
+        if self.assignments.get(identifier) is not grant or grant["expires_at"] <= self.clock():
+            raise DeviceError("control_stopped", "Control was stopped. The screenshot was discarded.", 403)
+        frame = {"frame_id": secrets.token_hex(16), "observed_at": self.clock(),
+                 "width": width, "height": height, "lease_id": grant["lease_id"],
+                 "image_sha256": hashlib.sha256(image).hexdigest()}
+        # Owner preview must not invalidate the agent's in-flight frame.
+        if session_id is not None:
+            self.frames[identifier] = frame
+        return {**frame, "device_id": identifier, "image_base64": base64.b64encode(image).decode(), "mime_type": "image/png"}
 
     async def act(self, identifier, session_id, body):
+        started = time.perf_counter()
         grant = self.lease(identifier, session_id)
+        observe_after = body.get("observe_after", True)
+        if not isinstance(observe_after, bool):
+            raise DeviceError("invalid_action", "observe_after must be a boolean.", 400)
         if self.journal_error:
             raise DeviceError("history_unavailable", "IVE cannot read its device input history. Control is paused to prevent repeated input. Restore the history or contact support before continuing.", 503)
         command = action_command(body.get("action"), body.get("arguments", {}))
@@ -296,7 +364,9 @@ class DeviceHub:
                 previous = self.results[key]
                 if previous["digest"] != digest:
                     raise DeviceError("command_id_reused", "This command_id belongs to a different action.")
-                return {k: v for k, v in previous.items() if k != "digest"}
+                return {**{k: v for k, v in previous.items() if k != "digest"},
+                        "replayed": True,
+                        "next_step": "Read the previous result or observe again. This input was not sent again."}
             if self.assignments.get(identifier) is not grant or grant["expires_at"] <= self.clock():
                 raise DeviceError("control_stopped", "Control was stopped.", 403)
             frame = self.frames.get(identifier)
@@ -307,7 +377,12 @@ class DeviceHub:
             self.validate_device(device)
             # Confirm orientation immediately before coordinate-based actions.
             if command[0] in {"tap", "swipe"}:
-                _, width, height = await self.adapter.observe(identifier, identifier)
+                try:
+                    _, width, height = await self.adapter.observe(identifier, identifier)
+                except DeviceError:
+                    self.frames.pop(identifier, None)
+                    self.invalidate_inventory()
+                    raise
                 if width >= height or (width, height) != (frame["width"], frame["height"]):
                     self.frames.pop(identifier, None)
                     raise DeviceError("orientation_changed", "Hold the iPhone in portrait and observe its screen again.")
@@ -321,15 +396,38 @@ class DeviceHub:
             self.results[key] = record
             self.save_results()  # Persist before dispatch. A restart cannot blindly replay input.
             try:
+                input_started = time.perf_counter()
                 await self.adapter.act(identifier, command, identifier)
                 record.update(state="submitted", message="Input submitted. Observe the iPhone to verify the result.")
             except DeviceError as exc:
                 record.update(state="outcome_unknown", message=str(exc), code=exc.code)
+                self.invalidate_inventory()
             finally:
                 if self.assignments.get(identifier) is not grant:
                     record.update(state="outcome_unknown", message="Control stopped during the action. Check the screen before continuing.")
                 self.save_results()
-            return {k: v for k, v in record.items() if k != "digest"}
+            result = {k: v for k, v in record.items() if k != "digest"}
+            timings = {"input_ms": round((time.perf_counter() - input_started) * 1000, 1)}
+            if observe_after and record["state"] == "submitted":
+                capture_started = time.perf_counter()
+                try:
+                    observation = await self.capture_frame(identifier, session_id, grant)
+                    result.update(observation)
+                    result["screen_changed"] = observation["image_sha256"] != frame["image_sha256"]
+                    result["message"] = "Input submitted. Inspect the returned screenshot; use its frame_id for the next action."
+                except DeviceError as exc:
+                    # The input is already journaled. A failed screenshot cannot
+                    # turn this into a safe-to-retry input or lose its outcome.
+                    result["observation_error"] = {"code": exc.code, "message": str(exc)}
+                    result["next_step"] = "Observe again before another input; do not repeat the submitted input."
+                    if self.assignments.get(identifier) is not grant or grant["expires_at"] <= self.clock():
+                        record.update(state="outcome_unknown", message="Control stopped while observing the action result.")
+                        self.save_results()
+                        result.update(state=record["state"], message=record["message"])
+                timings["capture_ms"] = round((time.perf_counter() - capture_started) * 1000, 1)
+            timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
+            result["timings_ms"] = timings
+            return result
 
     async def close(self):
         self.stop_setup()

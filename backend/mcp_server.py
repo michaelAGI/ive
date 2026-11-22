@@ -51,7 +51,8 @@ def api_call(method: str, path: str, body: dict | None = None) -> dict:
         headers["X-IVE-Workspace-Id"] = WORKSPACE_ID
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=60 if path.startswith("/device-hub/") else 30) as resp:
+        timeout = 90 if path == "/device-hub/act" else 60 if path.startswith("/device-hub/") else 30
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             try:
                 return json.loads(resp.read())
             except (ValueError, UnicodeDecodeError):
@@ -859,7 +860,7 @@ _SWITCH_MODEL_TOOL_SPEC = {
             "model": {
                 "type": "string",
                 "description": (
-                    "Model name to switch to. Claude: 'opus', 'sonnet', 'haiku'. "
+                    "Model name to switch to. Claude: 'fable', 'opus', 'sonnet', 'haiku'. "
                     "Gemini: 'gemini-2.5-pro', 'gemini-2.5-flash'."
                 ),
             },

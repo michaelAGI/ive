@@ -10,6 +10,9 @@ import { shortModelName } from '../src/lib/effort.js'
 import { createServer } from 'vite'
 
 const cliFeatures = JSON.parse(await readFile(new URL('./fixtures/cli-profiles.json', import.meta.url), 'utf8'))
+if (process.env.IVE_QA_CLAUDE_MODELS) {
+  cliFeatures.profiles.claude.available_models = JSON.parse(await readFile(process.env.IVE_QA_CLAUDE_MODELS, 'utf8'))
+}
 
 const testDir = await mkdtemp(join(tmpdir(), 'ive-model-command-'))
 const server = await createServer({
@@ -43,7 +46,7 @@ const sessions = [
   { id: 'h2', workspace_id: 'ws', name: 'Brainstormer', cli_type: 'claude', model: 'sonnet', status: 'waiting', pty_alive: true, session_type: 'brainstormer', archived: 0, tags: [] },
 ]
 
-const testedModel = process.env.IVE_QA_CLI === 'codex' ? 'gpt-5.5' : 'opus'
+const testedModel = process.env.IVE_QA_MODEL || (process.env.IVE_QA_CLI === 'codex' ? 'gpt-5.5' : 'opus')
 if (process.env.IVE_QA_CLI === 'codex') Object.assign(sessions[2], { cli_type: 'codex', model: 'gpt-6-astra' })
 
 async function setup({ hash = '', theme = 'light' } = {}) {
@@ -119,7 +122,7 @@ try {
   await page.getByRole('option').filter({ hasText: '/model' }).click()
   await menu.waitFor()
   check('clicking partial command opens model choices', await input.inputValue() === '')
-  await menu.getByRole('button', { name: new RegExp(testedModel) }).first().click()
+  await menu.getByRole('button', { name: new RegExp(testedModel, 'i') }).first().click()
   // The chip shows the short name ("Sonnet 4.5"), the picker the full id.
   await page.waitForFunction(label => document.querySelector('[data-testid="chat-header-model-value"]')?.textContent.includes(label), shortModelName(testedModel))
   check('selection uses existing live model API', updates.some(x => x.path === '/sessions/s2' && x.patch.model === testedModel && x.patch.apply_live === true))

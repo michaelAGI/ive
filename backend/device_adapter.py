@@ -17,6 +17,7 @@ import shutil
 import signal
 import struct
 import tempfile
+import time
 
 from device_hub_discovery import normalize_inventory, DiscoveryError
 from resource_path import project_root
@@ -38,13 +39,17 @@ def png_size(data):
 
 
 class AppleDeviceAdapter:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, clock=time.monotonic):
         self.root = Path(data_dir) / "device-hub"
         self.source = project_root() / "packaging/device-control/ipb"
         self.processes = {}  # assignment key → subprocess; Stop kills its process group
         self.starting = set()
         self.cancelled = set()
         self.checks_task = None
+        self.checks_cache = None
+        self.checks_until = 0
+        self.checks_generation = 0
+        self.clock = clock
         self.udids = {}
 
     def runtime(self):
@@ -113,9 +118,21 @@ class AppleDeviceAdapter:
             self.cancel(key)
 
     async def prerequisites(self):
+        if self.checks_cache is not None and self.clock() < self.checks_until:
+            return dict(self.checks_cache)
         if self.checks_task is None or self.checks_task.done():
             self.checks_task = asyncio.create_task(self._prerequisites())
-        return await asyncio.shield(self.checks_task)
+        generation = self.checks_generation
+        result = await asyncio.shield(self.checks_task)
+        if generation == self.checks_generation:
+            self.checks_cache = dict(result)
+            self.checks_until = self.clock() + 30
+        return dict(result)
+
+    def invalidate_prerequisites(self):
+        self.checks_cache = None
+        self.checks_until = 0
+        self.checks_generation += 1
 
     async def _prerequisites(self):
         host_ok = platform.system() == "Darwin" and platform.machine() == "arm64"
@@ -183,6 +200,7 @@ class AppleDeviceAdapter:
         await self.run(["/usr/bin/make", "check-reports", "build/ipb-helper"], cwd=target,
             timeout=180, key="setup", env={"CLANG_MODULE_CACHE_PATH": str(target / "cache"),
                                          "SWIFT_MODULECACHE_PATH": str(target / "cache")})
+        self.invalidate_prerequisites()
         return {"state": "ready", "message": "Mac support is prepared. Connect and unlock your iPhone."}
 
     async def pair(self, device):

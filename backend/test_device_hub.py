@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from types import SimpleNamespace
 from device_adapter import DeviceError, AppleDeviceAdapter, png_size
 from device_hub import DeviceHub, action_command
@@ -30,9 +30,15 @@ class FakeAdapter:
         self.failure = None
         self.delay = None
         self.checks = dict(supported_mac=True, xcode_ready=True, helper_ready=True)
-    async def inventory(self): return self.devices
+        self.inventory_calls = 0
+        self.capture_calls = 0
+    async def inventory(self):
+        self.inventory_calls += 1
+        return self.devices
     async def prerequisites(self): return dict(self.checks)
-    async def observe(self, device, key): return PNG, *self.size
+    async def observe(self, device, key):
+        self.capture_calls += 1
+        return PNG, *self.size
     async def act(self, device, command, key):
         self.commands.append((device, command))
         if self.delay: await self.delay.wait()
@@ -90,7 +96,10 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         frame = await self.ready()
         first = await self.hub.act(D, "agent", self.command(frame))
         second = await self.hub.act(D, "agent", self.command(frame))
-        self.assertEqual(first, second)
+        self.assertEqual(first['state'], second['state'])
+        self.assertEqual(first['command_id'], second['command_id'])
+        self.assertTrue(second['replayed'])
+        self.assertNotIn('frame_id', second)  # Never offer an old frame as fresh.
         self.assertEqual(len(self.adapter.commands), 1)
         with self.assertRaises(DeviceError):
             await self.hub.act(D, "agent", {**self.command(frame), "arguments": {"x": .8, "y": .3}})
@@ -101,7 +110,10 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["state"], "outcome_unknown")
         other = DeviceHub(self.temp.name, self.adapter, lambda: self.now)
         await other.assign(D, "agent")
-        self.assertEqual(await other.act(D, "agent", self.command(frame)), result)
+        replay = await other.act(D, "agent", self.command(frame))
+        self.assertEqual(replay['state'], result['state'])
+        self.assertEqual(replay['code'], result['code'])
+        self.assertTrue(replay['replayed'])
         self.assertEqual(len(self.adapter.commands), 1)
         self.assertEqual(self.hub.journal.stat().st_mode & 0o777, 0o600)
     async def test_unreadable_history_cannot_silently_replay_input(self):
@@ -132,14 +144,15 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
     async def test_disappeared_device_revokes_access(self):
         await self.ready()
         self.adapter.devices = []
+        self.now += 3  # Connection inventory has a two-second bound.
         with self.assertRaises(DeviceError): await self.hub.observe(D, "agent")
         self.assertNotIn(D, self.hub.assignments)
     async def test_status_revokes_missing_devices_and_never_marks_old_ios_ready(self):
         await self.ready()
         self.adapter.devices[0]['os_version'] = '26.0'
-        self.assertFalse((await self.hub.status())['devices'][0]['control_available'])
+        self.assertFalse((await self.hub.status(refresh=True))['devices'][0]['control_available'])
         self.adapter.devices = []
-        await self.hub.status()
+        await self.hub.status(refresh=True)
         self.assertFalse(self.hub.assignments)
     async def test_lease_expiring_during_capture_never_sends_input(self):
         frame = await self.ready()
@@ -204,8 +217,133 @@ class HubTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.code, 'fresh_frame_required')
         self.assertFalse(self.adapter.commands)
 
+    async def test_actions_return_the_next_usable_frame_without_extra_observe_calls(self):
+        frame = await self.ready()
+        first = await self.hub.act(D, 'agent', self.command(frame))
+        self.assertIn('image_base64', first)
+        self.assertNotEqual(first['frame_id'], frame['frame_id'])
+        second = await self.hub.act(D, 'agent', {**self.command(first), 'command_id': 'command-two'})
+        self.assertNotEqual(first['frame_id'], second['frame_id'])
+        self.assertEqual(len(self.adapter.commands), 2)
+        self.assertEqual(self.adapter.inventory_calls, 1)
+        self.assertEqual(self.adapter.capture_calls, 5)  # Initial + orientation/result for each tap.
+        self.assertFalse(second['screen_changed'])  # The fixture image is unchanged.
+        self.assertGreaterEqual(second['timings_ms']['total_ms'], 0)
+
+    async def test_failed_post_action_capture_never_resubmits_input(self):
+        frame = await self.ready()
+        original = self.adapter.observe
+        async def observe(*args):
+            if self.adapter.capture_calls == 2:
+                raise DeviceError('device_command_failed', 'Screenshot unavailable')
+            return await original(*args)
+        self.adapter.observe = observe
+        result = await self.hub.act(D, 'agent', self.command(frame))
+        self.assertEqual(result['state'], 'submitted')
+        self.assertIn('observation_error', result)
+        self.assertNotIn('frame_id', result)
+        self.assertNotIn(D, self.hub.frames)
+        self.assertIsNone(self.hub.inventory_cache)
+        replay = await self.hub.act(D, 'agent', self.command(frame))
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(len(self.adapter.commands), 1)
+
+    async def test_stop_during_post_action_capture_discards_image(self):
+        frame = await self.ready()
+        original = self.adapter.observe
+        async def observe(*args):
+            if self.adapter.capture_calls == 2:
+                self.hub.revoke(D)
+            return await original(*args)
+        self.adapter.observe = observe
+        result = await self.hub.act(D, 'agent', self.command(frame))
+        self.assertEqual(result['state'], 'outcome_unknown')
+        self.assertNotIn('image_base64', result)
+        self.assertFalse(self.hub.frames)
+        self.assertEqual(len(self.adapter.commands), 1)
+
+    async def test_opt_out_consumes_frame_and_requires_an_explicit_observation(self):
+        frame = await self.ready()
+        result = await self.hub.act(D, 'agent', self.command(frame, observe_after=False))
+        self.assertNotIn('frame_id', result)
+        self.assertNotIn(D, self.hub.frames)
+        self.assertEqual(self.adapter.capture_calls, 2)
+
+    async def test_capture_error_invalidates_discovery_before_any_later_input(self):
+        await self.ready()
+        self.adapter.observe = AsyncMock(side_effect=DeviceError('device_command_failed', 'Disconnected'))
+        with self.assertRaises(DeviceError):
+            await self.hub.observe(D, 'agent')
+        self.adapter.devices = []
+        with self.assertRaises(DeviceError):
+            await self.hub.observe(D, 'agent')
+        self.assertNotIn(D, self.hub.assignments)
+        self.assertEqual(self.adapter.inventory_calls, 2)
+
+    async def test_inventory_cache_is_bounded_and_does_not_cache_leases(self):
+        await self.ready()
+        rows = await self.hub.inventory()
+        rows[0]['developer_mode'] = 'disabled'
+        self.assertEqual((await self.hub.find(D))['developer_mode'], 'enabled')
+        self.assertEqual(self.adapter.inventory_calls, 1)
+        self.now += 3
+        await self.hub.inventory()
+        self.assertEqual(self.adapter.inventory_calls, 2)
+        self.hub.revoke(D)
+        with self.assertRaises(DeviceError):
+            await self.hub.observe(D, 'agent')
+
+    async def test_waiting_for_setup_does_not_cancel_or_repeat_the_job(self):
+        self.adapter.delay = asyncio.Event()
+        self.hub.setup_grant('agent', D)
+        await self.hub.setup_action('agent', 'prepare')
+        job = self.hub.setup_task
+        waiting = await self.hub.setup_action('agent', 'check', wait_seconds=.001)
+        self.assertEqual(waiting['setup']['state'], 'running')
+        self.assertFalse(job.cancelled())
+        self.adapter.delay.set()
+        completed = await self.hub.setup_action('agent', 'check', wait_seconds=20)
+        self.assertEqual(completed['setup']['state'], 'step_complete')
+        self.assertIs(job, self.hub.setup_task)
+
+    async def test_invalid_waits_cannot_start_setup(self):
+        self.hub.setup_grant('agent', D)
+        for wait in (-1, 21, True, '20', float('nan')):
+            with self.subTest(wait=wait), self.assertRaises(DeviceError):
+                await self.hub.setup_action('agent', 'check', wait_seconds=wait)
+        self.assertIsNone(self.hub.setup_task)
+
+
+class AdapterCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prerequisites_are_shared_cached_and_invalidatable(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now = [100]
+            adapter = AppleDeviceAdapter(folder, clock=lambda: now[0])
+            adapter._prerequisites = AsyncMock(return_value={'helper_ready': False})
+            await asyncio.gather(adapter.prerequisites(), adapter.prerequisites())
+            await adapter.prerequisites()
+            self.assertEqual(adapter._prerequisites.await_count, 1)
+            adapter.invalidate_prerequisites()
+            adapter._prerequisites.return_value = {'helper_ready': True}
+            now[0] = 101
+            self.assertTrue((await adapter.prerequisites())['helper_ready'])
+            now[0] = 132
+            await adapter.prerequisites()
+            self.assertEqual(adapter._prerequisites.await_count, 3)
+
 
 class ValidationTests(unittest.TestCase):
+    def test_mcp_timeout_covers_input_plus_following_capture(self):
+        import worker_mcp_server as worker
+        import mcp_server as commander
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'{}'
+        for module in (worker, commander):
+            for path, timeout in [('/device-hub/act', 90), ('/device-hub/observe', 60), ('/sessions', 30)]:
+                with self.subTest(module=module.__name__, path=path), patch('urllib.request.urlopen', return_value=response) as request:
+                    module.api_call('POST', path, {})
+                    self.assertEqual(request.call_args.kwargs['timeout'], timeout)
+
     def test_bad_coordinates_commands_and_text_rejected_before_execution(self):
         for action, args in [("tap", {"x": True, "y": 0}), ("tap", {"x": float("nan"), "y": 0}),
             ("tap", {"x": 1.1, "y": 0}), ("tap", {"x": ";rm -rf", "y": 0}), ("shell", {"command": "whoami"}),
@@ -218,9 +356,10 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(DeviceError): png_size(data)
     def test_mcp_emits_image_and_frame_metadata_together(self):
         tools = build_tools(lambda *args: {"image_base64": "aW1hZ2U=", "frame_id": "frame-123"})
-        result = tools["device_observe"]["handler"]({"device_id": D})
-        self.assertEqual([x["type"] for x in result["_mcp_content"]], ["text", "image"])
-        self.assertIn('frame-123', result["_mcp_content"][0]["text"])
+        for tool in ('device_observe', 'device_act'):
+            result = tools[tool]["handler"]({"device_id": D})
+            self.assertEqual([x["type"] for x in result["_mcp_content"]], ["text", "image"])
+            self.assertIn('frame-123', result["_mcp_content"][0]["text"])
     def test_mcp_preserves_errors_as_errors(self):
         tools = build_tools(lambda *args: {"error": "Not assigned", "status": 403})
         self.assertTrue(tools["device_act"]["handler"]({})["_mcp_error"])

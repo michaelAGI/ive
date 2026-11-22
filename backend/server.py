@@ -1899,7 +1899,7 @@ def _normalize_api_key_provider(provider: str | None, key: str | None = None) ->
     return "anthropic"
 
 
-_CLAUDE_MODEL_ALIASES = {"haiku", "sonnet", "opus"}
+_CLAUDE_MODEL_ALIASES = {"haiku", "sonnet", "opus", "fable"}
 _ZAI_API_KEY_PROVIDERS = {"z_ai", "z_ai_glm51"}
 ZAI_MCP_SERVER_IDS = (
     "builtin-zai-vision",

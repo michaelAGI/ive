@@ -33,8 +33,8 @@ export default function DeviceHub({ onClose }) {
   const ideas = useRef(null)
   const pending = useRef(false)
   const mounted = useRef(true)
-  const refresh = useCallback(async () => {
-    const next = await api.deviceHubStatus()
+  const refresh = useCallback(async (force = false) => {
+    const next = await api.deviceHubStatus(force)
     if (!mounted.current) return
     setStatus(next)
     setSelected(current => next.devices.some(d => d.id === current) ? current :
@@ -129,7 +129,7 @@ export default function DeviceHub({ onClose }) {
         {status?.error && <div role="status" className="device-hub-notice">{status.error.message}</div>}
 
         <div className="device-hub-devices">
-          <div className="device-hub-row"><h3>iPhone</h3><button type="button" className="device-hub-link" disabled={busy} onClick={() => perform(refresh)}><RefreshCw size={13} /> Refresh</button></div>
+          <div className="device-hub-row"><h3>iPhone</h3><button type="button" className="device-hub-link" disabled={busy} onClick={() => perform(() => refresh(true))}><RefreshCw size={13} /> Refresh</button></div>
           {!status ? <p className="device-hub-status"><Loader2 size={16} className="device-hub-spin" /> Checking for devices…</p> : !status.devices.length ?
             <div className="device-hub-empty"><Cable size={20} /><span>No iPhone connected<small>Use a USB cable that supports data transfer.</small></span></div> :
             <div className="device-hub-device-list">{status.devices.map(d => <button key={d.id} type="button" className={`device-hub-device ${selected === d.id ? 'is-selected' : ''}`}
