@@ -3,11 +3,12 @@
 Status: initial execution improvements, implementation plan and interactive
 review prototype, 2026-11-22.
 Base: IVE 1.0.33 / `fa7844024147deee18d5f85c044b1a38f172f535`.
-Implemented locally: action plus screenshot in one result, bounded inventory
+Selected for release 1.0.34: action plus screenshot in one result, bounded inventory
 and prerequisite caches, bounded setup waiting, related agent instructions,
 timing fields, and Fable selection. The resident helper, guarded workflows and
-photo analysis/source integration below remain planned. The running app,
-device sessions and photo libraries have not been changed. Nothing is released.
+photo analysis/source integration below remain planned. See
+`packaging/RELEASE-1.0.34.md` for the implemented release scope; this plan does
+not establish a real-phone speed benchmark or a connected photo scanner.
 
 ## Product outcome
 

@@ -1,10 +1,12 @@
-# Pending IVE update — 2026-11-22
+# IVE 1.0.34 update — 2026-11-22
 
-Local source changes, prepared for the next combined update. No push, native
-release, installation or restart has been performed. The installed app was
-checked and remains 1.0.32; these changes are based on the released 1.0.33 source.
+Prepared source changes selected for release 1.0.34 after the user's explicit
+rollout request. The development checkpoint below predates packaging; release
+notes are in `packaging/RELEASE-1.0.34.md` and packaging evidence is kept under
+`packaging/artifacts/release-1.0.34-preflight/`. These changes are based on the
+released 1.0.33 source.
 
-Branch: `feat/device-execution-20261122`.
+Development branch: `feat/device-execution-20261122`; release: `release/1.0.34`.
 Base: `fa7844024147deee18d5f85c044b1a38f172f535`.
 Implementation commits: `4390a61` (device/Fable/prototype), `1963f4f` (terminal).
 This document and the revised task templates complete the local handoff.
